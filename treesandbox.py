@@ -55,7 +55,6 @@ def userconfig(si): # 这个只在顶层解析一次
 
     # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
-    uc.icewm = True if uc.gui in ['xephyr','weston'] else False
     uc.windowed_size = (800, 600)
 
     uc.gpus     =      True if uc.gui else False
@@ -65,12 +64,13 @@ def userconfig(si): # 这个只在顶层解析一次
 
 
 
-    # 输入法等通信需要dbus
-    # uc.dbus_session="allow"
-    # uc.dbus_session="filter" # 默认过滤规则:允许输入法和通知。还可以自己在 uc.dbusproxy_extra 中加
+    # 用户(session) DBUS 如何处理 （输入法等通信需要dbus）
+    # uc.dbus_session="allow" # 允许与主机的用户dbus全部通信
+    # uc.dbus_session="filter" # 用dbusproxy来过滤。默认过滤规则:允许输入法和通知（还可以自己在 uc.dbusproxy_extra 中加）
+    # uc.dbus_session="isolated" (未实现) 沙箱内另开一个dbus服务
     if uc.gui: uc.dbus_session="filter"
 
-    # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (flatpak) 的额外参数
+    # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (来自flatpak) 的额外参数
 
     uc.net=d(
         iface='real', # 使用真实的网络介面
@@ -82,8 +82,9 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.pulseaudio=True,
     # uc.cups=True, # CUPS打印服务 NOTE 注意 CUPS-PDF 沙箱内的输出位置是否已暴露给主机
 
+    uc.ask_xdg_open=True # 把 xdg-open 替换成一个询问脚本，不允许直接打开
+    uc.forbid_browsers=True # 容器内部不能使用系统的 firefox, chromium 等
     # uc.allow_opt=True # 允许访问真实/opt
-    uc.mask_xdg_opens=True # 容器内部不能使用xdg-open, firefox, chromium 等
     # uc.mask_osrelease=True # 不可访问/etc/os-release
     uc.machineid='zero' # 把/etc/machine-id填0
 
@@ -97,13 +98,15 @@ def userconfig(si): # 这个只在顶层解析一次
 # === USER_CONFIG END === NOTE: Don't change this line ===
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
-    cmds_to_mask = []
-    paths_to_mask = []
+    cmds_to_mask = [] # 内部，不传递
+    paths_to_mask = [] # 传递
     mnts_dns = []
     xephyr_extra_args = []
     weston_extra_args = []
     xwayland_extra_args = []
     bridges = []
+
+    icewm = True if uc.gui in ['xephyr','weston'] else False
 
     mnts_gui = [
         *([
@@ -172,19 +175,20 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             if iface_use_real: mnts_dns = [d(op='robind', src=RSLVCF_target_dir, SDS=1)]
             else             : pass # 让/run/xxxxx/resolv.conf继续不存在
 
-    if uc.mask_xdg_opens:
-        cmds_to_mask += [
-            "firefox", "firefox-esr", "seamonkey", "icecat",
-            "librewolf", "waterfox", "palemoon", "basilisk", "floop", "zen-browser",
-            "chromium", "chromium-browser",
-            "google-chrome", "google-chrome-stable", "ungoogled-chromium",
-            "microsoft-edge", "microsoft-edge-stable",
-            "vivaldi", "brave-browser", "opera",
-            "torbrowser-launcher", "torbrowser",
-            "konqueror", "falkon", "epiphany",
-            "lynx", "w3m", "links", "elinks", "browsh",
-            "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
-        ]
+    browser_cmds = [
+        "firefox", "firefox-esr", "seamonkey", "icecat",
+        "librewolf", "waterfox", "palemoon", "basilisk", "floop", "zen-browser",
+        "chromium", "chromium-browser",
+        "google-chrome", "google-chrome-stable", "ungoogled-chromium",
+        "microsoft-edge", "microsoft-edge-stable",
+        "vivaldi", "brave-browser", "opera",
+        "torbrowser-launcher", "torbrowser",
+        "konqueror", "falkon", "epiphany",
+        "lynx", "w3m", "links", "elinks", "browsh",
+        "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
+    ]
+    if uc.forbid_browsers:
+        cmds_to_mask += browser_cmds
     paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
 
     if uc.machineid == 'zero':
@@ -199,7 +203,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     dyncfg = d({k: v for k, v in locals().items() if k in [
         'paths_to_mask', 'machineid', 'sharedir_onhost', 'dbusproxy_argv' , 'mnts_dns', 'bridges',
-        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args',
+        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'icewm',
     ]})
     return dyncfg
 
@@ -2616,27 +2620,25 @@ def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
         if action == 'raise_exit': raise_exit(errmsg)
         elif action == 'warn': log_warn(f"{errmsg}")
 
-
 ASK_OPEN='''\
 #!/bin/bash
 
-PARAS="$@"
+tried_cmd="$0"
+input_arguments="$@"
+echo "有程序试图执行 $0 $input_arguments"
 
-TEXT="是否复制以下内容？"
-if [[ "$PARAS" ]] ; then
-    TEXT="$TEXT\n$PARAS"
+if [[ ! -n "$input_arguments" ]]; then exit ; fi
+
+if [[ -n "$DISPLAY" ]]; then
+    gui_result_code=255 # GUI询问结果 (0=Yes, 1=No, 255=?)
+
+    zenity --question --title="有程序试图执行命令" --text="有程序试图执行命令\n$tried_cmd\n\n传递参数如下。是否复制以下内容？\n\n$input_arguments"
+    gui_result_code=$?
+
+    if [[ $gui_result_code -eq 0 ]]; then
+        echo -n "$input_arguments" | xsel --clipboard --input
+    fi
 fi
-
-kdialog --yesnocancel "$TEXT"
-DIALOG_R=$?
-
-if [[ $DIALOG_R -eq 0 ]]; then
-    echo "$PARAS" | xclip -i /dev/stdin  -selection clipboard
-fi
-
-EXITCODE=$DIALOG_R
-[[ $DIALOG_R -eq 2 ]] && EXITCODE=0
-exit $EXITCODE
 '''
 
 ICEWM_WINOPTIONS='''
