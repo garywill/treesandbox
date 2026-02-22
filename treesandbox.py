@@ -298,6 +298,28 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
 
+def recr_rm_empty_lyr(si, cfg):
+    def _recr(si, cfg):
+        have_rmed = False
+        cnt_cmds = 0
+        cnt_sl = 0
+        if cfg.dropcap_then_cmds :
+            cnt_cmds = len(cfg.dropcap_then_cmds)
+            cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
+            if cnt_cmds != len(cfg.dropcap_then_cmds) :
+                have_rmed = True
+        if cfg.sublayers :
+            cnt_sl = len(cfg.sublayers)
+            cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
+            if cnt_sl != len(cfg.sublayers):
+                have_rmed = True
+            for sublyr_cfg in cfg.sublayers:
+                r = _recr(si, sublyr_cfg)
+                if r: have_rmed = True
+        if not (cfg.sublayers or cfg.dropcap_then_cmds or cfg.user_shell or cfg.dev_shell ):
+            cfg.disabled = True
+        return have_rmed
+    while _recr(si, cfg): pass
 
 
 def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
@@ -317,7 +339,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.fs:
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
     if cfg.sublayers :
-        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
+        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr is not None]
     if cfg.dropcap_then_cmds :
         cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
     if cfg.envs_unset:
@@ -382,15 +404,12 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
     # print(cfg.layer_name, cfg.pidns_depth, cfg.pidns_tree)
 
-    if not (cfg.sublayers or cfg.dropcap_then_cmds):
-        cfg.disabled = True
-
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
 
 def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
-    recursive_lyrs_jobs(si, layer1_cfg, None, []) # 要调用两次
-    recursive_lyrs_jobs(si, layer1_cfg, None, []) # 要调用两次
+    recursive_lyrs_jobs(si, layer1_cfg, None, [])
+    recr_rm_empty_lyr(si, layer1_cfg)
 
 
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
