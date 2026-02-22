@@ -150,6 +150,7 @@ def gen_layer3(si, uc, dyncfg):
         unshare_ipc=True,
         unshare_time=True,
         unshare_uts=True,
+        unshare_fd=True,
 
         unshare_net=True if uc.net.iface != 'real' else False,
 
@@ -311,8 +312,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
 
-    CHK( not cfg.unshare_fd, f"层{cfg.layer_name}启用了unshare_fd （不应该启用）")
-
     # 配置中的数组类型去除None成员
     if cfg.fs:
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
@@ -381,7 +380,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
         # bootsbx.py
         # sbx.xxx.name
         # sbx.name -> sbx.xxx.name
-        # events.layers.log (暂未实现） (需要build_fs处理 一路通挂载)
+        # events.layers.log
         # lyr_cfg.xxx.json (多) 包括本层和所有递归子层
         # new.xxx.rootfs (多)所有有 newrootfs 的本层和递归子层
         # temp/  挂载为rw tmpfs
@@ -578,13 +577,13 @@ def main():
                 time.sleep(0.1)
                 pass
 
-    set_ps1('beforeUnshare')
+    layer_set_status('beforeUnshare')
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag(thislyr_cfg)
     os.unshare(unshare_flag)
 
-    set_ps1('afterUnshare')
+    layer_set_status('afterUnshare')
 
     # log(f"即将fork")
     pid = os.fork()
@@ -604,7 +603,7 @@ def main():
 
         atexit.register(lambda: cleanup_outest() ) # 顶层父进程注册清理函数
 
-        set_ps1('PaAfterFork')
+        layer_set_status('PaAfterFork')
 
         _, status = os.waitpid(pid, 0)
         if os.WIFEXITED(status):
@@ -621,7 +620,7 @@ def main2():
     if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
     if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
-    set_ps1('forkedBeforeFs')
+    layer_set_status('forkedBeforeFs')
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 如果设置了将要变根，现在先提前确定新根的位置
@@ -645,7 +644,7 @@ def main2():
         makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
     if not thislyr_cfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
         make_proc_ro( new_proc_path , allow_newmntns=False )
-    set_ps1('afterFs')
+    layer_set_status('afterFs')
 
     # 执行变根 (chroot)
     if thislyr_cfg.newrootfs:
@@ -666,7 +665,7 @@ def main2():
     if thislyr_cfg.sbxdir_path1:
         os.chdir(thislyr_cfg.sbxdir_path1)
 
-    set_ps1('afterChroot')
+    layer_set_status('afterChroot')
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   处理各种SIGNAL
@@ -676,7 +675,8 @@ def main2():
         for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
             signal.signal(sig, signals_handler)
 
-    set_ps1('afterRegSigs')
+    layer_set_status('afterRegSigs')
+    layer_set_status('booted')
 
     direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
 
@@ -853,7 +853,7 @@ def exist_childtree():
 
 
 ps1 = ">"
-def set_ps1(status):
+def layer_set_status(status):
     global ps1
     ps1 = ''.join( [
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
@@ -863,12 +863,20 @@ def set_ps1(status):
     ])
     os.environ['PS1'] = ps1
 
-    logobj = d(
-        layer = thislyr_cfg.layer_name,
-        event = status,
-        # ns =
-    )
-    os.write(si.fd_layerslog_a, ''.join([json.dumps(logobj), '\n']).encode())
+    if status == 'booted':
+        wlog('booted')
+
+def wlog(*args, errmsg=None):
+    event = args[0] if (errmsg is None) else 'error'
+    logObj = d( logger = thislyr_cfg.layer_name, event = event, )
+    if event == 'booted':
+        logObj.ns = d()
+        for nstype in os.listdir('/proc/self/ns'):
+            logObj.ns[nstype] = os.stat('/proc/self/ns/pid').st_ino
+    if event == 'error':
+        logObj.errmsg = errmsg
+
+    os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n']).encode())
 
 def build_fs():
     # 无论本层是否设置了变根，都调用这个函数
@@ -878,7 +886,7 @@ def build_fs():
     commit_remounts(remountPlans)
 
 
-def commit_fsPlans(fsPlans): # 这个函数是本层为本层调用的
+def commit_fsPlans(fsPlans):
     target_fs_path = thislyr_cfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
