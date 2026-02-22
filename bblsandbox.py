@@ -549,6 +549,12 @@ def main():
     # 变根后 1 = 即将运行下层的启动脚本时
     # 变根不一定发生，由本层配置决定，但也把两个sbxdir_path以 前 后 来称呼
 
+    for env_to_unset in (thislyr_cfg.envs_unset or [] ):
+        os.environ.pop(env_to_unset, None)
+    for envg in (thislyr_cfg.envset_grps or [] ) :
+        log(envg)
+        os.environ.update(envg)
+
     for wait_task in (thislyr_cfg.start_after or [] ):
         if wait_task.waittype == 'socket-listened':
             while not is_unix_socket_listened(wait_task.path):
@@ -643,12 +649,6 @@ def main2(si, thislyr_cfg):
 
     if thislyr_cfg.sbxdir_path1:
         os.chdir(thislyr_cfg.sbxdir_path1)
-
-    for env_to_unset in (thislyr_cfg.envs_unset or [] ):
-        os.environ.pop(env_to_unset, None)
-    for envg in (thislyr_cfg.envset_grps or [] ) :
-        log(envg)
-        os.environ.update(envg)
 
     set_ps1(si, thislyr_cfg, 'afterChroot')
 
