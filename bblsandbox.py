@@ -105,7 +105,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
                         ],
                         dropcap_then_cmds=[
-                            d( cmdlist=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
+                            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
                         ],
                     ),
                     gen_layer2h(si, uc, dyncfg)
@@ -216,7 +216,7 @@ def gen_layer3(si, uc, dyncfg):
                 unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
                 dropcap_then_cmds=[
-                    d( cmdlist=["icewm"] ) if uc.icewm else None ,
+                    d( cmdvec=["icewm"] ) if uc.icewm else None ,
                 ],
             ),
             d( # 主 用户app 在这里跑
@@ -680,7 +680,7 @@ def main2(si, thislyr_cfg):
         sys.exit()
 
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
-        pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdlist ,
+        pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdvec ,
                 stdin =cmdItem.stdin , stdout=cmdItem.stdout, stderr=cmdItem.stderr,
                 child_no_caps=True,
             )
