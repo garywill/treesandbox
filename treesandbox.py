@@ -192,7 +192,7 @@ def gen_layer3(si, uc, dyncfg):
         fs=[ # fs全称fs_plans_for_new_rootfs 。
             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
-            d(plan='empty-if-exist', dest=si.startscript_on_host),
+            d(plan='empty-if-exist', dest=rslvn(si.startscript_on_host)),
 
             # ---- 以上是不变条目 ----
 
@@ -758,12 +758,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     uc = userconfig(si) # NOTE
 
     # 沙箱名。不是子容器层名
-    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
+    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"沙箱名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
+    CHK( len(sandbox_name) < 500, f'沙箱名太长： {sandbox_name}')
 
     apps = uc.apps
+    if uc.reuseInstance: reuseInstance = uc.reuseInstance
 
     if (sharedir_prefix := uc.sharedir_prefix):
         CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
@@ -1065,7 +1067,7 @@ def main():
 
 
     if is_outest:
-        print(f"当前PID: {si.outest_pid}  沙箱名：{si.sandbox_name}   启动的用户为：{si.username} {si.groupname}")
+        log(f"当前PID: {si.outest_pid}  沙箱名：{si.sandbox_name}   启动的用户为：{si.username} {si.groupname}")
         if not user_cli_appname or user_cli_appname=='default': chosen_appItem = si.apps[0]
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == user_cli_appname), None)
         CHK( chosen_appItem and chosen_appItem.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
@@ -1902,11 +1904,15 @@ def safe_copy_script(copy_target_path):
 cleanup_symlinks_to_rm = []
 def cleanup_outest():
     if os.getpid() == 1: return
-    Path(f'{si.outest_sbxdir}_exit').touch() # 设个正在退出的标记
+    log(f"准备退出，等待所有子进程结束后执行清理...")
+    try_showerr(lambda: Path(f'{si.outest_sbxdir}_exit').touch() ) # 设个正在退出的标记
+    try_showerr(lambda: Path(f'{si.outest_sbxdir}/EXITING').touch() )
     # if OG and OG.layer1_pid: try_pass(lambda: os.setpgid(OG.layer1_pid, 0) )
     try_pass(lambda: OutestProcsMonitor.sbx_exit_broadcast())
-    log(f"准备退出，等待所有子进程结束后执行清理...")
-    while exist_childtree(): time.sleep(0.1)
+
+    cleanup_startat = time.monotonic()
+    while exist_childtree() and time.monotonic() <= cleanup_startat+5: time.sleep(0.1)
+
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
         # new.*.rootfs/
@@ -1917,18 +1923,23 @@ def cleanup_outest():
         *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
         *glob(f'{si.outest_sbxdir}'),
     ]
+    def safe_call(f):
+        try: return f()
+        except Exception as err: traceback.print_exc(file=sys.stderr); return []
     for dirpath in paths_rm_sub_files:
-        for f in Path(dirpath).iterdir():
-            if is_file(f) or f.is_symlink() :
-                try_pass(lambda: f.unlink() )
-        try_pass(lambda: os.rmdir(dirpath) )
-    for emptydir in [si.CG_SBX, si.sharedir_onhost]:
-        try_pass(lambda: os.rmdir(emptydir))
+        for f in safe_call(lambda: Path(dirpath).iterdir() ):
+            if is_file(f) or f.is_symlink() or f.is_socket():
+                try_showerr(lambda: f.unlink() )
+        try_showerr(lambda: os.rmdir(dirpath) )
+
+    # try_showerr(lambda: os.rmdir(si.CG_SBX)) # 暂时无法删除
+    try_pass(lambda: os.rmdir(si.sharedir_onhost))
+
     for slkItem in cleanup_symlinks_to_rm:
         if Path(slkItem).is_symlink() :
             linkto = os.readlink(slkItem)
             if linkto == si.outest_sbxdir or linkto.startswith(f'{si.outest_sbxdir}/'):
-                Path(slkItem).unlink()
+                try_showerr(lambda: Path(slkItem).unlink() )
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
 #==========================================
