@@ -9,7 +9,7 @@ from pathlib import Path
 from glob import glob
 shutil.rmtree = None
 
-# === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
+# === USER_CONFIG BEGIN === NOTE: Don't change this line ===
 # 普通用户设置这里
 def userconfig(si): # 这个只在顶层解析一次
     uc = d()
@@ -93,6 +93,8 @@ def userconfig(si): # 这个只在顶层解析一次
     )
 
     return uc
+
+# === USER_CONFIG END === NOTE: Don't change this line ===
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = []
@@ -410,10 +412,15 @@ def gen_layer4(si, uc, dyncfg):
     )
 
 
-# === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
-
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
+    # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
+    scriptfilepath = os.path.abspath(__file__)
+    scriptdirpath = os.path.dirname(scriptfilepath)  # 获取脚本所在目录
+    scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
+    scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
+    scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
+
     si = d()
 
     # 从外部(linux host)启动沙箱的原本用户信息
@@ -775,11 +782,10 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
 
 
-    if not os.path.exists(f'{target_sbxdir_path}/sbxinfo.json'):
+    if call_at_begin:
         with open(f'{target_sbxdir_path}/sbxinfo.json', 'w') as f:
             f.write(json.dumps(si, indent=2, ensure_ascii=False))
             os.chmod(f.name, 0o444)
-        safe_copy_script(f'{target_sbxdir_path}/bootsbx.py')
         with open(f'{target_sbxdir_path}/sbx.{si.sandbox_name}.name', 'w') as f:
             f.write(si.sandbox_name)
             os.chmod(f.name, 0o444)
@@ -787,9 +793,10 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
     # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
     def create_lyrs_files_recr(lyr_cfg):
-        with open(f'{target_sbxdir_path}/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
-            f.write(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
-            os.chmod(f.name, 0o444)
+        if call_at_begin:
+            with open(f'{target_sbxdir_path}/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
+                f.write(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
+                os.chmod(f.name, 0o444)
         if lyr_cfg.newrootfs:
             mkdirp(f'{target_sbxdir_path}/new.{lyr_cfg.layer_name}.rootfs')
         for sublyr_cfg in (lyr_cfg.sublayers or [] ) :
@@ -810,20 +817,18 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
 OG = None # outest global info
-def main():
+def main(lyrcfg_in):
     global si, tlcfg, OG
 
     arg_parser = argparse.ArgumentParser(add_help=False)
     sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
     sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
-    sbx_arg_grp.add_argument("--lyrcfg", metavar="<cli_lyrcfg_file>")
 
     sbx_args, user_cli_argv = arg_parser.parse_known_args()
 
     user_cli_appname = sbx_args.app
-    cli_lyrcfg_file = sbx_args.lyrcfg
 
-    if user_cli_appname or not cli_lyrcfg_file: is_outest = True # 是顶层
+    if not isinstance(lyrcfg_in, dict): is_outest = True # 是顶层
     else: is_outest = False # 是子层
 
     if is_outest: # 是顶层
@@ -832,9 +837,9 @@ def main():
 
         tlcfg.sbxdir_path0 = si.outest_sbxdir
     else: # 是子层
-        tlcfg = d(json.loads(Path(cli_lyrcfg_file).read_text()))
-        tlcfg.sbxdir_path0 = padir(cli_lyrcfg_file)
-        si = d(json.loads(Path(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read_text()))
+        tlcfg = lyrcfg_in
+        tlcfg.sbxdir_path0 = '/sbxdir' if is_dir('/sbxdir') else si.outest_sbxdir
+        # si =  # 不需要再加载si, 因为是fork来的
 
 
 
@@ -920,8 +925,7 @@ def main():
         skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
             set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
-        main2(skp_lyfk)
-        sys.exit()
+        return main2(skp_lyfk)
     else: # 父进程
         skp_lyfk.i_am_pa()
 
@@ -993,16 +997,10 @@ def main2(skp_lyfk):
 
     # 以subp启动子层
     for sublyr_cfg in (tlcfg.sublayers or []):
-        pid, skp_spfk = layer_run_subp([
-                        si.pythonbin , '-IBS',
-                        # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
-                        # 因此用本层的path1
-                        f'{tlcfg.sbxdir_path1}/bootsbx.py',
-                        '--lyrcfg', f'{tlcfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
-                    ],
-                    subp_name=sublyr_cfg.layer_name
-        )
-        inprepare_children.append((pid, skp_spfk))
+        pid, skp_spfk = layer_run_subp( subp_name=sublyr_cfg.layer_name )
+        if pid == 0:
+            return sublyr_cfg # 让main2()返回，准备开始下一层
+        inprepare_children.append((pid, skp_spfk)) # 原进程才需要pid和skp_spfk
 
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
@@ -1069,7 +1067,8 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
     pid = os.fork()
     if pid == 0: # 子进程
         atexit._clear()
-        set_loghead(f"{loghead}subp: ")
+        if not subLayer: set_loghead(f"{loghead}subp: ")
+        else: set_loghead(f"{loghead}sublayer_starting: ")
         skp_spfk.i_am_chd()
 
         if not keep_caps:
@@ -1088,7 +1087,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         elif user_shell:startTip = '启动 user_shell'
         elif keep_caps: startTip = f'启动子进程（带权限） {subp_name}'
         else:           startTip = f'启动子进程 {subp_name}'
-        log(f'{startTip} : ', cmdvec)
+        if cmdvec: log(f'{startTip} : ', cmdvec)
 
         if workdir: os.chdir(workdir)
 
@@ -1109,8 +1108,11 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
             close_important_fds()
         # NOTE 无法再 wlog NOTE
 
-        os.execvp(cmdvec[0], cmdvec)
-        raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
+        if not subLayer:
+            os.execvp(cmdvec[0], cmdvec)
+            raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
+        else: # 是subLayer
+            return 0, None
     else: # 原进程
         skp_spfk.i_am_pa()
         skp_spfk.pa_recv(1, 2, BS.IChdBorn)
@@ -2144,43 +2146,6 @@ def run_a_cmd(cmdv, print_output=False):
     if print_output: log(stdout_data)
     if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
 
-def safe_copy_script(copy_target_path):
-    old_content = Path(scriptfilepath).read_text()
-
-    lines_arr = old_content.splitlines()
-
-    start_marker = "# === HIDE_FOR_SUBLAYERS BEGIN ==="
-    end_marker =   "# === HIDE_FOR_SUBLAYERS END ==="
-    removed_mark = "# === HIDDEN_PART ==="
-
-    start_index = None
-    end_index = None
-
-    for i, line in enumerate(lines_arr):
-        if line.startswith(removed_mark):
-            make_file_exist(copy_target_path)
-            os.chmod(copy_target_path, 0o444)
-            mount(scriptfilepath, copy_target_path, None, MS.BIND|MS.RDONLY, None)
-            mount(None, copy_target_path, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
-            return
-        if line.startswith(start_marker):
-            start_index = i
-        elif line.startswith(end_marker):
-            end_index = i
-        if start_index is not None and end_index is not None:
-            break
-    if start_index is None: raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
-    if end_index is None: raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
-    if not (start_index < end_index): raise_exit("userconfig 的开始和结束标记顺序不正确")
-
-    # 将范围内的所有行（包括开始和结束标记行）设置为空字符串
-    lines_arr[start_index] = removed_mark
-    lines_arr[start_index + 1 : end_index + 1] = [""] * (end_index - start_index)
-    script_content_safe = '\n'.join(lines_arr)
-    Path(copy_target_path).write_text(script_content_safe)
-    os.chmod(copy_target_path, 0o444)
-
-
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
@@ -2561,14 +2526,14 @@ LimitSize=1
 '''
 
 if __name__ == "__main__":
-    # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
-    scriptfilepath = os.path.abspath(__file__)
-    scriptdirpath = os.path.dirname(scriptfilepath)  # 获取脚本所在目录
-    scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
-    scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
-    scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
-    try:
-        main()
-    except Exception as err:
-        wlog('error', errmsg=err)
-        raise
+    lyrcfg_to_use = 'notready'
+    while lyrcfg_to_use:
+        tlcfg = None
+        OG = None
+        if isinstance(lyrcfg_to_use, dict):
+            log(f'子层 {lyrcfg_to_use.layer_name}')
+        try:
+            lyrcfg_to_use = main(lyrcfg_to_use)
+        except Exception as err:
+            wlog('error', errmsg=err)
+            raise
