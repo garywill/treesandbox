@@ -609,8 +609,8 @@ def main2(si, thislyr_cfg):
         log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
-        if not thislyr_cfg.sublayers: # 如果非最后一层，不要让 proc 变 ro ， 否则下一层出错
-            mount(None, new_proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
+        if not thislyr_cfg.sublayers: # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
+            protect_proc( new_proc_path )
     set_ps1(si, thislyr_cfg, 'afterFs')
 
     # 执行变根 (chroot)
@@ -652,8 +652,10 @@ def main2(si, thislyr_cfg):
     direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
 
     if thislyr_cfg.user_shell:
-        pid = layer_run_subp ( thislyr_cfg, ['/bin/bash', '--norc' ] )
-        direct_child_pids.append(pid)
+        if thislyr_cfg.sublayers or thislyr_cfg.dropcap_then_cmds:
+            log("警告：因为启用了user_shell, 其余要启动的命令或子容器都会被忽略", file=sys.stderr)
+        layer_run_subp ( thislyr_cfg, ['/bin/bash', '--norc' ] , blocking=True)
+        sys.exit()
 
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
         pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdlist ,
@@ -696,39 +698,47 @@ def main2(si, thislyr_cfg):
         asyncio.run(loop())
     # 如果不是 unshare_pid 的 ,这里直接结束退出
 
-def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, keepfds=False):
+def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, keepfds=False, blocking=False):
     pid = os.fork()
-    if pid == 0:
+    if pid == 0: # 子进程
+        set_loghead(f"{loghead}subp: ")
         if not stdin:
             devnull = os.open('/dev/null', os.O_RDONLY)
             os.dup2(devnull, 0) # 将 stdin (fd 0) 重定向到 /dev/null
             os.close(devnull)
         # TODO NOTE stdout stderr = false 未实现
         # TODO NOTE keepfds=False 未实现
-        if thislyr_cfg.unshare_pid:
-            os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS=unshare_mnt
-            def maskpath(path):
-                if not Path(path).is_mount():
-                    optn='mode=0000'
-                    mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc, optn)
-                    mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc|MS.REMOUNT, optn)
-            maskpath('/proc/1/fd')
-            # TODO 若unshare_pid 则 landlock 禁 /proc/1/fd /proc/1/mem /proc/1/environ /proc/1/maps  /proc/1/smaps /proc/1/task/ /proc/1/wchan, /proc/1/stack
-            # /proc/1/attr/ /proc/1/autogroup /proc/1/oom_score_adj /proc/1/cwd, /proc/1/root
-
         if child_no_caps:
+            protect_proc('/proc')
             drop_caps()
         log('准备启动（不降权）:' if not child_no_caps else '准备降权启动:' , cmdvec)
         os.execvp(cmdvec[0], cmdvec)
-        sys.exit(20) # 正常不会到这里
-    return pid
-        # sys.exit(0)
-        # os.execv('/bin/bash', ['/bin/bash', '--norc'])
+        os._exit(123) # 正常不会到这里 , 不能用sys.exit, 否则会执行原进程的清理
+    if not blocking: # 非阻塞
+        return pid
+    else: # 阻塞
+        _, status = os.waitpid(pid, 0)
+        return status
+
+    # os.execv('/bin/bash', ['/bin/bash', '--norc'])
     # os.exec*成功后不回来，替换了进程
         # l/v： 可变参 或 数组 来指定参数
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
+def protect_proc(proc_path):
+    if os.getpid() != 1:
+        os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS=unshare_mnt
+        def maskpath(path):
+            if not Path(path).is_mount():
+                optn='mode=0000'
+                mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc, optn)
+                mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc|MS.REMOUNT, optn)
+        maskpath(f'{proc_path}/1/fd')
+        # TODO /proc/1/fd /proc/1/mem /proc/1/environ /proc/1/maps  /proc/1/smaps /proc/1/task/ /proc/1/wchan, /proc/1/stack
+        # /proc/1/attr/ /proc/1/autogroup /proc/1/oom_score_adj /proc/1/cwd, /proc/1/root
+
+    mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
 
 
 def cleanup_pidnsleader():
