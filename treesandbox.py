@@ -299,7 +299,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         else:
             while (XId := random.randrange(230, 980) ) :
                 if not os.path.lexists(f'/tmp/.X11-unix/X{XId}')  \
-                and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', open('/proc/self/net/unix').read(), re.MULTILINE) :
+                and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
                     log(f'沙箱内隔离的X11的显示编号使用生成的随机号码 DISPLAY=:{XId}')
                     break
 
@@ -743,7 +743,7 @@ class OutestProcsMonitor:
     def get_procsalive_arr_from_cg(cls) -> list:
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         result = []
-        for pid in open(f'{si.CG_SBX}/cgroup.procs').read().splitlines():
+        for pid in Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines():
             try:
                 inode1 = os.stat(f'/proc/{pid}').st_ino
 
@@ -751,7 +751,7 @@ class OutestProcsMonitor:
                 NSpid = cls.get_NSpid_arr(f'/proc/{pid}/status')
                 start_tick = get_start_tick(f'/proc/{pid}/stat')
                 ns = get_nstypes(f'/proc/{pid}/ns')
-                cmdvec = open(f'/proc/{pid}/cmdline').read().strip('\x00').split('\x00')
+                cmdvec = Path(f'/proc/{pid}/cmdline').read_text().strip('\x00').split('\x00')
 
                 inode2 = os.stat(f'/proc/{pid}').st_ino
                 if inode1 != inode2: continue
@@ -919,7 +919,7 @@ def get_nstypes(nsdir_path):
     return D({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
 
 def get_start_tick(statfile_path): # 返回的是字符串，不是数字
-    return open(statfile_path,'r').read().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
+    return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
 
 class pipe_outest_exit_layer1:
     _read_fd = None
@@ -972,9 +972,9 @@ def main():
         tlcfg.sbxdir_path0 = si.outest_sbxdir
 
     else: # 是子层
-        tlcfg = d(json.loads(open(lyrcfg_file).read()))
+        tlcfg = d(json.loads(Path(lyrcfg_file).read_text()))
         tlcfg.sbxdir_path0 = padir(lyrcfg_file)
-        si = d(json.loads(open(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read()))
+        si = d(json.loads(Path(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read_text()))
 
     if is_outest:
         OG.user_cli_argv = sys.argv[1:]
@@ -1262,7 +1262,7 @@ def main2(skp_lyfk):
     #-------------------------------------------
 
     # 向最外层发送“本层已boot”，
-    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree, **(d(isMainLyr=True) if tlcfg.isMainLyr else {}) )
+    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree, **(d(isMainLyr=True) if tlcfg.isMainLyr else {}) )
 
 
     # 关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd)
@@ -1760,7 +1760,7 @@ def unshrflg(cfg):
     return unshare_flag
 
 def safe_copy_script(copy_target_path):
-    old_content = open(scriptfilepath).read()
+    old_content = Path(scriptfilepath).read_text()
 
     lines_arr = old_content.splitlines()
 
@@ -2206,7 +2206,7 @@ EnableWorkspaces=0
 '''
 
 def get_appimg_sqoffset(appimg_path):
-    elfHeader = open(appimg_path, 'rb').read(64)
+    with open(appimg_path, 'rb') as f: elfHeader = f.read(64)
     (bitness,endianness) = struct.unpack("4x B B 58x", elfHeader);
     (shoff,shentsize,shnum) = struct.unpack(
         (">" if endianness == 2 else "<") +
