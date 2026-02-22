@@ -52,6 +52,8 @@ def userconfig(si): # 这个只在顶层解析一次
     )
 
     uc.allow_opt=True # 允许访问真实/opt
+    # uc.pulseaudio=True,
+
     uc.mask_xdg_opens=True # 容器内部不能使用xdg-open, firefox, chromium 等
     # uc.mask_osrelease=True # 不可访问/etc/os-release
     uc.machineid='zero' # 把/etc/machine-id填0
@@ -171,6 +173,8 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
 
             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
+
+            d(plan='robind', src=f'/run/user/{si.uid}/pulse/native', SDS=1) if uc.pulseaudio else None,
 
             *([
             d(plan='robind', dest='/dev', src='/dev'),
