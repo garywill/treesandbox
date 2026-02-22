@@ -288,7 +288,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     if cfg.fs:
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
     if cfg.sublayers :
-        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if not sublyr.disabled]
+        cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
     if cfg.dropcap_then_cmds :
         cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
     if cfg.envs_unset:
@@ -501,7 +501,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     return sbxinfo, layer1_cfg
 
 def main():
-    global loghead
     # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
     if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
         # 是顶层
@@ -522,7 +521,7 @@ def main():
         thislyr_cfg.sbxdir_path0 = str(Path(lyrcfg_file).parent.parent)
         si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/cfg/si.json').read()))
 
-    loghead = f'{thislyr_cfg.layer_name}: '
+    set_loghead (f'{thislyr_cfg.layer_name}: ')
 
     # 预先算好变根后的 sbxdir_path1
     if not thislyr_cfg.newrootfs:
@@ -573,10 +572,10 @@ def main():
         _, status = os.waitpid(pid, 0)
         if os.WIFEXITED(status):
             exit_code = os.WEXITSTATUS(status)
-            log(f"fork后的子进程已退出( {exit_code} )")
+            log(f"沙箱内部首层领头进程已退出( {exit_code} )")
         elif os.WIFSIGNALED(status):
             signal_num = os.WTERMSIG(status)
-            log(f"fork后的子进程被信号 {signal_num} 终止")
+            log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
 
 
 def main2(si, thislyr_cfg):
@@ -897,6 +896,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             mkdirp(real_dest)
             src = rslvy(src)
             offset = get_appimg_sqoffset(src)
+            # TODO 先做symlink链接到真实appimage文件路径，再调用 squashfuse命令
             run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
         elif plan == 'remountro':
             z(d(dirpath=real_dest, flag=pItem.flag or 0))
@@ -1385,6 +1385,9 @@ class EnhancedDict(dict):
 d = EnhancedDict
 
 loghead = ''
+def set_loghead(new_loghead):
+    global loghead
+    loghead = new_loghead
 def log(*args, **kwargs):
     new_args = args
     if loghead:
