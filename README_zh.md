@@ -1,8 +1,31 @@
 # Tree Sandbox
 
-可无限嵌套的Linux沙箱。
+可无限嵌套的Linux沙箱。（带有经过设计的默认嵌套模板）
 
 一定程度上可作为Firejail、Flatpak、Bubblewrap的替代品。
+
+## 依赖
+
+必须：
+
+- Linux Kernel >= 6.3 
+    - user namespace
+    - cgroup v2
+- glibc
+- Python >= 3.12
+- bash
+
+(虽然是Python脚本，但通过libc直接调用Linux内核功能，不需第三方Python库)
+
+可选：
+
+- squashfuse (内部AppImage挂载)
+- Xephyr + icewm (隔离X11)
+
+
+## 开发目标
+
+以下对比表格是本项目的开发计划。（目前处于早期工作，有些未实现）
 
 ## 什么是"容器树"
 
@@ -35,7 +58,7 @@
      |          [icewm] (轻量级WM,一般配合Xephyr)
      |          
      |--[子容器:辅助进程(组1):半信任]
-            [Xephyr] (隔离X11服务端+客户端)
+            [Xephyr] (隔离X11)
             [Xpra client] (无缝隔离X11客户端)
             [dbus-proxy] (B) (dbus通信过滤和转发在A与C之间转发)
         
@@ -67,40 +90,28 @@
         - [x] symlink
     - [x] 内部环境变量控制
     - [x] 内部uid变0（提权）；某层uid变回1000(降权）；Drop caps；noNewPrivs
+- [ ] PGID、SID分离，并正确传递信号
 - [x] 可挂载AppImage在内部mount ns
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口给沙箱
-    - [x] 可选使用Xephyr隔离X11
+    - [x] 可选使用Xephyr隔离X11（配icewm）
     - [ ] 可选使用Xpra隔离的无缝X11代理
     - [ ] 可选暴露wayland接口给沙箱
     - [ ] 可选在一窗口内运行的隔离的完整桌面环境
-- [ ] 可选暴露真实物理硬件，或仅显卡渲染所需部分
+- 可选暴露真实物理硬件给沙箱
+    - [x] 暴露GPU给沙箱
+    - [ ] 暴露其余硬件给沙箱
 - DBus
     - [x] 可选暴露真实dbus接口给沙箱
     - [ ] 可选过滤dbus通信
-- [ ] 可选的seccomp
 - [ ] 可选的网络流量控制
 - 实例管理与命令参数传递
     - [x] 同种沙箱多实例（从主机多次启动同种沙箱，会运行多个实例，互相隔离、互相独立)
     - [ ] 同种沙箱单实例（从主机启动一种App的沙箱后，再次启动同种App的沙箱，则传递命令参数至已运行的沙箱。说明：以你设置的`sandbox_name`来区分“同种沙箱”）
+- [ ] 看门狗（若沙箱内app或辅助app退出，则结束沙箱）
 - [ ] 容器内部shell接口暴露给主机
+- [ ] 可选的seccomp
 - 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
-
-## 依赖
-
-必须：
-
-- Linux Kernel >= 6.3 (且支持unprivileged user namespace)
-- glibc
-- Python >= 3.12
-- bash
-
-(虽然是Python脚本，但直接通过libc调用Linux内核功能，不需第三方Python库)
-
-可选：
-
-- squashfuse (内部AppImage挂载)
-- Xephyr + icewm (隔离X11)
 
 ## 简单用例 
 

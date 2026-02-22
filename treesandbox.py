@@ -334,6 +334,7 @@ def findout_expected_live_procs(si, layer1_cfg):
         for subpItem in (cfg.subprocs or [] ):
             CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
             CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
+            CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
             CHK( subpItem.subp_name not in used_names, f"名称 {subpItem.subp_name} 有重复")
             CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
             used_names.append(subpItem.subp_name)
