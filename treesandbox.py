@@ -336,7 +336,7 @@ def recr_rm_empty_lyr(si, cfg):
         return have_rmed
     while _recr(si, cfg): pass
 
-def findout_expected_live_procs(si, layer1_cfg):
+def findout_expected_alive_procs(si, layer1_cfg):
     used_names = []
     def _recr(cfg):
         nonlocal used_names
@@ -357,7 +357,7 @@ def findout_expected_live_procs(si, layer1_cfg):
             _recr(sublyr_cfg)
     _recr(layer1_cfg)
     wdg_target_procs = [x for x in used_names if x != 'mainApp'] # 不看主app, 只看它所属层
-    si.expected_live_procs = wdg_target_procs
+    si.expected_alive_procs = wdg_target_procs
 
 def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
     # 计算本层深度
@@ -458,7 +458,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
     recursive_lyrs_jobs(si, layer1_cfg, None, [])
     recr_rm_empty_lyr(si, layer1_cfg)
-    findout_expected_live_procs(si, layer1_cfg)
+    findout_expected_alive_procs(si, layer1_cfg)
 
 
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
@@ -617,7 +617,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     print(f"cgroup：{CG_SBX}")
-    print(f"沙箱看门狗要轮询的进程：{sbxinfo.expected_live_procs}")
+    print(f"沙箱看门狗要轮询的进程：{sbxinfo.expected_alive_procs}")
 
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX, sharedir_onhost) ) # 顶层父进程注册清理函数
@@ -654,11 +654,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
         # RDONLY是因为沙箱内只fd读，仅最外层用路径写
         procs_alive = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        procs_wdgseen = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.wdgseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_histseen = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_wdgsee = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
     ) )
 
     sbxinfo.logs_fd = d()
-    for pn in sbxinfo.expected_live_procs:
+    for pn in sbxinfo.expected_alive_procs:
         if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
             sbxinfo.logs_fd[pn] = create_file_for_sbx_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
@@ -675,10 +676,12 @@ class OutestProcsMonitor:
     def i_am_outest(cls):
         cls.I_AM_OUTEST=True
         cls.procs_alive = []
-        cls.procs_wdgseen = d()
+        cls.procs_wdgsee = d()
+        cls.procs_histseen = d()
         cls.should_seen_soon = []
         cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
-        cls.fd_wr_wdgseen = os.open(f'{si.outest_sbxdir}/procs.wdgseen.json', os.O_WRONLY)
+        cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
+        cls.fd_wr_wdgsee = os.open(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_WRONLY)
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
@@ -718,26 +721,35 @@ class OutestProcsMonitor:
         finally:
             fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
     @classmethod
-    def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc wdgseen"
+    def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc seen"
         if plv.NSpid[-1] == psn.self_see_pid \
         and plv.start_tick == psn.start_tick \
         and plv.ns.pid == psn.pidns :
             return True
         else: return False
     @classmethod
-    def got_a_ready_proc_log(cls, NLOG):
-        NPROC = d(
+    def logItem_to_seenprocItem(cls, NLOG):
+        return d(
             self_see_pid = NLOG.self_see_pid,
             start_tick = NLOG.start_tick,
-            pidns = NLOG.ns.pid
+            pidns = NLOG.ns.pid,
+            pidns_tree = NLOG.pidns_tree,
+            pidns_depth = NLOG.pidns_depth
         )
+    @classmethod
+    def got_a_ready_proc_log(cls, NLOG):
+        NPROC = cls.logItem_to_seenprocItem(NLOG)
+        cls.procs_histseen[NLOG.ready_proc_name] = NPROC
+        if not NLOG.ready_proc_name in si.expected_alive_procs :
+            return
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
             if cls.aliveproc_and_seenproc_equal(proc, NPROC):
                 if NLOG in cls.should_seen_soon:
                     log(f'把这条消息从未识别的消息列表中删除 {NLOG}')
                     cls.should_seen_soon.remove(NLOG)
                 NPROC.NSpid = proc.NSpid
-                cls.procs_wdgseen[NLOG.ready_proc_name] = NPROC
+                cls.procs_wdgsee[NLOG.ready_proc_name] = NPROC
+                # dict.update(cls.procs_wdgsee, NPROC)
                 break
         else: # 是我们要关注的新进程启动的消息，但未在目前存活的进程列表中找到
             if NLOG in cls.should_seen_soon: # 上次就加进去了，这次还没就认为出错
@@ -757,22 +769,26 @@ class OutestProcsMonitor:
                 # pipe_outest_exit_layer1.set_should_exit()
                 sys.exit(1)
 
-            if NLOG.ready_proc_name and NLOG.ready_proc_name in si.expected_live_procs :
+            if NLOG.ready_proc_name :
                 cls.got_a_ready_proc_log(NLOG)
-        try: # 写文件 procs.wdgseen.json
-            json_str = '\n'.join(['{',
-                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(cls.procs_wdgseen) ]) ,
-                '}'])
-            fcntl.flock(cls.fd_wr_wdgseen, fcntl.LOCK_EX)
-            os.ftruncate(cls.fd_wr_wdgseen, 0)
-            os.pwrite(cls.fd_wr_wdgseen, json_str.encode(), 0)
-        finally:
-            fcntl.flock(cls.fd_wr_wdgseen, fcntl.LOCK_UN)
+        cls.write_procs_seen_to_fd(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
+        cls.write_procs_seen_to_fd(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
     @classmethod
-    def wdg(cls): # 看看那些已经在 procs_wdgseen 列表中的进程还存活吗
+    def write_procs_seen_to_fd(cls, procs_seen_obj, fd):
+        try:
+            json_str = '\n'.join(['{',
+                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
+                '}'])
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, json_str.encode(), 0)
+        finally:
+            fcntl.flock(fd,  fcntl.LOCK_UN)
+    @classmethod
+    def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
         cls.update_procsalive()
         cls.get_and_parse_new_wlog()
-        for proc_name,psn in dict.items(cls.procs_wdgseen):
+        for proc_name,psn in dict.items(cls.procs_wdgsee):
             for plv in cls.procs_alive:
                 if cls.aliveproc_and_seenproc_equal(plv, psn):
                     break
@@ -796,8 +812,8 @@ def read_proclist() -> list:
     else:   return read_all_from_fd_then_jsonloads(si.fd.procs_alive)
 
 def read_recogprocs() -> dict:
-    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgseen
-    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_wdgseen)
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
+    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_wdgsee)
 
 
 def get_nstypes(nsdir_path):
@@ -1140,7 +1156,7 @@ def layer_run_subp(cmdvec, subp_name=None,
         CHK( child_sock.recv(1) == b'x', "收到的来自原进程的信号不符合预期")
         child_sock.close()
 
-        wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name) if not subLayer else {}) )
+        wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name, pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree) if not subLayer else {}) )
 
         if subLayer:    startTip = f'启动子层 {subLayer}'
         elif dev_shell: startTip = '启动 dev_shell'
@@ -1280,7 +1296,7 @@ def layer_set_status(status):
     os.environ['PS1'] = ps1
 
     if status == 'booted':
-        wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00')  )
+        wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree)
 
 def wlog(event, me_proc_info=False, **kw_args) :
     if not (si and si.fd.layerslog_a): return False
