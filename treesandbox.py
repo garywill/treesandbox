@@ -1092,19 +1092,16 @@ def commit_fsPlans(fsPlans):
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 symlink(Path(src).readlink(), real_dest)
                 # TODO chroot 前后对symlink做一致性检查
-            elif Path(src).is_dir(): # 文件夹
+            elif is_dir(src): # 文件夹
                 mkdirp(real_dest)
                 mount(src, real_dest, None, mntflag_binddir, None)
                 if RO : z(d(dirpath=real_dest, flag=mntflag_binddir ))
-            #注意 Path.is_file() 在目标对象是symlink而指向文件时会返回真
-            elif (Path(src).is_file() \
-                or Path(src).is_char_device() \
-                or Path(src).is_block_device() ) :
+            elif is_file(src) or is_dev(src):
                 # 普通文件可以这这样。猜测 字符设备、块设备 也可以当普通文件一样处理
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND, None)
                 mount(None, real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if RO else None
-            elif Path(src).is_socket(): # 已知socket不能remount成ro
+            elif is_socket(src): # 已知socket不能remount成ro
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
             else:
@@ -1141,9 +1138,9 @@ def commit_fsPlans(fsPlans):
             optn='mode=0000'
             if Path(real_dest).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 raise_exit(f"要保证为空的路径{real_dest}所属文件类型为symlink，暂未实现处理方式")
-            elif Path(real_dest).is_dir(): # 文件夹
+            elif is_dir(real_dest): # 文件夹
                 mount('tmpfs', real_dest, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
-            elif Path(real_dest).is_char_device() or Path(real_dest).is_block_device(): # 设备文件
+            elif is_dev(real_dest): # 设备文件
                 mount('/dev/null', real_dest,  None, MS.BIND|MS.RDONLY, optn)
                 try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
             else: # 普通文件、socket, fifo
@@ -1353,7 +1350,7 @@ def cleanup_outest(outest_sbxdir, cg_dir):
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
-            if f.is_file() or f.is_symlink() :
+            if is_file(f) or f.is_symlink() :
                 try_pass(lambda: f.unlink() )
         try_pass(lambda: os.rmdir(dirpath) )
 
@@ -1521,7 +1518,7 @@ def napath(pstr):
     return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
 
 def make_file_exist(path): # 路径不能已有目录
-    if Path(path).is_dir(): raise_exit(f"{path}已是文件夹")
+    if is_dir(path): raise_exit(f"{path}已是文件夹")
     if not os.path.exists(path):
         mkdirp(Path(path).parent)
         Path(path).touch()
@@ -1571,6 +1568,21 @@ def is_unix_socket_listened(sock_path):
         return False
     finally:
         sock.close()
+
+def is_file(path):
+    return not Path(path).is_symlink() and Path(path).is_file()
+def is_dir(path):
+    return not Path(path).is_symlink() and Path(path).is_dir()
+def is_blockdev(path):
+    return not Path(path).is_symlink() and Path(path).is_block_device()
+def is_chardev(path):
+    return not Path(path).is_symlink() and Path(path).is_char_device()
+def is_dev(path):
+    return is_chardev(path) or is_blockdev(path)
+def is_fifo(path):
+    return not Path(path).is_symlink() and Path(path).is_fifo()
+def is_socket(path):
+    return not Path(path).is_symlink() and Path(path).is_socket()
 
 class FileContent:
     def __init__(self, data):
