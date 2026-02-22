@@ -614,7 +614,7 @@ def main2(si, thislyr_cfg):
         log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
-        if thislyr_cfg.drop_caps: # 如果非最后一层，不要让 proc 变 ro ， 否则下一层出错
+        if not thislyr_cfg.sublayers: # 如果非最后一层，不要让 proc 变 ro ， 否则下一层出错
             mount(None, new_proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
     set_ps1(si, thislyr_cfg, 'afterFs')
 
@@ -698,15 +698,16 @@ def main2(si, thislyr_cfg):
     #   如果有子进程，则等待，否则就退出
     if thislyr_cfg.unshare_pid:
         CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        # TODO 改用poll
         async def loop():
             while True:
-                await asyncio.sleep(0.3)
                 if not exist_childtree():
                     log("子进程树已空，退出")
                     sys.exit()
                 if should_exit:
                     log(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
                     sys.exit()
+                await asyncio.sleep(0.3)
         asyncio.run(loop())
 
 def cleanup_pidnsleader():
@@ -850,7 +851,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         elif plan == 'symlink':
             symlink(pItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
-        elif plan == 'empty-if-exist' :
+        elif plan == 'empty-if-exist' : # TODO landlock 优先
             if not os.path.lexists(real_dest):
                 continue
             optn='mode=0000'
@@ -874,7 +875,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             mkdirp(real_dest)
             src = rslvy(src)
             offset = get_appimg_sqoffset(src)
-            run_cmd_fg(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
+            run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
         elif plan == 'remountro':
             z(d(dirpath=real_dest, flag=pItem.flag or 0))
         else:
@@ -978,6 +979,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 log(f"因dest重复(={pItem.dest})，移除{pItem}")
                 fsPlans[i] = d(removed=True)
             used_dest.add(pItem.dest)
+    # TODO 分为 普通、remount、overlay 几个组来去重
     find_dup_dest()
     fsPlans = [pItem for pItem in fsPlans if not pItem.removed]
 
@@ -1271,8 +1273,8 @@ def padir(path):
         raise_exit(f"{path}已是根路径，无法再取得上级目录")
     return str(Path(path).parent)
 
-def run_cmd_fg(cmds_list):
-    prc = subprocess.Popen(cmds_list,
+def run_a_cmd(cmdv):
+    prc = subprocess.Popen(cmdv,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, bufsize=1, universal_newlines=True
                          )
