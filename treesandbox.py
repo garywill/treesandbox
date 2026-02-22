@@ -14,6 +14,7 @@ def userconfig(si): # 这个只在顶层解析一次
     uc = d()
 
     uc.sandbox_name='' # 沙箱名称
+    uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
 
     # 若不设置 homedir ，则会用 tmpfs 当 $HOME
     # uc.homedir=f'{si.startdir_on_host}/fakehome'
@@ -211,6 +212,11 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if uc.icewm else [] ),
 
+            *([
+            d(plan='bind', src=si.sharedir_onhost, dest='/tmp/share'),
+            d(plan='bind', src=si.sharedir_onhost, SDS=1),
+            ] if si.sharedir_onhost else []),
+
             # NOTE 用户挂载要放最后
             *uc.user_mnts, # NOTE 用户挂载要放最后
             d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
@@ -300,7 +306,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['paths_to_mask', 'machineid', 'mnts_gui']})
+            if k in ['paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost']})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
@@ -574,6 +580,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
 
+    if (sharedir_prefix := uc.sharedir_prefix):
+        CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
+        sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
+        sbxinfo.sharedir_onhost = sharedir_onhost
+    else:
+        sharedir_onhost = None
+
+
     dyncfg = gen_dynamic_cfg(sbxinfo, uc)
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
@@ -605,7 +619,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     print(f"cgroup：{CG_SBX}")
     print(f"沙箱看门狗要轮询的进程：{sbxinfo.expected_live_procs}")
 
-    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX) ) # 顶层父进程注册清理函数
+
+    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX, sharedir_onhost) ) # 顶层父进程注册清理函数
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     os.chdir(outest_sbxdir)
@@ -846,6 +861,10 @@ def main():
         si = d(json.loads(open(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read()))
 
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
+
+    if is_outest: # 是顶层
+        log(f'在 {si.sharedir_onhost} 创建主机与沙箱之间的临时共享目录')
+        mkdirp(si.sharedir_onhost)
 
     # 预先算好变根后的 sbxdir_path1
     if not tlcfg.newrootfs:
@@ -1569,7 +1588,8 @@ def safe_copy_script(copy_target_path):
 
 
 
-def cleanup_outest(outest_sbxdir, cg_dir):
+def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
+    if os.getpid() == 1: return
     # if si and si.layer1_pid: try_pass(lambda: os.setpgid(si.layer1_pid, 0) )
     pipe_outest_exit_layer1.set_should_exit()
     log(f"准备退出，等待所有子进程结束后执行清理...")
@@ -1583,13 +1603,14 @@ def cleanup_outest(outest_sbxdir, cg_dir):
         *glob(f'{outest_sbxdir}/apps'),
         *glob(f'{outest_sbxdir}/new.*.rootfs'),
         *glob(f'{outest_sbxdir}'),
-        *glob(f'{cg_dir}'),
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
             if is_file(f) or f.is_symlink() :
                 try_pass(lambda: f.unlink() )
         try_pass(lambda: os.rmdir(dirpath) )
+    for emptydir in [cg_dir, sharedir_onhost]:
+        try_pass(lambda: os.rmdir(emptydir))
 
 #==========================================
 #======= libc 工具函数 =========================
