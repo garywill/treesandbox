@@ -474,9 +474,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     gid = os.getgid()
     username = pwd.getpwuid(uid).pw_name # 获取当前用户名
     groupname = grp.getgrgid(gid).gr_name
-    HOME = f'/home/{username}' # 当前用户的家目录路径
-    print(f"启动沙箱的用户为：{username} {groupname}")
+    HOME = f'/home/{username}' if uid>0 else '/root'
     outest_pid = os.getpid()
+    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  HOME: {HOME}")
 
     sbxinfo.uid = uid
     sbxinfo.gid = gid
@@ -494,7 +494,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
-    print(f"沙箱名：{sandbox_name}")
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
@@ -503,9 +502,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         n+=1
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
-    print(f"沙箱工作目录：{outest_sbxdir}")
+    print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     os.chdir(outest_sbxdir)
-    print(f'沙箱启动PID: {outest_pid}')
+
 
     with open(f'{outest_sbxdir}/userconfig.json', 'w') as f:
         f.write(json.dumps(uc, indent=2, ensure_ascii=False))
@@ -752,7 +751,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
                     except OSError as e:
                         if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
 
-        log('准备启动（不降权）:' if not child_no_caps else '准备降权启动:' , cmdvec)
+        log('准备带权启动:' if not child_no_caps else '准备启动（降权）:' , cmdvec)
 
         # 去掉 stdin/out/err 中不需要的 （下面无法再log或print）
         devnull = os.open('/dev/null', os.O_RDWR)
@@ -1059,7 +1058,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         for i in reversed(range(0, len(fsPlans))):
             pItem = fsPlans[i]
             if pItem.dest in used_dest:
-                log(f"因dest重复(={pItem.dest})，移除{pItem}")
+                log(f"debug:因dest重复(={pItem.dest})，移除{pItem}")
                 fsPlans[i] = d(removed=True)
             used_dest.add(pItem.dest)
     # TODO 分为 普通、remount、overlay 几个组来去重
