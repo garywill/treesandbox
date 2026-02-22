@@ -1793,23 +1793,15 @@ def commit_remounts(remntPlans):
         flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
+UNSHR_MAP = types.SimpleNamespace( pid='PID', mnt='NS', user='USER', cgroup='CGROUP', ipc='IPC', time='TIME', uts='UTS', net='NET', )
 def lyrcfg_to_unshrcfg(lyrcfg):
     unshr_cfg = d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
-    for x in dict.keys(unshr_cfg): CHK(x in ['pid','mnt','user','cgroup','ipc','time','uts','net'], f'{x}这个unshare flag目前不允许使用')
+    for x in dict.keys(unshr_cfg): CHK(x in UNSHR_MAP.__dict__.keys(), f'此unshare flag 未知：{x}')
     return unshr_cfg
 def unshrflg(unshr_cfg):
     unshr_flg = 0
-    unshr_flg |= os.CLONE_NEWPID if unshr_cfg.pid else 0
-    unshr_flg |= os.CLONE_NEWNS if unshr_cfg.mnt else 0
-    unshr_flg |= os.CLONE_NEWUSER if unshr_cfg.user else 0
-    unshr_flg |= os.CLONE_NEWCGROUP if unshr_cfg.cgroup else 0
-    unshr_flg |= os.CLONE_NEWIPC if unshr_cfg.ipc else 0
-    unshr_flg |= os.CLONE_NEWTIME if unshr_cfg.time else 0
-    unshr_flg |= os.CLONE_NEWUTS if unshr_cfg.uts else 0
-    unshr_flg |= os.CLONE_NEWNET if unshr_cfg.net else 0
-    # 以下暂时不允许用
-    unshr_flg |= os.CLONE_FS if unshr_cfg.chdir else 0
-    unshr_flg |= os.CLONE_FILES if unshr_cfg.fd else 0
+    for k,v in dict.items(unshr_cfg):
+        if v: unshr_flg |= os.__dict__['CLONE_NEW' + UNSHR_MAP.__dict__[k]]
     return unshr_flg
 
 def safe_copy_script(copy_target_path):
