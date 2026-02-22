@@ -339,7 +339,7 @@ def gen_layer3(si, uc, dyncfg):
 
             *dyncfg.mnts_gui,
 
-            d(op='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
+            d(op='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.ask_xdg_open else None,
             *[d(op='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
             d(op='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
@@ -359,7 +359,7 @@ def gen_layer3(si, uc, dyncfg):
             d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),
             d(op='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
             d(op='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
-            ] if uc.icewm else [] ),
+            ] if dyncfg.icewm else [] ),
 
             *([
             d(op='bind', src=si.sharedir_onhost, dest='/tmp/share'),
@@ -394,7 +394,7 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_user=True, uid_map_as_user=True,
 
         subprocs=[
-            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) if uc.icewm else None ,
+            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) if dyncfg.icewm else None ,
 
             d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
         ],
@@ -519,9 +519,11 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         if not (real_seefrom and real_seeto):
             log_warn(f'根据bridge条目，未找到 {bItem} 所指示的层，忽略条目')
             continue
+        bridge_name = f'bridge_<{real_seefrom.removeprefix('layer')}>_<{real_seeto.removeprefix('layer')}>'
         dcp_bItem = copy.deepcopy(bItem)
-        dcp_bItem.update( d(seefrom=real_seefrom , seeto=real_seeto) )
+        dcp_bItem.update( d(real_seefrom=real_seefrom , real_seeto=real_seeto, bridge_name=bridge_name) )
         bridges.append(dcp_bItem)
+        si.expected_alive_procs.append(bridge_name)
     si.bridges = bridges
 
 
@@ -668,6 +670,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
             CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
             CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
             CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
+            CHK( not subpItem.subp_name.startswith('bridge_'), f"子进程名称 {subpItem.subp_name} 以'bridge_'开头不合法 {subpItem}")
             used_proc_names.append(subpItem.subp_name)
 
         if cfg.user_shell: used_proc_names.append('user_shell')
@@ -1061,7 +1064,10 @@ def main2(skp_lyfk):
     #-------------------------------------------
 
     # 向最外层发送“本层已boot”，
-    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
+    wlog('layer_booted', me_proc_info=True,
+         ready_proc_name=tlcfg.layer_name,
+         cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') ,
+         pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
          **(d(is_mainlyr=True) if tlcfg.is_mainlyr else {}),
          **(d(is_semitruCmpannLyr=True) if tlcfg.is_semitruCmpannLyr else {}),
     )
@@ -1124,7 +1130,15 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
         wait_for_startAfters(start_after)
 
-        wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name, pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree) if not subLayer else {}) )
+        wlog('subp_start', me_proc_info=True,
+                cmdvec=cmdvec,
+                **( d(
+                    ready_proc_name=subp_name,
+                    pidns_depth=tlcfg.pidns_depth,
+                    pidns_tree=tlcfg.pidns_tree,
+                    ) if not subLayer else {}
+                ),
+        )
 
         if subLayer:    startTip = f'启动子层 {subLayer}'
         elif dev_shell: startTip = '启动 dev_shell'
@@ -1753,37 +1767,51 @@ class OutestProcsMonitor:
             cls.check_bridges_condition_and_do(proc_name, bItem)
     @classmethod
     def check_bridges_condition_and_do(cls, proc_name, bItem):
-        seefrom = bItem.seefrom
-        seeto   = bItem.seeto
+        seefrom = bItem.real_seefrom
+        seeto   = bItem.real_seeto
+        bridge_name = bItem.bridge_name
         condition = [seefrom, seeto]
         if proc_name in condition:
             if set(condition).issubset(set(dict.keys( cls.procs_histseen ))):
-                log(f'创建桥 {bItem}')
+                log(f'创建桥 {bridge_name}')
                 seefrom_pid = cls.procs_histseen[seefrom].NSpid[0]
                 seeto_pid   = cls.procs_histseen[seeto].NSpid[0]
                 pidfd_seefrom = os.pidfd_open(seefrom_pid)
                 pidfd_seeto   = os.pidfd_open(seeto_pid)
-                bridge_name = f'bridge_<{seefrom.removeprefix("layer")}>_to_<{seeto.removeprefix("layer")}>'
+                ns_seefrom = get_nstypes(f'/proc/{seefrom_pid}/ns')
+                ns_seeto   = get_nstypes(f'/proc/{seeto_pid}/ns')
                 PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name )
-                if PID1 == 0: # 第一个子进程
+                if PID1 == 0: # 第一个子进程.因为之前创建layer1时unshare过，这里已经是与layer1同pidns
                     set_important_fds_cloexec()
                     # TODO 判断其他ns种类，如果不同，也要setns过去
                     os.setns(pidfd_seefrom, unshrflg(d(pid=1)))
 
                     PID2, _ = fork(loghead=f'{loghead} F')
-                    if PID2 == 0 : # 第二个子进程（孙进程)
+                    if PID2 == 0 : # 第二个子进程（孙进程). 与seefrom同pidns
                         mypid = os.getpid()
 
-                        wlog('subp_start', ready_proc_name=bridge_name ,  self_see_pid=mypid, cmdvec=['sleep', 'infinity'], pidns_depth=2, pidns_tree=['layer1','layer2c']) # TODO 有些参数现在是硬编码的,如果改了其他地方，这里会不准
-
                         os.setns(pidfd_seefrom, unshrflg(d(mnt=1))) # 先改一次mnt ns ， 等下还要改
+
+
                         for lkItem in (bItem.create_links or []) :
                             path = napath(lkItem)
                             symlink(f'/proc/{mypid}/root/{path.lstrip('/')}', path)
 
-                        os.setns(pidfd_seeto, unshrflg(d(mnt=1)))
-                        os.setns(pidfd_seefrom, unshrflg(d(user=1)))
+                        start_tick=get_start_tick('/proc/self/stat')
+                        ns = get_nstypes(f'/proc/self/ns') # 这还不是最终的，还要改
+                        os.setns(pidfd_seeto, unshrflg(d(mnt=1))) # 在这之后就不可以获得自己的ns或start_tick信息
+                        ns.mnt = ns_seeto.mnt
+                        os.setns(pidfd_seefrom, unshrflg(d(user=1))) # 在这之后无法setns
+                        ns.user = ns_seefrom.user
 
+                        wlog('subp_start',
+                             ready_proc_name=bridge_name ,
+                             self_see_pid=mypid,
+                             start_tick=start_tick,
+                             ns=ns,
+                        )
+
+                        # log(os.listdir('/tmp/.X11-unix'))
                         drop_caps(no_textcheck_after_dropcap=True)
                         log('execvp sleep infinity')
                         os.execvp('sleep', ['sleep', 'infinity'])
@@ -1832,7 +1860,7 @@ class OutestProcsMonitor:
     def get_and_parse_new_wlog(cls):
         new_logs = WlogReader.readnew()
         for logItem in (cls.logs_should_match_soon + new_logs):
-            logItem = d(logItem)
+            logItem = dn(logItem)
 
             if logItem.event == 'error':
                 log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
@@ -2115,7 +2143,6 @@ def wlog(event, me_proc_info=False, **kw_args) :
         event = event,
         **kw_args
     )
-    if event in ['layer_booted','subp_start']: me_proc_info = True
     if me_proc_info:
         logObj.self_see_pid=os.getpid()
         logObj.start_tick=get_start_tick('/proc/self/stat')
@@ -2560,7 +2587,6 @@ class EnhancedDict(dict):
         try:
             return self[name]
         except KeyError:
-            # 如果键不存在，则返回 我们自定义的
             return FALSE
     def __setattr__(self, name, value):
         self[name] = value
@@ -2580,10 +2606,23 @@ class DotDict(EnhancedDict):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
-        return self[name]
+        try:
+            return self[name]
+        except :
+            raise
+class EnhancedDictNone(EnhancedDict):
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        try:
+            return self[name]
+        except :
+            return None
 
-d = EnhancedDict
-D = DotDict
+
+d = EnhancedDict # 试图访问不存在的键时，会返回EnhancedFalse
+dn = EnhancedDictNone #试图访问不存在的键时， 返回None
+D = DotDict # 试图访问不存在的键时, 报错
 
 
 def eq_ignore_order(v1, v2):
