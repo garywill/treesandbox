@@ -35,6 +35,7 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.user_mnts = [
         # d(batch_plan='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
         # d(plan='robind', src=f'{si.startdir_on_host}', SDS=1),
+        # d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME),
     ]
 
     # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
@@ -338,9 +339,11 @@ def recr_rm_empty_lyr(si, cfg):
 
 def findout_expected_alive_procs(si, layer1_cfg):
     used_names = []
+    si.all_layers = []
     def _recr(cfg):
         nonlocal used_names
         CHK( cfg.layer_name not in used_names, f"名称 {cfg.layer_name} 有重复")
+        si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_names.append(cfg.layer_name)
         for subpItem in (cfg.subprocs or [] ):
@@ -434,12 +437,15 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
 
     if parent_cfg is None:
+        pa_tree = []
         pa_pidns_depth = 0
         pa_pidns_tree = []
     else:
+        pa_tree = parent_cfg.tree
         pa_pidns_depth = parent_cfg.pidns_depth
         pa_pidns_tree  = parent_cfg.pidns_tree
 
+    cfg.tree = pa_tree + [cfg.layer_name]
     cfg.pidns_depth = pa_pidns_depth + (0  if not cfg.unshare_pid else 1)
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
 
@@ -896,8 +902,9 @@ def main():
     for env_to_unset in (tlcfg.envs_unset or [] ):
         os.environ.pop(env_to_unset, None)
     for envg in (tlcfg.envset_grps or [] ) :
-        log('设置环境变量' , envg)
-        os.environ.update(envg)
+        if len(dict.keys(envg))>0:
+            log('更新环境变量' , envg)
+            os.environ.update(envg)
 
     for wait_task in (tlcfg.start_after or [] ):
         if wait_task.waittype == 'socket-listened':
@@ -1218,7 +1225,7 @@ def make_proc_ro(proc_path, allow_newmntns):
         mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, PROC_MNT_SAFE_OPTN)
 
 def cleanup_pidnsleader():
-    CHK( os.getpid() == 1, "应该只有pid=1的领头进程会运行此函数")
+    if os.getpid() != 1 : log("错误：pid != 1 。应该只有领头进程运行此清理函数"); return
     for u in range(3):
         if not exist_childtree(): break
         os.kill(-1, signal.SIGTERM)
