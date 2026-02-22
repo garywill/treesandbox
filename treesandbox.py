@@ -292,14 +292,19 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     ]
 
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
+        def is_XId_available(XId):
+            if not os.path.lexists(f'/tmp/.X11-unix/X{XId}')  \
+            and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
+                return True
+            else: return False
         if uc.XId:
-            CHK( str(uc.XId) != '0' , '沙箱内的虚拟X11的显示编号不能用0')
+            CHK( str(uc.XId) != '0' , '沙箱内的虚拟X11的显示编号暂时不支持用0')
+            CHK( is_XId_available(uc.XId), f"指定的 {uc.XId=} 被占用")
             XId = uc.XId
             log(f'沙箱内隔离的X11的显示编号使用指定的 DISPLAY=:{XId}')
         else:
             while (XId := random.randrange(230, 980) ) :
-                if not os.path.lexists(f'/tmp/.X11-unix/X{XId}')  \
-                and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
+                if is_XId_available(XId):
                     log(f'沙箱内隔离的X11的显示编号使用生成的随机号码 DISPLAY=:{XId}')
                     break
 
