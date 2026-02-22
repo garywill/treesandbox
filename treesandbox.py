@@ -578,13 +578,13 @@ def main():
                 time.sleep(0.1)
                 pass
 
-    set_ps1( thislyr_cfg, 'beforeUnshare')
+    set_ps1('beforeUnshare')
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag(thislyr_cfg)
     os.unshare(unshare_flag)
 
-    set_ps1( thislyr_cfg, 'afterUnshare')
+    set_ps1('afterUnshare')
 
     # log(f"即将fork")
     pid = os.fork()
@@ -595,7 +595,7 @@ def main():
         else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
             while os.getppid() not in [0, 1] : time.sleep(0.03)
 
-        main2( thislyr_cfg)
+        main2()
         # log(f"fork后的子进程即将退出")
         sys.exit()
     else: # 父进程
@@ -604,7 +604,7 @@ def main():
 
         atexit.register(lambda: cleanup_outest() ) # 顶层父进程注册清理函数
 
-        set_ps1( thislyr_cfg, 'PaAfterFork')
+        set_ps1('PaAfterFork')
 
         _, status = os.waitpid(pid, 0)
         if os.WIFEXITED(status):
@@ -615,13 +615,13 @@ def main():
             log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
 
 
-def main2( thislyr_cfg):
+def main2():
     # 写uid_map 等 。一般来说配合 unshare_user
     if thislyr_cfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
     if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
     if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
-    set_ps1( thislyr_cfg, 'forkedBeforeFs')
+    set_ps1('forkedBeforeFs')
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 如果设置了将要变根，现在先提前确定新根的位置
@@ -632,7 +632,7 @@ def main2( thislyr_cfg):
     mkdirp(thislyr_cfg.newrootfs_path)
 
     if thislyr_cfg.fs:
-        build_thislyr_fs( thislyr_cfg) # 无论本层是否设置了变根，都调用这个函数
+        build_fs() # 无论本层是否设置了变根，都调用这个函数
 
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
@@ -645,7 +645,7 @@ def main2( thislyr_cfg):
         makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
     if not thislyr_cfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
         make_proc_ro( new_proc_path , allow_newmntns=False )
-    set_ps1( thislyr_cfg, 'afterFs')
+    set_ps1('afterFs')
 
     # 执行变根 (chroot)
     if thislyr_cfg.newrootfs:
@@ -666,7 +666,7 @@ def main2( thislyr_cfg):
     if thislyr_cfg.sbxdir_path1:
         os.chdir(thislyr_cfg.sbxdir_path1)
 
-    set_ps1( thislyr_cfg, 'afterChroot')
+    set_ps1('afterChroot')
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   处理各种SIGNAL
@@ -676,18 +676,18 @@ def main2( thislyr_cfg):
         for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
             signal.signal(sig, signals_handler)
 
-    set_ps1( thislyr_cfg, 'afterRegSigs')
+    set_ps1('afterRegSigs')
 
     direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
 
     if thislyr_cfg.user_shell:
         if thislyr_cfg.sublayers or thislyr_cfg.dropcap_then_cmds:
             log("警告：因为启用了user_shell, 其余要启动的命令或子容器都会被忽略", file=sys.stderr)
-        layer_run_subp ( thislyr_cfg, ['/bin/bash', '--norc' ] , blocking=True)
+        layer_run_subp (['/bin/bash', '--norc' ] , blocking=True)
         sys.exit()
 
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
-        pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdvec ,
+        pid = layer_run_subp (cmdItem.cmdvec ,
                 stdin =cmdItem.stdin , stdout=cmdItem.stdout, stderr=cmdItem.stderr,
                 child_no_caps=True, workdir=thislyr_cfg.workdir
             )
@@ -697,7 +697,7 @@ def main2( thislyr_cfg):
     # log(f"本层将生成 {len(sublayers)} 个子层")
     for sublyr_cfg in (sublayers or []):
         log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
-        pid = layer_run_subp(thislyr_cfg, [
+        pid = layer_run_subp([
                 si.pythonbin ,
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                 # 因此用本层的path1
@@ -728,7 +728,7 @@ def main2( thislyr_cfg):
     # 如果不是 unshare_pid 的 ,这里直接结束退出
 
 safe_mntns_fd = None
-def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None):
+def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None):
     global safe_mntns_fd
     # 使用 socketpair 替代两个 pipe
     child_sock, parent_sock = socket.socketpair()
@@ -853,7 +853,7 @@ def exist_childtree():
 
 
 ps1 = ">"
-def set_ps1( thislyr_cfg, status):
+def set_ps1(status):
     global ps1
     ps1 = ''.join( [
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
@@ -870,15 +870,15 @@ def set_ps1( thislyr_cfg, status):
     )
     os.write(si.fd_layerslog_a, ''.join([json.dumps(logobj), '\n']).encode())
 
-def build_thislyr_fs( thislyr_cfg):
+def build_fs():
     # 无论本层是否设置了变根，都调用这个函数
     # 操作目标的基 可能是 '/' （不变根的话） ,  也可能是新根路径 （变根的话）
-    fsPlans = gen_fsPlans_by_lyrcfg( thislyr_cfg)
-    remountPlans = commit_thislyr_fsPlans( thislyr_cfg, fsPlans)
+    fsPlans = gen_fsPlans()
+    remountPlans = commit_fsPlans(fsPlans)
     commit_remounts(remountPlans)
 
 
-def commit_thislyr_fsPlans( thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
+def commit_fsPlans(fsPlans): # 这个函数是本层为本层调用的
     target_fs_path = thislyr_cfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
@@ -980,12 +980,12 @@ def commit_thislyr_fsPlans( thislyr_cfg, fsPlans): # 这个函数是本层为本
 
     return remountPlans
 
-def gen_fsPlans_by_lyrcfg( lyr_cfg): # 把fs里面的batch_plan都转成plan,并去重、排序
+def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
     fsPlans = []
     def a(stepobj):
         fsPlans.append(stepobj)
 
-    for pItem in lyr_cfg.fs:
+    for pItem in thislyr_cfg.fs:
         # 一个 pItem 里， batch_plan 和 plan 只应该出现其中一种
         batch_plan = pItem.batch_plan # 预设的多个plan的集合
         plan = pItem.plan # 一个plan
