@@ -564,11 +564,60 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         return fd
 
     sbxinfo.fd_layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+    sbxinfo.fd_procs = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
     # 还要加将给app的cli参数
     return sbxinfo, layer1_cfg
+
+def write_proclist_fd(proclist_arr):
+    text = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in proclist_arr]) ,']'])
+    try:
+        fcntl.flock(si.fd_procs, fcntl.LOCK_EX)
+        os.ftruncate(si.fd_procs, 0)
+        os.pwrite(si.fd_procs, text.encode(), 0)
+    finally:
+        fcntl.flock(si.fd_procs, fcntl.LOCK_UN)
+
+def read_proclist_fd() -> dict:
+    try:
+        fcntl.flock(si.fd_procs, fcntl.LOCK_EX)
+        text = os.pread(si.fd_procs, os.fstat(si.fd_procs).st_size, 0).decode()
+    finally:
+        fcntl.flock(si.fd_procs, fcntl.LOCK_UN)
+    return d(json.loads(text))
+
+def get_nstypes(nsdir_path):
+    return d({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
+
+def get_start_tick(statfile_path): # 返回的是字符串，不是数字
+    return open(statfile_path,'r').read().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
+
+def update_proclist(): # 只有 最外层 原进程 调用这个函数
+    def get_NSpid_arr(status_file_path) -> list:
+        for line in Path(status_file_path).read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return [int(x) for x in line.split()[1:]]
+    host_pids = Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines()
+    proclist = []
+    for pid in host_pids:
+        try:
+            inode1 = os.stat(f'/proc/{pid}').st_ino
+
+            comm = Path(f'/proc/{pid}/comm').read_text().strip()
+            NSpid = get_NSpid_arr(f'/proc/{pid}/status')
+            start_tick = get_start_tick(f'/proc/{pid}/stat')
+            ns = get_nstypes(f'/proc/{pid}/ns')
+            cmdvec = open(f'/proc/{pid}/cmdline').read().strip('\x00').split('\x00')
+
+            inode2 = os.stat(f'/proc/{pid}').st_ino
+            if inode1 != inode2: continue
+        except:
+            continue
+        proclist.append(d( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
+    write_proclist_fd(proclist)
+    return proclist # 往fd里写之后也返回
 
 si = None # sbxinfo , sandbox info
 thislyr_cfg = None
@@ -620,6 +669,11 @@ def main():
                 pass
 
     layer_set_status('beforeUnshare')
+
+    if is_outest:
+        mkdirp(si.CG_SBX)
+        Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
+        update_proclist()
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag(thislyr_cfg)
@@ -801,7 +855,7 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         wlog('subp_starting', logNs=True,
             kvpairs=d(
                 self_see_pid=os.getpid(),
-                start_tick=open('/proc/self/stat','r').read().split(') ')[-1].split(' ')[22-1-2],  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
+                start_tick=get_start_tick('/proc/self/stat'),
                 subp_cmdvec=cmdvec,
             )
         )
@@ -933,9 +987,7 @@ def wlog(*args, kvpairs={},  logNs=False, errmsg=None):
         logObj.errmsg = errmsg
     if event == 'booted': logNs = True
     if logNs:
-        logObj.ns = d()
-        for nstype in os.listdir('/proc/self/ns'):
-            logObj.ns[nstype] = os.stat(f'/proc/self/ns/{nstype}').st_ino
+        logObj.js = get_nstypes(f'/proc/self/ns')
     try:
         fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_EX)
         os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
