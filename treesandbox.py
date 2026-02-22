@@ -392,6 +392,8 @@ def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把l
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
+        # dirmaker.xxx.name
+        # dirmaker.name -> dirmaker.xxx.name
         # sbxinfo.json
         # bootsbx.py
         # sbx.xxx.name
@@ -408,12 +410,6 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
     elif call_at_buildfs: # 为本层接下来的新文件系统准备的 （可能 变根=新旧路径不同  ，也可能 不变根=新旧路径同）
         target_sbxdir_path = napath(f'{lyrcfg.newrootfs_path}/{lyrcfg.sbxdir_path1}')
         old_sbxdir_path = napath(lyrcfg.sbxdir_path0)
-
-    if call_at_begin: # 刚启动脚本
-        si.fd_layerslog_a = os.open(f'{target_sbxdir_path}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
-        flags = fcntl.fcntl(si.fd_layerslog_a, fcntl.F_GETFD)
-        flags = flags & ~fcntl.FD_CLOEXEC
-        fcntl.fcntl(si.fd_layerslog_a, fcntl.F_SETFD, flags)
 
     if target_sbxdir_path == old_sbxdir_path:
         return
@@ -469,14 +465,11 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
             mkdirp(f'{target_sbxdir_path}/new.{lyr_cfg.layer_name}.rootfs')
         for sublyr_cfg in (lyr_cfg.sublayers or [] ) :
             create_lyrs_files_recr(sublyr_cfg)
-    for sublyr_cfg in (lyrcfg.sublayers or [] ) :
-        create_lyrs_files_recr(sublyr_cfg)
 
-    # 判断是最外层 才把 本层配置（即第1层） 和 userconfig 写入
-    if call_at_begin and lyrcfg.depth==1:
-        with open(f'{target_sbxdir_path}/lyr_cfg.{lyrcfg.layer_name}.json', 'w') as f:
-            f.write(json.dumps(lyrcfg, indent=2, ensure_ascii=False) )
-            os.chmod(f.name, 0o444)
+    # 判断是最外层 才把 本层配置（即第1层） 写入,否则只写子层
+    arr_recr_create_conf = [lyrcfg] if call_at_begin else (lyrcfg.sublayers or [] )
+    for sublyr_cfg in arr_recr_create_conf :
+        create_lyrs_files_recr(sublyr_cfg)
 
     if new_tmpfs_for_sbxdir:
         os.chmod(target_sbxdir_path, 0o555)
@@ -560,6 +553,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     with open(f'{outest_sbxdir}/dyncfg.json', 'w') as f:
         f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
+
+    def create_file_for_sbx_fd(filepath, open_flag, filemode):
+        fd = os.open(filepath, open_flag, filemode)
+        new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
+        fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
+        return fd
+
+    sbxinfo.fd_layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
