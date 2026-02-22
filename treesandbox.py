@@ -1929,7 +1929,14 @@ class EnhancedDict(dict):
         elif isinstance(value, list):
              processed_value = self._convert_list(value)
         super().__setitem__(key, processed_value)
+class DotDict(EnhancedDict):
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return self[name]
+
 d = EnhancedDict
+D = DotDict
 
 loghead = ''
 def set_loghead(new_loghead):
