@@ -249,8 +249,8 @@ def gen_layer4(si, uc, dyncfg):
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
         workdir=uc.workdir if uc.workdir else None,
-        # user_shell=True, # 主要给调试用
-        # dev_shell=True,  # 主要给调试用
+        # user_shell=True, # 调试用
+        # dev_shell=True,  # 调试用
         subprocs=[
             d( cmdvec=uc.default_app , mainApp=True), # mainApp=True 表示这是启动 主app进程 的命令
         ],
@@ -333,7 +333,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     CHK( cfg.layer_name, "存在某层没有设置layer_name")
     CHK( re.match(r'^[a-zA-Z0-9_-]+$', cfg.layer_name), f"layer_name只能有字母、数字、杠、下划线。此名称不合法： {cfg.layer_name}" )
     CHK( cfg.layer_name not in resv_words, f"层名{cfg.layer_name}与保留字段{resv_words}重复")
-
+    CHK( cfg.layer_name.startswith('layer'), f"层名{cfg.layer_name}非以'layer'开头")
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
 
@@ -409,7 +409,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 
     cfg.pidns_depth = pa_pidns_depth + (0  if not cfg.unshare_pid else 1)
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
-    # print(cfg.layer_name, cfg.pidns_depth, cfg.pidns_tree)
 
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
@@ -451,7 +450,8 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
     mkdirp(target_sbxdir_path)
     new_tmpfs_for_sbxdir = True if call_at_buildfs else False
     if new_tmpfs_for_sbxdir:
-        mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, None)
+        mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, 'mode=700')
+
 
     if not os.path.lexists(f'{target_sbxdir_path}/dirmaker.layer.name'):
         with open(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name', 'w') as f:
@@ -466,7 +466,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
     if old_sbxdir_path :
         if not Path(f'{old_sbxdir_path}/apps').is_mount():
             # 创建新的空的 tmpfs 给apps
-            mount('tmpfs', f'{target_sbxdir_path}/apps', 'tmpfs', mntflag_apps, None)
+            mount('tmpfs', f'{target_sbxdir_path}/apps', 'tmpfs', mntflag_apps, 'mode=755')
         else:
             # 把上一层的apps bind过来. 不是最后一层就应该要保留rw
             mount(f'{old_sbxdir_path}/apps', f'{target_sbxdir_path}/apps', None, MS.BIND|mntflag_apps, None)
@@ -474,7 +474,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
 
     mkdirp(f'{target_sbxdir_path}/temp')
     if call_at_buildfs:
-        mount('tmpfs', f'{target_sbxdir_path}/temp', 'tmpfs', mntflag_sbxtemp, None)
+        mount('tmpfs', f'{target_sbxdir_path}/temp', 'tmpfs', mntflag_sbxtemp, 'mode=755')
 
 
 
@@ -509,6 +509,12 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
 
    # build_fs 时原有：
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
+
+def create_file_for_sbx_fd(filepath, open_flag, filemode):
+    fd = os.open(filepath, open_flag, filemode)
+    new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
+    fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
+    return fd
 
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
@@ -586,12 +592,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
 
-    def create_file_for_sbx_fd(filepath, open_flag, filemode):
-        fd = os.open(filepath, open_flag, filemode)
-        new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
-        fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
-        return fd
-
     sbxinfo.fd = d()
     sbxinfo.fd.update( d(
         layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
@@ -599,6 +599,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644),  # TODO 改用RDONLY
 
     ) )
+
+    sbxinfo.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
@@ -849,8 +851,8 @@ def main2():
     if tlcfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
     if tlcfg.uid_map: Path('/proc/self/uid_map').write_text(tlcfg.uid_map)
     if tlcfg.gid_map: Path('/proc/self/gid_map').write_text(tlcfg.gid_map)
-
-    log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
+    if tlcfg.setgroups_deny or tlcfg.uid_map or tlcfg.gid_map:
+        log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
     layer_set_status('forkedBeforeFs')
 
     # 如果设置了将要变根，现在先提前确定新根的位置
@@ -1060,11 +1062,12 @@ def makesure_proc_safe(proc_path, allow_newmntns):
     make_proc_ro(proc_path, allow_newmntns=allow_newmntns)
 
 def make_proc_ro(proc_path, allow_newmntns):
+    PROC_MNT_SAFE_OPTN = 'hidepid=1'
     if not os.statvfs(proc_path).f_flag&MS.RDONLY :
         if allow_newmntns :
             log('创建并进入新的安全mnt ns以为新进程的运行做准备')
             os.unshare(gen_unshareflag(d(unshare_mnt=True)))
-        mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
+        mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, PROC_MNT_SAFE_OPTN)
 
 def cleanup_pidnsleader():
     CHK( os.getpid() == 1, "应该只有pid=1的领头进程会运行此函数")
@@ -1222,7 +1225,7 @@ def commit_fsPlans(fsPlans):
             RO = True if plan == 'rotmpfs' else False
             mkdirp(real_dest)
             flag = pItem.flag or mntflag_tmpfs
-            mount('tmpfs', real_dest, 'tmpfs', flag , None)
+            mount('tmpfs', real_dest, 'tmpfs', flag , 'mode=755')
             if RO : z(d(dirpath=real_dest, flag=flag))
         elif plan == 'dir':
             mkdirp(real_dest)
@@ -1585,8 +1588,6 @@ def drop_caps():
         log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
-    BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
-
     show_clear_result = False
     log('降权前', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
@@ -1595,7 +1596,7 @@ def drop_caps():
     log('清除中', get_caps_dict()) if show_clear_result else None
     set_nonewpriv(doprint=show_clear_result)
     log('清除中', get_caps_dict()) if show_clear_result else None
-    bnd_clear(BND_MAX,  doprint=show_clear_result)
+    bnd_clear(si.BND_MAX,  doprint=show_clear_result)
     log('清除中', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
     log('降权后', get_caps_dict()) if show_clear_result else None
@@ -1610,7 +1611,7 @@ def drop_caps():
     # libc验证 no_new_privs
     CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
     # libc验证 bounding set
-    for cap_id in range(BND_MAX +1): # 内核只支持0~40
+    for cap_id in range(si.BND_MAX +1): # 内核只支持0~40
         CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
 
 
