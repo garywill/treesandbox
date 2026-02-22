@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource, string
 from pathlib import Path
 from glob import glob
 shutil.rmtree = None
@@ -16,7 +16,7 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.sandbox_name='' # 沙箱名称
 
-    # uc.reuseInstance=True # 复用正在运行的同种沙箱实例（即，单实例沙箱，否则为多实例沙箱）
+    # uc.reuseInstance=True # 复用正在运行的同名沙箱实例（即，单实例沙箱，否则为多实例沙箱）
     uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # 允许在无app的情况下保持沙箱存活多久（秒）
 
     uc.apps = [
@@ -71,7 +71,6 @@ def userconfig(si): # 这个只在顶层解析一次
     # 用户(session) DBUS 如何处理 （输入法等通信需要dbus）
     # uc.dbus_session="allow" # 允许与主机的用户dbus全部通信
     # uc.dbus_session="filter" # 用dbusproxy来过滤。默认过滤规则:允许输入法和通知（还可以自己在 uc.dbusproxy_extra 中加）
-    # uc.dbus_session="isolated" (未实现) 沙箱内另开一个dbus服务
     if uc.gui: uc.dbus_session="filter"
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (来自flatpak) 的额外参数
@@ -144,28 +143,35 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = [] # 内部，不传递
     paths_to_mask = [] # 传递
     mnts_dns = []
+    mnts_gui = []
     xephyr_extra_args = []
     weston_extra_args = []
     xpra_extra_args = [] ; xpra_server_extra_args = []
     xwayland_extra_args = []
     bridges = []
+    #-------------------------
 
     icewm = True if uc.gui in ['xephyr','weston'] else False
 
-    mnts_gui = [
-        *([
+    if uc.see_userfonts: mnts_gui += [
         d(op='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
         d(op='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
         d(op='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
-        ] if uc.see_userfonts else [] ),
-        *([
-        d(op='rosame', src='/dev/dri', SDS=1),
-        d(op='rosame', src='/sys/class/drm', SDS=1),
-        *[ d(op='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
-        *[ d(op='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
-        *[ d(op='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
-        ] if uc.gpus else [] ),
     ]
+
+    if uc.gpus: # /sys/module/i915 这类一般不用也可以
+        sys_devices_pciX_X = [ padir(p) for p in glob('/sys/devices/*/*/drm') ]
+        mnts_gui += [
+            d(op='rosame', src='/dev/dri', SDS=1),
+            d(op='rosame', src='/sys/class/drm', SDS=1),
+            *[ d(op='rosame', src=p, SDS=1) for p in glob('/sys/dev/char/226:*') ],
+            *[ d(op='rosame', src=p, SDS=1) for p in sys_devices_pciX_X ],
+            *[ d(op='rosame', src=rslvy(f'{p}/driver'), SDS=1) for p in sys_devices_pciX_X ],
+        ]
+        for link in glob('/sys/bus/pci/devices/*'):
+            if rslvy(link) in sys_devices_pciX_X:
+                mnts_gui += [ d(op='rosame', src=link, SDS=1) ]
+
 
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
         if uc.newXId:
@@ -211,7 +217,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             xpra_extra_args +=   ['--clipboard-direction=disabled']
         else: xpra_extra_args += ['--clipboard-direction=to-client']
 
-        xpra_server_extra_args += [f'--xvfb=Xorg -ac -noreset -novtswitch -nolisten tcp +extension GLX +extension RANDR +extension RENDER   -config /etc/xpra/xorg.conf  -depth 24 :{newXId}' ]
+        xpra_server_extra_args += [f'--xvfb=Xorg -ac -noreset -novtswitch -nolisten tcp  -nolisten local +extension GLX +extension RANDR +extension RENDER   -config /etc/xpra/xorg.conf  -depth 24 :{newXId}' ]
         # xpra_server_extra_args += [f'--xvfb=Xwayland :{newXId}']
         # Xorg的参数-ac让不需要XAUTHORITY。 如果不自定义xpra的--xvfb的值的话，无法让Xserver免认证。xpra的--auth可能控制的是xpra的客户端与服务端之间的认证，不是x server与client的认证
 
@@ -368,7 +374,7 @@ def gen_layer2c(si, uc, dyncfg):
     # layer2c实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
     return d(
         layer_name='layer2c', unshare_pid=True, unshare_mnt=True,
-        unshare_net=True, # NOTE xephyr会监听抽象套接字。为了不被其他沙箱偷看，要隔离 . 也可以考虑用 unshare -n -r -c 来启动xephyr
+        unshare_net=True, # 如果有些subp会监听抽象套接字，为了不被其他沙箱偷看，要隔离. 也可以考虑用 unshare -n -r -c 来启动它们
         newrootfs=True,
         fs=[
             d(many_op='dup-rootfs', destbase='/'),
@@ -376,7 +382,7 @@ def gen_layer2c(si, uc, dyncfg):
         ],
         is_semitruCmpannLyr=True, # 设layer2c（而非2）为semitruCmpannLyr,因为2c才有unshare_pid
         subprocs=[
-            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  f":{si.newXId}", '-nolisten', 'local', "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
             d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
 
             d(
@@ -508,14 +514,14 @@ def gen_layer4c(si, uc, dyncfg):
     return d(
         layer_name='layer4c', # 默认模板的 layer_name 不要修改
         unshare_pid=True, unshare_mnt=True,
-        unshare_net=True, # NOTE 内部Xorg可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
+        unshare_net=True, # NOTE 内部xpra所带出来的dbus可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
         subprocs=[
             *([
             d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
             d( cmdvec=["icewmtray"] , subp_name='icewmtray', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
             ] if dyncfg.icewm else [] ) ,
 
-            d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
+            d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
             d( cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], subp_name='xpraserver' ) if uc.gui=='xpra' else None,
         ],
     )
