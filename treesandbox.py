@@ -124,7 +124,7 @@ def gen_layer2(si, uc, dyncfg):
 
             d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
             d(batch_plan='mask-privacy', destbase='/zrootfs'),
-            d(plan='empty-if-exist', dest=f'/zrootfs/{PTMP}'),
+            d(plan='empty-if-exist', dest=f'/zrootfs/{si.PTMP}'),
         ],
         envs_unset=[
             "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
@@ -692,8 +692,6 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
-    mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
-
     si = d()
 
     # 从外部(linux host)启动沙箱的原本用户信息
@@ -706,9 +704,13 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     log(f'PID = {outest_pid}')
     startscript_on_host = scriptfilepath
     startdir_on_host = scriptdirpath
+    PTMP = f'/tmp/tsbxs-{uid}'
+
+    mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
+    os.chmod(PTMP, 0o700)
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
+        ['PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
          'startscript_on_host', 'startdir_on_host']
     } )
 
@@ -1589,10 +1591,10 @@ def commit_fsPlans(fsPlans):
     def z(rmtItem):
         remountPlans.append(rmtItem)
 
-    if target_fs_path.startswith(PTMP):
-        mount(PTMP, PTMP, None, MS.BIND|MS.REC|MS.RDONLY, None)
-        mount(None, PTMP, None, MS.REMOUNT|MS.BIND|MS.REC|MS.RDONLY, None)
-        CHK( os.statvfs(PTMP).f_flag&MS.RDONLY, "PTMP未成功转换为ro")
+    if target_fs_path.startswith(si.PTMP):
+        mount(si.PTMP, si.PTMP, None, MS.BIND|MS.REC|MS.RDONLY, None)
+        mount(None, si.PTMP, None, MS.REMOUNT|MS.BIND|MS.REC|MS.RDONLY, None)
+        CHK( os.statvfs(si.PTMP).f_flag&MS.RDONLY, "si.PTMP未成功转换为ro")
 
     mkdirp(target_fs_path)
     if napath(target_fs_path) != '/':
@@ -2280,8 +2282,6 @@ def get_appimg_sqoffset(appimg_path):
     return (shoff + shentsize * shnum)
 
 #=====================================================
-# 常量
-PTMP = '/tmp/tsbxs' # 不同沙箱实例共用的 主临时目录
 
 if __name__ == "__main__":
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
