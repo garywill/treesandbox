@@ -57,8 +57,10 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.default_app = ['bash'] # 命令不是字符串，而是shell命令以空格分割成的数组
 
     # 输入法等通信需要dbus
-    uc.dbus_session="allow"
-    # uc.dbus_session="filter" # (暂未实现)
+    # uc.dbus_session="allow"
+    uc.dbus_session="filter" # 默认允许输入法和通知。还可以自己在 uc.dbusproxy_extra 中加
+
+    # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (flatpak) 的额外参数
 
     uc.net=d(
         iface='real', # 使用真实的网络介面
@@ -147,6 +149,7 @@ def gen_layer2c(si, uc, dyncfg):
         ],
         subprocs=[
             d( cmdvec=["Xephyr",  f":{si.XId}",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
     )
 
@@ -154,6 +157,7 @@ def gen_layer2z(si, uc, dyncfg):
     return d( # layer2z 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
         layer_name='layer2z',  unshare_mnt=True, unshare_chdir=True,
         start_after=[
+            d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.gui=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
         ],
         newrootfs=True,
@@ -162,6 +166,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(plan='robind', src=f'/tmp/.X11-unix/X{si.XId}', dest=f'/sbxdir/temp/X{si.XId}') if uc.gui=='xephyr' else None,
+            d(plan='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
@@ -214,7 +219,8 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
             *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
-            d(plan='bind', dest='/tmp/dbus_session_socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(plan='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(plan='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
 
             d(plan='empty-if-exist', dest='/etc/fstab'),
             d(plan='empty-if-exist', dest='/etc/systemd'),
@@ -248,8 +254,8 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
             d(DISPLAY=f':{si.XId}') if uc.gui=='xephyr' else None,
+            d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
         sublayers=[
             gen_layer4c(si, uc, dyncfg),
@@ -323,6 +329,17 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
                     log(f'沙箱内隔离的X11的显示编号使用生成的随机号码 DISPLAY=:{XId}')
                     break
 
+    if uc.dbus_session == 'filter':
+        dbusproxy_argv = [
+            os.getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
+            '--talk=org.freedesktop.Notifications',
+            '--talk=org.kde.StatusNotifierWatcher',
+            '--talk=org.fcitx.*',
+            '--talk=org.freedesktop.IBus.*',
+            '--talk=org.freedesktop.portal.IBus',
+            '--talk=org.freedesktop.portal.Fcitx',
+            *uc.dbusproxy_extra]
+
     if uc.mask_xdg_opens:
         cmds_to_mask += [
             "firefox", "firefox-esr", "seamonkey", "icecat",
@@ -342,7 +359,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['XId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost']})
+            if k in ['XId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost',
+                     'dbusproxy_argv' ]})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===

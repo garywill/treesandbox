@@ -75,7 +75,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - [ ] Optional access to real hardware or just GPU  
 - DBus:
     - [x] Optional host DBus exposure to sandbox
-    - [ ] Optional DBus proxy filtering DBus communication
+    - [x] Optional DBus proxy filtering DBus communication
 - [ ] Optional Seccomp 
 - [ ] Optional network traffic control 
 - Instance Manage and Args Passing
@@ -147,7 +147,7 @@ uc.user_mnts = [
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
 ]
 uc.gui="realX"
-uc.dbus_session="allow" # input methods and other components need dbus
+uc.dbus_session="filter" # input methods and other components need dbus
 ```
 
 If you want to persist the browser profile, provide a fake home directory next to the script:
@@ -283,7 +283,7 @@ A typical untrusted app’s visible filesystem inside the sandbox is assembled f
 {'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
 {'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
 {'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dest': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+{'plan': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
 
 // # sandbox configuration directory
 {'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}

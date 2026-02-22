@@ -103,7 +103,7 @@
     - [ ] 暴露其余硬件给沙箱
 - DBus
     - [x] 可选暴露真实dbus接口给沙箱
-    - [ ] 可选过滤dbus通信
+    - [x] 可选过滤dbus通信
 - [ ] 可选的网络流量控制
 - 实例管理与命令参数传递
     - [x] 同种沙箱多实例（从主机多次启动同种沙箱，会运行多个实例，互相隔离、互相独立)
@@ -162,7 +162,7 @@ user_mnts = [
     # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
 ]
 uc.gui="realX" # 使用真实的 X11
-uc.dbus_session="allow" # 输入法等通信需要dbus
+uc.dbus_session="filter" # 输入法等通信需要dbus
 ```
 
 以上尚未挂载持久化的路径以保存浏览器profile目录。若需要，可创建一个`fakehome`目录
@@ -299,7 +299,7 @@ layer1 = d( # 第1层
 {'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
 {'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
 {'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dest': '/tmp/dbus_session_socket', 'src': '/run/user/1000/bus'}
+{'plan': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
 
 // # 沙箱配置目录
 {'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
