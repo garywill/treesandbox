@@ -54,6 +54,11 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.mask_osrelease=True # 不可访问/etc/os-release
     uc.machineid='zero' # 把/etc/machine-id填0
 
+    uc.setenvs = d( # 要给 主app 的环境变量 ，值必须是字符串
+        # ENV_VAR_NAME1 = 'ENV_VAR_VAL1',
+        # ENV_VAR_NAME2 = 'ENV_VAR_VAL2',
+    )
+
     return uc
 
 # layer1 产生。 所有的layer_cfg都在 layer1 下
@@ -247,6 +252,7 @@ def gen_layer4(si, uc, dyncfg):
         # uid 变回 1000
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
+        envset_grps = [uc.setenvs],
         workdir=uc.workdir if uc.workdir else None,
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
@@ -1812,6 +1818,8 @@ def is_fifo(path):
     return not Path(path).is_symlink() and Path(path).is_fifo()
 def is_socket(path):
     return not Path(path).is_symlink() and Path(path).is_socket()
+def is_ro(path):
+    return os.statvfs(path).f_flag & MS.RDONLY
 
 class FileContent:
     def __init__(self, data):
