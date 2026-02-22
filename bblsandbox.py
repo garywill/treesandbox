@@ -10,41 +10,40 @@ from pathlib import Path
 # === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
 # 普通用户设置这里
 def userconfig(si): # 这个只在顶层解析一次
-    uc = d(
-        sandbox_name='', # 沙箱名称
+    uc = d()
+    uc.sandbox_name='' # 沙箱名称
 
-        # 若不设置 homedir ，则会用 tmpfs 当 $HOME
-        # homedir=f'{si.startdir_on_host}/fakehome',
+    # 若不设置 homedir ，则会用 tmpfs 当 $HOME
+    # uc.homedir=f'{si.startdir_on_host}/fakehome'
 
-        # 若不设置gui则内部无任何X11
-        gui="realX", # 使用真实的 X11
-        # gui="xephyr",
-        # gui="xpra", # 暂未实现
-        # gui="isolatedX", de_start_cmd="plasmashell",  # 暂未实现
+    # 若不设置gui则内部无任何X11
+    uc.gui="realX" # 使用真实的 X11
+    # uc.gui="xephyr"
+    # uc.gui="xpra" # 暂未实现
+    # uc.gui="isolatedX"; de_start_cmd="plasmashell"  # 暂未实现
 
-        # see_real_hw=True, # 看见真实/dev和/sys
+    # uc.see_real_hw=True # 看见真实/dev和/sys
 
-        user_mnts = [
-            # d(mttype='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
-            # d(mttype='robind', src=f'{si.startdir_on_host}', SDS=1),
-        ],
+    uc.user_mnts = [
+        # d(mttype='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
+        # d(mttype='robind', src=f'{si.startdir_on_host}', SDS=1),
+    ]
 
-        # 输入法等通信需要dbus
-        dbus_session="allow",
-        # dbus_session="filter", # (暂未实现)
+    # 输入法等通信需要dbus
+    uc.dbus_session="allow"
+    # uc.dbus_session="filter" # (暂未实现)
 
-        net=d(
-            iface='real', # 使用真实的网络介面
-            dns='real', #真实的/etc/resolv.conf所指向的目录
-        ),
-
-        # tmux_listen=True, #（暂未实现）
-
-        # allow_opt=True, # 允许访问真实/opt
-        mask_xdg_opens=True, # 容器内部不能使用xdg-open, firefox, chromium 等
-        # mask_osrelease=True, # 不可访问/etc/os-release
-        # machineid='zero', # 把/etc/machine-id填0
+    uc.net=d(
+        iface='real', # 使用真实的网络介面
+        dns='real', #真实的/etc/resolv.conf所指向的目录
+        # dns=['127.0.0.1'], # 自定义dns
     )
+
+    uc.allow_opt=True # 允许访问真实/opt
+    uc.mask_xdg_opens=True # 容器内部不能使用xdg-open, firefox, chromium 等
+    # uc.mask_osrelease=True # 不可访问/etc/os-release
+    uc.machineid='zero' # 把/etc/machine-id填0
+
     return uc
 
 # layer1 产生

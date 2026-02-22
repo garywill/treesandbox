@@ -115,14 +115,14 @@ Place a copy of BBL script next to an AppImage of some app you downloaded.
 /anyhdd2/projects_save/
 ```
 
-Edit `.py` file and config like this:
+Edit `.py` file and edit `userconfig` part like this:
 ```python
-sandbox_name='freecad',
-user_mnts = [
+uc.sandbox_name='freecad'
+uc.user_mnts = [
     d(mttype='appimage', appname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
     d(mttype='bind', src='/anyhdd2/projects_save/', SDS=1),
-],
-gui="realX",
+]
+uc.gui="realX"
 ```
 
 BBL mounts AppImage contents inside the sandbox so AppImage itself doesn’t need to have FUSE caps. This mounts the AppImage under `/sbxdir/apps/freecad/` inside the sandbox. After launching the sandbox, run `/sbxdir/apps/run_freecad` inside it to start the app.
@@ -141,13 +141,13 @@ If you downloaded an app (for example `firefox.tar.xz`) and want to use the app 
 Configure:
 
 ```python
-sandbox_name='firefox', # sandbox name
-user_mnts = [
+uc.sandbox_name='firefox' # sandbox name
+uc.user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
-],
-gui="realX",
-dbus_session="allow", # input methods and other components need dbus
+]
+uc.gui="realX"
+uc.dbus_session="allow" # input methods and other components need dbus
 ```
 
 If you want to persist the browser profile, provide a fake home directory next to the script:
@@ -169,9 +169,9 @@ The `fakehome` directory will be mounted into the sandbox at the user’s home p
 **Example 3**— use your existing vimrc inside the sandbox
 
 ```python
-user_mnts = [
+uc.user_mnts = [
     d(mttype='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
-],
+]
 ```
 ## Sandbox layering model
 

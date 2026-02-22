@@ -114,15 +114,15 @@
 /anyhdd2/projects_save/
 ```
 
-编辑我们的`.py`文件，配置：
+编辑我们的`.py`文件，配置`userconfig`部分：
 
 ```python
-sandbox_name='freecad', # 沙箱名称
-user_mnts = [
+uc.sandbox_name='freecad' # 沙箱名称
+uc.user_mnts = [
     d(mttype='appimage', appname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
     d(mttype='bind', src='/anyhdd2/projects_save/', SDS=1), 
-],
-gui="realX", # 使用真实的 X11
+]
+uc.gui="realX" # 使用真实的 X11
 ```
 
 BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
@@ -141,13 +141,13 @@ BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppIm
 编辑我们的`.py`文件，配置：
 
 ```python
-sandbox_name='firefox', # 沙箱名称
+uc.sandbox_name='firefox' # 沙箱名称
 user_mnts = [
     d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
     # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
-],
-gui="realX", # 使用真实的 X11
-dbus_session="allow", # 输入法等通信需要dbus
+]
+uc.gui="realX" # 使用真实的 X11
+uc.dbus_session="allow" # 输入法等通信需要dbus
 ```
 
 以上尚未挂载持久化的路径以保存浏览器profile目录。若需要，可创建一个`fakehome`目录
@@ -169,9 +169,9 @@ homedir=f'{si.startdir_on_host}/fakehome',
 **例子3：** 沙箱内直接使用自己的vimrc配置
 
 ```python
-user_mnts = [
+uc.user_mnts = [
     d(mttype='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
-],
+]
 ```
 
 ## 沙箱分层结构
