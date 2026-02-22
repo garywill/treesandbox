@@ -299,8 +299,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
 
 
-used_layer_names = []
-def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_cfg : 其父层
+def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
     # 计算本层深度
     cfg.depth = parent_cfg.depth + 1 if parent_cfg is not None else 1
 
@@ -379,8 +378,15 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
     # print(cfg.layer_name, cfg.pidns_depth, cfg.pidns_tree)
 
+    if not (cfg.sublayers or cfg.dropcap_then_cmds):
+        cfg.disabled = True
+
     for sublyr_cfg in (cfg.sublayers or []):
-        recursive_lyrs_jobs(si, sublyr_cfg, cfg)
+        recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
+
+def call_recursive_lyrs_jobs(si, cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
+    recursive_lyrs_jobs(si, cfg, None, []) # 要调用两次
+    recursive_lyrs_jobs(si, cfg, None, []) # 要调用两次
 
 
 resv_words = ['sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
@@ -532,7 +538,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     dyncfg = gen_dynamic_cfg(sbxinfo, uc)
     layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
-    recursive_lyrs_jobs(sbxinfo, layer1_cfg, None)
+    call_recursive_lyrs_jobs(sbxinfo, layer1_cfg)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
