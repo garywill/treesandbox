@@ -62,6 +62,7 @@ def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
     return d(
         layer_name='layer1', # 默认模板的 layer_name 不要修改
         unshare_pid=True, # 第1层必须
+        unshare_mnt=True, # 第1层尝试有unshare mnt但不newrootfs
 
         unshare_chdir=True, # chdir()不影响其他
 
@@ -226,7 +227,7 @@ def gen_layer3(si, uc, dyncfg):
 def gen_layer4a(si, uc, dyncfg):
     return d(
         layer_name='layer4a', # 默认模板的 layer_name 不要修改
-        unshare_pid=True,
+        unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
@@ -240,7 +241,7 @@ def gen_layer4a(si, uc, dyncfg):
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
-        unshare_pid=True,
+        unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
@@ -325,6 +326,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.start_after:
         cfg.start_after = [item for item in cfg.start_after if item is not None]
 
+    if cfg.unshare_pid and not cfg.unshare_mnt:
+        raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
     if (cfg.newrootfs or cfg.fs) and not cfg.unshare_mnt:
         raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
     if bool(cfg.fs) != bool(cfg.newrootfs):
@@ -681,7 +684,7 @@ def main2():
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
     if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
-        os.unshare(gen_unshareflag(d(unshare_mnt=True)))
+        os.unshare(gen_unshareflag(d(unshare_mnt=True))) # 不管本层在开始有没有 unshare mnt ， 这里都要再 unshare mnt 一次, 保证不影响父进程所看到的 /proc
         # log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
