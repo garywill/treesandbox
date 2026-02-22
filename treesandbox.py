@@ -632,8 +632,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
 
         # RDONLY是因为沙箱内只fd读，仅最外层用路径写
-        proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        recoProcs = create_file_for_sbx_fd(f'{outest_sbxdir}/recogprocs.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_alive = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_wdgseen = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.wdgseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
     ) )
 
     sbxinfo.logs_fd = d()
@@ -653,16 +653,18 @@ class OutestProcsMonitor:
     @classmethod
     def i_am_outest(cls):
         cls.I_AM_OUTEST=True
-        cls.proclist = []
-        cls.recogprocs = d()
-        cls.fd_wr_proclist = os.open(f'{si.outest_sbxdir}/proclist.json', os.O_WRONLY)
+        cls.procs_alive = []
+        cls.procs_wdgseen = d()
+        cls.should_seen_soon = []
+        cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
+        cls.fd_wr_wdgseen = os.open(f'{si.outest_sbxdir}/procs.wdgseen.json', os.O_WRONLY)
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
             if line.startswith("NSpid:"):
                 return [int(x) for x in line.split()[1:]]
     @classmethod
-    def get_procsinfo_arr_from_cg(cls) -> list:
+    def get_procsalive_arr_from_cg(cls) -> list:
         if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         result = []
         for pid in open(f'{si.CG_SBX}/cgroup.procs').read().splitlines():
@@ -682,18 +684,80 @@ class OutestProcsMonitor:
             result.append(d( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
         return result
     @classmethod
-    def update_proclist(cls): # 只有 最外层 原进程 调用这个函数
+    def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
         if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        proclist_arr = cls.get_procsinfo_arr_from_cg()
+        procsalive_arr = cls.get_procsalive_arr_from_cg()
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
-        cls.proclist = proclist_arr # 写cls内部
+        cls.procs_alive = procsalive_arr # 写cls内部
         try: # 写文件
-            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in proclist_arr]) ,']'])
-            fcntl.flock(cls.fd_wr_proclist, fcntl.LOCK_EX)
-            os.ftruncate(cls.fd_wr_proclist, 0)
-            os.pwrite(cls.fd_wr_proclist, json_str.encode(), 0)
+            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
+            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_EX)
+            os.ftruncate(cls.fd_wr_alive, 0)
+            os.pwrite(cls.fd_wr_alive, json_str.encode(), 0)
         finally:
-            fcntl.flock(cls.fd_wr_proclist, fcntl.LOCK_UN)
+            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
+    @classmethod
+    def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc wdgseen"
+        if plv.NSpid[-1] == psn.self_see_pid \
+        and plv.start_tick == psn.start_tick \
+        and plv.ns.pid == psn.pidns :
+            return True
+        else: return False
+    @classmethod
+    def got_a_ready_proc_log(cls, NLOG):
+        NPROC = d(
+            self_see_pid = NLOG.self_see_pid,
+            start_tick = NLOG.start_tick,
+            pidns = NLOG.ns.pid
+        )
+        for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
+            if cls.aliveproc_and_seenproc_equal(proc, NPROC):
+                if NLOG in cls.should_seen_soon:
+                    log(f'把这条消息从未识别的消息列表中删除 {NLOG}')
+                    cls.should_seen_soon.remove(NLOG)
+                NPROC.NSpid = proc.NSpid
+                cls.procs_wdgseen[NLOG.ready_proc_name] = NPROC
+                break
+        else: # 是我们要关注的新进程启动的消息，但未在目前存活的进程列表中找到
+            if NLOG in cls.should_seen_soon: # 上次就加进去了，这次还没就认为出错
+                log(f'收到过{NLOG.ready_proc_name}的启动消息，但一直未发现过存活，可能出错')
+                # sys.exit()
+            else:
+                log(f'把此消息加入未识别的列表 {NLOG}')
+                cls.should_seen_soon.append(NLOG)
+    @classmethod
+    def get_and_parse_new_wlog(cls):
+        new_logs = WlogReader.readnew()
+        for NLOG in cls.should_seen_soon + new_logs:
+            NLOG = d(NLOG)
+
+            if NLOG.event == 'error':
+                log(f'收到来自 {NLOG.logger} 的错误消息 {NLOG.errmsg}')
+                # pipe_outest_exit_layer1.set_should_exit()
+                sys.exit(1)
+
+            if NLOG.ready_proc_name and NLOG.ready_proc_name in si.expected_live_procs :
+                cls.got_a_ready_proc_log(NLOG)
+        try: # 写文件 procs.wdgseen.json
+            json_str = '\n'.join(['{',
+                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(cls.procs_wdgseen) ]) ,
+                '}'])
+            fcntl.flock(cls.fd_wr_wdgseen, fcntl.LOCK_EX)
+            os.ftruncate(cls.fd_wr_wdgseen, 0)
+            os.pwrite(cls.fd_wr_wdgseen, json_str.encode(), 0)
+        finally:
+            fcntl.flock(cls.fd_wr_wdgseen, fcntl.LOCK_UN)
+    @classmethod
+    def wdg(cls): # 看看那些已经在 procs_wdgseen 列表中的进程还存活吗
+        cls.update_procsalive()
+        cls.get_and_parse_new_wlog()
+        for proc_name,psn in dict.items(cls.procs_wdgseen):
+            for plv in cls.procs_alive:
+                if cls.aliveproc_and_seenproc_equal(plv, psn):
+                    break
+            else:
+                log(f'{proc_name} 已不再存活，看门狗结束沙箱')
+                sys.exit()
 
 
 def read_alltext_from_fd(fd:int) -> str:
@@ -707,12 +771,12 @@ def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
 def read_proclist() -> list:
-    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.proclist
-    else:   return read_all_from_fd_then_jsonloads(si.fd.proclist)
+    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
+    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_alive)
 
 def read_recogprocs() -> dict:
-    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.recogprocs
-    else:   return read_all_from_fd_then_jsonloads(si.fd.recogprocs)
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgseen
+    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_wdgseen)
 
 
 def get_nstypes(nsdir_path):
@@ -806,7 +870,7 @@ def main():
         mkdirp(si.CG_SBX)
         Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
     if is_outest:
-        Path(f'{si.outest_sbxdir}/proclist.json').write_text("[]")
+        Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag(tlcfg)
@@ -852,7 +916,6 @@ class WlogReader():
     @classmethod
     def init(cls):
         cls.wlogf = open(f'{si.outest_sbxdir}/events.layers.log', 'r')
-        cls.offset = 0
     @classmethod
     def _read(cls):
         try:
@@ -861,7 +924,7 @@ class WlogReader():
         finally:
             fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_UN)
     @classmethod
-    def readnew(cls):
+    def readnew(cls) -> list:
         new_logs = []
         for line in cls._read().splitlines():
             if not line.strip(): continue
@@ -871,13 +934,12 @@ class WlogReader():
 
 def daemon(is_outest, layer1_pid=None):
     if is_outest:
+        si.layer1_pid = layer1_pid
         # TODO 等待5秒，等待主app启动的信号，否则退出
 
-        for sig in SIGS_TO_HANDLE:
-            signal.signal(sig, signals_handler_outest)
+        register_sig_handlers(outest=True)
         # TODO 等 main2改好后，信号注册不判断is_outest
 
-        si.layer1_pid = layer1_pid
 
         WlogReader.init()
         OutestProcsMonitor.i_am_outest()
@@ -887,31 +949,22 @@ def daemon(is_outest, layer1_pid=None):
     if not is_outest:
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     #-----------
-    nn = 0
     while True:
-        nn += 1
-        time.sleep(0.2)
-        if should_exit:
-            if is_outest:
-                pipe_outest_exit_layer1.set_should_exit()
-            else:
-                sys.exit()
 
+        if should_exit:
+            if is_outest:   pipe_outest_exit_layer1.set_should_exit()
+            else:           sys.exit()
 
         if is_outest :
-            new_logs = WlogReader.readnew()
-            if nn >=5:
-                nn=0
-                OutestProcsMonitor.update_proclist()
-
+            OutestProcsMonitor.wdg()
 
         if not is_outest and tlcfg.depth == 1 :
             if pipe_outest_exit_layer1.is_should_exit_set() :
                 sys.exit()
 
-        if not exist_childtree():
-            sys.exit()
+        if not exist_childtree(): sys.exit()
 
+        time.sleep(0.2)
 
 def main2():
     # 写uid_map 等 。一般来说配合 unshare_user
@@ -973,8 +1026,7 @@ def main2():
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
         atexit.register(cleanup_pidnsleader)
         # TODO 信号注册移到daemon中
-        for sig in SIGS_TO_HANDLE:
-            signal.signal(sig, signals_handler_pidnsleader)
+        register_sig_handlers(pidnsleader=True)
 
     layer_set_status('afterRegSigs')
     set_proc_dispname(tlcfg.layer_name)
@@ -1063,9 +1115,7 @@ def layer_run_subp(cmdvec, subp_name=None,
         CHK( child_sock.recv(1) == b'x', "收到的来自原进程的信号不符合预期")
         child_sock.close()
 
-        wlog('subp_start', me_proc_info=True , extra_kvs=d(
-            subp_cmdvec=cmdvec, proc_name=subp_name
-        ) )
+        wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name) if not subLayer else {}) )
 
         if subLayer:    startTip = f'启动子层 {subLayer}'
         elif dev_shell: startTip = '启动 dev_shell'
@@ -1139,16 +1189,20 @@ def cleanup_pidnsleader():
         os.kill(-1, signal.SIGKILL)
 
 
-
+SIGS_TO_IGN = []
+# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
+SIGS_TO_PASSBY = [signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, signal.SIGTSTP]
+SIGS_TO_HANDLE = SIGS_TO_PASSBY + [signal.SIGTERM, signal.SIGCHLD]
+def register_sig_handlers(outest=False, pidnsleader=False):
+    for sig in SIGS_TO_IGN:     signal.signal(sig, signal.SIG_IGN)
+    if pidnsleader:
+        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_pidnsleader)
+    if outest:
+        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_outest)
 def signals_handler_outest(signum, frame):
     _signals_handler(signum, is_outest=True)
-
 def signals_handler_pidnsleader(signum, frame):
     _signals_handler(signum)
-
-# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
-SIGS_TO_PASSBY = [signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, ]
-SIGS_TO_HANDLE = SIGS_TO_PASSBY + [signal.SIGTERM, signal.SIGCHLD]
 should_exit = False
 def _signals_handler(signum, is_outest=False):
     # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
@@ -1163,11 +1217,9 @@ def _signals_handler(signum, is_outest=False):
             try:
                 # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
                 pid, status = os.waitpid(-1, os.WNOHANG)
-                if pid == 0:
-                    break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
+                if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                should_exit = True
-                break
+                should_exit = True ; break
 
 
 def exist_childtree():
@@ -1203,23 +1255,22 @@ def layer_set_status(status):
     os.environ['PS1'] = ps1
 
     if status == 'booted':
-        wlog('layer_booted', me_proc_info=True, extra_kvs=d(layer_cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') ) )
+        wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00')  )
 
-def wlog(*args, me_proc_info=False, errmsg=None, extra_kvs={}):
+def wlog(event, me_proc_info=False, **kw_args) :
     if not (si and si.fd.layerslog_a): return False
-    event = args[0] if (errmsg is None) else 'error'
+    kw_args = d(kw_args)
+    if kw_args.errmsg: event = 'error'
     logObj = d(
         logger = tlcfg.layer_name if tlcfg else '',
         event = event,
+        **kw_args
     )
-    if event == 'error':
-        logObj.errmsg = errmsg
-    if event == 'booted': logNs = True
+    if event in ['layer_booted','subp_start']: me_proc_info = True
     if me_proc_info:
         logObj.self_see_pid=os.getpid()
         logObj.start_tick=get_start_tick('/proc/self/stat')
         logObj.ns = get_nstypes(f'/proc/self/ns')
-    logObj.update(extra_kvs)
     try:
         fcntl.flock(si.fd.layerslog_a, fcntl.LOCK_EX)
         os.write(si.fd.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
@@ -1681,7 +1732,7 @@ def drop_caps():
 
 
 
-def set_pdeathsig(): # 由layer1的fork出来的子进程调用
+def set_pdeathsig(): # 由layer1的fork出来的子进程调用, 让真实父进程退出后沙箱内能够收到TERM信号
     PR_SET_PDEATHSIG = 1
     libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
@@ -1854,7 +1905,7 @@ def try_showerr(func):
 def raise_exit(err_msg, no_cleanup=False):
     traceback.print_stack(file=sys.stderr)
     print(loghead + err_msg, file=sys.stderr)
-    wlog(errmsg=err_msg)
+    wlog('error', errmsg=err_msg)
     if not no_cleanup: sys.exit(1)
     else: os._exit(1)
 
