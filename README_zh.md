@@ -20,6 +20,7 @@
 可选：
 
 - xdg-dbus-proxy
+- xpra (隔离X11无缝)
 - Weston + Xwayland + icewm (隔离X11)
 - Xephyr + icewm (隔离X11)
 - xsel (同步剪贴板)
@@ -99,7 +100,7 @@
     - [x] 可选暴露真实X11接口给沙箱
     - [x] 可选使用Weston+Xwayland隔离X11（配icewm）
     - [x] 可选使用Xephyr隔离X11（配icewm）
-    - [ ] 可选使用Xpra隔离的无缝X11代理
+    - [x] 可选使用Xpra隔离的无缝X11代理
     - [ ] 可选暴露wayland接口给沙箱
     - [ ] 可选在一窗口内运行的隔离的完整桌面环境
 - 可选暴露真实物理硬件给沙箱

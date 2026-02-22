@@ -24,6 +24,7 @@ Required:
 Optional:
 
 - xdg-dbus-proxy
+- xpra (isolated X11, seamless)
 - Weston + Xwayland + icewm (for isolated X11)
 - Xephyr + icewm (for isolated X11)
 - squashfuse (for mounting AppImage internally)
@@ -96,7 +97,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
     - [x] Optional host X11 exposure to sandbox
     - [x] Optional isolated X11 with Weston+Xwayland
     - [x] Optional isolated X11 with Xephyr
-    - [ ] Optional Xpra seamless X11 proxy 
+    - [x] Optional Xpra seamless X11 proxy 
     - [ ] Optional host Wayland exposure to sandbox
     - [ ] Optional isolated full desktop in isolated GUI
 - Optionally expose real hardwares to sandbox

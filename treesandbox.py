@@ -52,6 +52,7 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.gui="realX" # 使用真实的 X11
     uc.gui="weston" # 用的是weston里的Xwayland
     # uc.gui="xephyr"
+    # uc.gui='xpra'
 
     # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
@@ -105,6 +106,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     mnts_dns = []
     xephyr_extra_args = []
     weston_extra_args = []
+    xpra_extra_args = [] ; xpra_server_extra_args = []
     xwayland_extra_args = []
     bridges = []
 
@@ -126,12 +128,52 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     ]
 
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
-
         if uc.newXId:
             newXId = uc.newXId
         else:
             while (newXId := str(random.randrange(230, 980)) ) :
                 if is_XId_available(newXId): break
+
+    if uc.gui == 'xpra':
+        xpra_extra_args += [
+            '--daemon=no',
+            # '--bind=unix',
+            # '--auth=allow',
+            '--start-new-commands=no',
+            '--pulseaudio=no',
+            '--dbus-launch=no', # NOTE  禁止dbus为什么无效？
+            '--dbus-proxy=no',
+            '--dbus-control=no',
+            '--webcam=no',
+            '--html=off',
+            '--systemd-run=no',
+            '--exit-with-windows=no',
+            '--exit-with-client=no',
+            '--mdns=no',
+            '--file-transfer=no',
+            '--forward-xdg-open=off',
+            # --headerbar=auto|no|force
+            '--printing=no',
+            '--keyboard-sync=no',
+            # --keyboard-raw=yes|no
+            '--opengl=yes:native', # --opengl=(yes|no|auto)[:backend]
+            '--encoding=rgb',
+            '-z0', # 无压缩
+            '--video-encoders=vaapi',
+            #--speaker=on|off|disabled and --microphone=on|off|disabled|on:DEVICE|off:DEVICE
+            '--speaker=disabled',
+            '--microphone=disabled',
+            #--title=VALUE
+            #--border=yellow,10.
+        ]
+
+        if not uc.sync_clipbd_from_sandbox:
+            xpra_extra_args +=   ['--clipboard-direction=disabled']
+        else: xpra_extra_args += ['--clipboard-direction=to-client']
+
+        xpra_server_extra_args += [f'--xvfb=Xorg -ac -noreset -novtswitch -nolisten tcp +extension GLX +extension RANDR +extension RENDER   -config /etc/xpra/xorg.conf  -depth 24 :{newXId}' ]
+        # xpra_server_extra_args += [f'--xvfb=Xwayland :{newXId}']
+        # Xorg的参数-ac让不需要XAUTHORITY。 如果不自定义xpra的--xvfb的值的话，无法让Xserver免认证。xpra的--auth可能控制的是xpra的客户端与服务端之间的认证，不是x server与client的认证
 
     if uc.windowed_size:
         if uc.gui == 'xephyr':
@@ -197,15 +239,28 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     # bridge seefrom是从哪层可看见这个桥进程 seeto是通过这个桥进程看到哪个层的fs
-    if uc.gui in ['weston']:
+    if uc.gui in ['weston','xpra']:
         bItem = d(seefrom='semitruCmpannLyr', seeto='mainLyr')
         bItem.create_links = []
-        bItem.create_links.append(f'/tmp/.X11-unix/X{newXId}') if uc.gui in ['weston','xephyr'] else None
+        bItem.create_links += [f'/tmp/.X11-unix/X{newXId}']
+        if uc.gui=='xpra':
+            bItem.create_links += [ # NOTE 不能链目录，要防止xpra客户端的socket被放进目录里被server看见
+                f'/run/xpra/{si.hostname}-{newXId}',
+                f'/run/user/{si.uid}/xpra/{si.hostname}-{newXId}',
+                f'/run/user/{si.uid}/xpra/Xauthority-{newXId}',
+                f'/run/user/{si.uid}/xpra/{newXId}/socket',
+                f'/run/user/{si.uid}/xpra/{newXId}/xauthority',
+                f'/run/user/{si.uid}/xpra/{newXId}/config',
+                f'/run/user/{si.uid}/xpra/{newXId}/cmdline',
+                f'/run/user/{si.uid}/xpra/{newXId}/server.env',
+                f'{si.HOME}/.xpra/{si.hostname}-{newXId}',
+                f'{si.HOME}/.config/xpra/xpra.conf',
+            ]
         bridges.append(bItem)
 
     dyncfg = d({k: v for k, v in locals().items() if k in [
         'paths_to_mask', 'machineid', 'sharedir_onhost', 'dbusproxy_argv' , 'mnts_dns', 'bridges',
-        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'icewm',
+        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'xpra_extra_args', 'xpra_server_extra_args', 'icewm',
     ]})
     return dyncfg
 
@@ -249,6 +304,9 @@ def gen_layer2(si, uc, dyncfg):
         envs_unset=[
             "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
         ],
+        envset_grps=[
+            d(NO_AT_BRIDGE='1'),
+        ],
 
         sublayers = [
             gen_layer2c(si, uc, dyncfg),
@@ -260,7 +318,7 @@ def gen_layer2c(si, uc, dyncfg):
     # layer2c实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
     return d(
         layer_name='layer2c', unshare_pid=True, unshare_mnt=True,
-
+        unshare_net=True, # NOTE xephyr会监听抽象套接字。为了不被其他沙箱偷看，要隔离 . 也可以考虑用 unshare -n -r -c 来启动xephyr
         newrootfs=True,
         fs=[
             d(many_op='dup-rootfs', destbase='/'),
@@ -270,10 +328,19 @@ def gen_layer2c(si, uc, dyncfg):
         subprocs=[
             d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac",  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
             d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
+
+            d(
+                cmdvec=['xpra', *dyncfg.xpra_extra_args, 'attach',f':{si.newXId}'], subp_name='xpraclient',
+                start_after = [
+                    d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ,
+                    d(waittype='socket-listened', path=f'/run/xpra/{si.hostname}-{si.newXId}')
+                    ]
+            ) if uc.gui=='xpra' else None,
+
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
         daemon_tasks = [
-            d(task='sync_clipbd') if si.newXId else None,
+            d(task='sync_clipbd') if uc.gui in ['weston', 'xephyr'] else None,
         ],
     )
 
@@ -377,7 +444,7 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston'] else None,
+            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston','xpra'] else None,
             # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
@@ -391,7 +458,7 @@ def gen_layer4c(si, uc, dyncfg):
     return d(
         layer_name='layer4c', # 默认模板的 layer_name 不要修改
         unshare_pid=True, unshare_mnt=True,
-
+        unshare_net=True, # NOTE 内部Xorg可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
         subprocs=[
             *([
             d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
@@ -399,6 +466,7 @@ def gen_layer4c(si, uc, dyncfg):
             ] if dyncfg.icewm else [] ) ,
 
             d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
+            d( cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], subp_name='xpraserver' ) if uc.gui=='xpra' else None,
         ],
     )
 
@@ -411,7 +479,7 @@ def gen_layer4(si, uc, dyncfg):
         envset_grps = [uc.setenvs],
 
         start_after = [
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='weston' else None,
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston','xpra'] else None,
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
@@ -449,6 +517,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     username = pwd.getpwuid(uid).pw_name # 获取当前用户名
     groupname = grp.getgrgid(gid).gr_name
     HOME = f'/home/{username}' if uid>0 else '/root'
+    hostname = open("/etc/hostname").read().strip()
     outest_pid = os.getpid()
     log(f'PID = {outest_pid}')
     startscript_on_host = scriptfilepath
@@ -466,7 +535,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     os.chmod(PTMP, 0o700)
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
+        ['hostname', 'PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
          'startscript_on_host', 'CWD', 'hash_bootsbx_py']
     } )
 
@@ -1816,7 +1885,7 @@ class OutestProcsMonitor:
     @classmethod
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        if proc_name in ['xephyr', 'xwayland']:
+        if proc_name in ['xephyr', 'xwayland', 'xpraserver']:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
@@ -2057,7 +2126,7 @@ class ClipboardSyncer():
     @classmethod
     def one_loop_task(cls): # NOTE 不同方向的内容传递是靠任务间隔比超时时间大来保证不产生竞争
         if not cls.inited: cls.init()
-
+        if not is_unix_socket_listened(f'/tmp/.X11-unix/X{si.newXId}'): return
         # 从主机来的 tcp socket 是否要往沙箱写剪贴板内容
         ready, _, wrong = select.select([cls.socket_fromHostLsn], [], [cls.socket_fromHostLsn], 0) # 非阻塞
         if wrong: log_warn('监听来自主机的写沙箱剪贴板请求时发生未知错误')
