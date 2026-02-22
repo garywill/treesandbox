@@ -430,6 +430,19 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     si = d()
 
+    for i in [0,1,2]:
+        try: fcntl.fcntl(i, fcntl.F_GETFD)
+        except OSError as err:
+            if err.errno != errno.EBADF: raise
+            else:
+                devnull = os.open('/dev/null', os.O_RDWR)
+                os.dup2(devnull, i)
+                if devnull != i: os.close(devnull)
+    fdnull = os.open("/dev/null", os.O_PATH)
+    CHK(fdnull>=3, 'fdnull 不满足 >=3')
+    set_fd_keep_on_exec(fdnull, False)
+    si.fdnull = fdnull
+
     # 从外部(linux host)启动沙箱的原本用户信息
     uid = os.getuid()
     gid = os.getgid()
@@ -2274,7 +2287,13 @@ def cleanup_outest():
                 try_showerr(lambda: f.unlink() )
         try_showerr(lambda: os.rmdir(dirpath) )
 
-    # try_showerr(lambda: os.rmdir(si.CG_SBX)) # 暂时无法删除
+    if exist_childtree(): log_warn('本沙箱实例的cgroup目录未清理')
+    else:
+        try:
+            Path(f'{si.CG_TSBXS}/cgroup.procs').write_text(str(os.getpid()))
+            os.rmdir(si.CG_SBX)
+        except Exception as err:
+            log_warn(err)
     try_pass(lambda: os.rmdir(si.sharedir_onhost))
 
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
@@ -2526,9 +2545,11 @@ def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
 def get_all_3ge_fds() -> list:
+    CHK( os.fstat(si.fdnull).st_ino == os.stat('/dev/null').st_ino, 'si.fdnull的st_ino与/dev/null不符合')
+    CHK( os.fstat(si.fdnull).st_dev == os.stat('/dev/null').st_dev, 'si.fdnull的st_dev与/dev/null不符合')
     soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
     result = []
-    for fd in range(3, soft_limit):
+    for fd in range(3, soft_limit): # 可以包括fdnull自己，因为dup2自己也没问题
         try:
             fcntl.fcntl(fd, fcntl.F_GETFD)
             result.append(fd)
@@ -2553,7 +2574,7 @@ def close_3ge_fds(keep_fds=[] ):
         if fd in keep_fds:
             continue
         # log(f'关闭{fd=}')
-        try: os.close(fd)
+        try: os.dup2(si.fdnull, fd) # 不用os.close
         except OSError as e:
             # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
             if e.errno == 9: pass; # log_warn(f'尝试关闭{fd=}但发现刚刚已被关闭')
@@ -2992,5 +3013,5 @@ if __name__ == "__main__":
         try:
             lyrcfg_to_use = main(lyrcfg_to_use)
         except Exception as err:
-            wlog('error', errmsg=err)
+            try_pass(lambda: wlog('error', errmsg=err) )
             raise
