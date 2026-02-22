@@ -375,7 +375,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
 
 resv_words = ['sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
-def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
+def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # sbxinfo.json
         # bootsbx.py
@@ -391,8 +391,8 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
         target_sbxdir_path = napath(si.outest_sbxdir)
         old_sbxdir_path = None
     elif call_at_buildfs: # 为本层接下来的新文件系统准备的 （可能 变根=新旧路径不同  ，也可能 不变根=新旧路径同）
-        target_sbxdir_path = napath(f'{thislyr_cfg.newrootfs_path}/{thislyr_cfg.sbxdir_path1}')
-        old_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
+        target_sbxdir_path = napath(f'{lyrcfg.newrootfs_path}/{lyrcfg.sbxdir_path1}')
+        old_sbxdir_path = napath(lyrcfg.sbxdir_path0)
 
     if call_at_begin: # 刚启动脚本
         si.fd_layerslog_a = os.open(f'{target_sbxdir_path}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
@@ -450,13 +450,13 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
             mkdirp(f'{target_sbxdir_path}/new.{lyr_cfg.layer_name}.rootfs')
         for sublyr_cfg in (lyr_cfg.sublayers or [] ) :
             create_lyrs_files_recr(sublyr_cfg)
-    for sublyr_cfg in (thislyr_cfg.sublayers or [] ) :
+    for sublyr_cfg in (lyrcfg.sublayers or [] ) :
         create_lyrs_files_recr(sublyr_cfg)
 
     # 判断是最外层 才把 本层配置（即第1层） 和 userconfig 写入
-    if call_at_begin and thislyr_cfg.depth==1:
-        with open(f'{target_sbxdir_path}/lyr_cfg.{thislyr_cfg.layer_name}.json', 'w') as f:
-            f.write(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
+    if call_at_begin and lyrcfg.depth==1:
+        with open(f'{target_sbxdir_path}/lyr_cfg.{lyrcfg.layer_name}.json', 'w') as f:
+            f.write(json.dumps(lyrcfg, indent=2, ensure_ascii=False) )
             os.chmod(f.name, 0o444)
 
     if new_tmpfs_for_sbxdir:
@@ -963,7 +963,7 @@ def commit_thislyr_fsPlans( thislyr_cfg, fsPlans): # 这个函数是本层为本
                 try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
         elif plan == 'sbxdir-in-newrootfs':
             CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
-            make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)
+            make_mnt_fill_sbxdir(si,  thislyr_cfg, call_at_buildfs=True)
         elif plan == 'devpts':
             mkdirp(real_dest)
             mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
