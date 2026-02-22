@@ -57,6 +57,8 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.windowed_size = (800, 600)
 
+    uc.sync_clipbd_from_sandbox = True # 同步沙箱内剪贴板往主机（如果有内部X11）
+
     uc.gpus     =      True if uc.gui else False
     uc.see_userfonts = True if uc.gui else False
 
@@ -271,6 +273,7 @@ def gen_layer2c(si, uc, dyncfg):
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
         daemon_tasks = [
+            d(task='sync_clipbd') ,
         ],
     )
 
@@ -470,6 +473,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     else:
         sharedir_onhost = None
 
+    sync_clipbd_from_sandbox = True if uc.sync_clipbd_from_sandbox else False
 
     dyncfg = gen_dynamic_cfg(si, uc) # NOTE
 
@@ -494,7 +498,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     si.update( { k: v for k, v in locals().items() if k in
         ['sandbox_name', 'instance_name', 'reuseInstance', 'idleKeepSbxTime',  'outest_sbxdir',
-         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
+         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin',
+         'sync_clipbd_from_sandbox' ]
     } )
 
     layer1_cfg = gen_layer1(si, uc, dyncfg)
@@ -796,7 +801,12 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
         for lyr in si.expected_alive_layers:
             si.oSkt_fds [lyr] = create_socketpair_fds()
 
-
+    if si.newXId:
+        if call_at_begin:
+            clipbdWriterFromHostSocket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            clipbdWriterFromHostSocket.setblocking(False)
+            clipbdWriterFromHostSocket.bind(f'{target_sbxdir_path}/clipbdWriterFromHost.socket')
+            si.fd_clipbdWriterFromHostLsn = clipbdWriterFromHostSocket.detach()
 
 
 
@@ -1954,8 +1964,9 @@ def daemon_outest():
 
 
 lasttick_havechd = 0
+lasttick_clipbd = 0
 def daemon_pidnsleader():
-    global lasttick_havechd
+    global lasttick_havechd , lasttick_clipbd
     CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     PidnsleaderListener.i_am_pidnsleader()
     PERIOD = 0.2
@@ -1988,6 +1999,11 @@ def daemon_pidnsleader():
                     if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} 主层空闲，若长时间空闲则结束沙箱')
                     if time.monotonic() > lasttick_havechd+si.idleKeepSbxTime: sys.exit()
 
+        for taskItem in (tlcfg.daemon_tasks or []):
+            if taskItem.task == 'sync_clipbd' and time.monotonic() > lasttick_clipbd + 1.5: # NOTE 间隔要够大，比其超时时间大
+                ClipboardSyncer.one_loop_task()
+                lasttick_clipbd = time.monotonic()
+
         time.sleep(PERIOD)
 
 class PidnsleaderListener():
@@ -2002,6 +2018,156 @@ class PidnsleaderListener():
         ready, _, wrong = select.select([cls.oChdSkt], [], [cls.oChdSkt], 0)
         if wrong: raise_exit('尝试读取最外层来的信息时发生未知错误')
         elif ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
+
+class ClipboardSyncer():
+    inited = False
+    socket_fromHostLsn = None
+    LAST_CONTENT_F = '/sbxdir/temp/ClipboardLastContent.data'
+    @classmethod
+    def init(cls):
+        log(f'ClipboardSyncer 初始化')
+        cls.socket_fromHostLsn = socket.socket(fileno=si.fd_clipbdWriterFromHostLsn)
+        cls.socket_fromHostLsn.setblocking(False) # 设置为非阻塞
+        cls.socket_fromHostLsn.listen(1)
+        cls.inited = True
+    @classmethod
+    def one_loop_task(cls): # NOTE 不同方向的内容传递是靠任务间隔比超时时间大来保证不产生竞争
+        if not cls.inited: cls.init()
+
+        # 从主机来的 tcp socket 是否要往沙箱写剪贴板内容
+        ready, _, wrong = select.select([cls.socket_fromHostLsn], [], [cls.socket_fromHostLsn], 0) # 非阻塞
+        if wrong: log_warn('监听来自主机的写沙箱剪贴板请求时发生未知错误')
+        elif ready:
+            log(f'主机有新连接来要往沙箱写剪贴板')
+            client_sock, _ = cls.socket_fromHostLsn.accept()
+            pid , _ = fork(loghead=f'{loghead} 主机要写沙箱剪贴板', proc_dispname='clipbd write',
+                           close_fds=True, cut_stdin=True,
+                           close_keep_fds=[LG.userns_unpri.usernsfd, client_sock.fileno()],
+                           )
+            if pid == 0: # 子进程：处理客户端
+                os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+                try: cls.handle_client_clipbdFromHostSocket(client_sock)
+                except Exception as err: log_warn(err)
+                finally: log_warn('handle_client_clipbdFromHostSocket本应结束所属进程但没有'); os._exit(1) #若到这,说明上面未成功退出
+            else: # 父进程：关闭客户端 socket（子进程已持有副本）
+                client_sock.close()
+            return
+
+        # 如果上面没有return ， 才执行这里
+        if not si.sync_clipbd_from_sandbox:
+            return
+        pid , _ = fork(loghead=f'{loghead} 探测沙箱剪贴板有无新', proc_dispname='clipbd read',
+                    close_fds=True, cut_stdin=True,
+                    close_keep_fds=[LG.userns_unpri.usernsfd ],
+                    )
+        if pid == 0 : # 子进程：循环从管道读xsel的输出
+            os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+            try: cls.sync_from_sandbox_to_host()
+            except Exception as err: log_warn(err)
+            finally: log_warn('sync_from_sandbox_to_host 本应结束所属进程但没有') ; os._exit(1) #若到这,说明上面未成功退出
+    @classmethod
+    def sync_from_sandbox_to_host(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
+        if os.getpid() == 1: log_warn('在pid=1时 sync_from_sandbox_to_host()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
+        def timeout_handler(signum, frame):
+            log_warn(f'探测沙箱剪贴板同步到主机的过程中超时放弃')
+            os._exit(1) # 强制退出子进程
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
+
+        sandbox_clipbd_data = cls.read_clipboard(si.newXId)
+        if not isinstance(sandbox_clipbd_data, bytes):
+            os._exit(0) # 读回的不是bytes
+        if len(sandbox_clipbd_data) == 0:
+            os._exit(0) # 成功读回，但沙箱剪贴板是空的
+
+
+        if is_file(cls.LAST_CONTENT_F): # 有上次的剪贴板内容
+            # log('有上次剪贴板内容文件')
+            if len(sandbox_clipbd_data) == os.path.getsize(cls.LAST_CONTENT_F) \
+            and sandbox_clipbd_data == Path(cls.LAST_CONTENT_F).read_bytes():
+                # log('与上次一样，忽略')
+                os._exit(0) # 与上次一样
+        # 到这里是的确应该 从沙箱 往主机 写剪贴板
+        log(f'沙箱剪贴板内容有更新，往主机同步 {sandbox_clipbd_data[:20]}')
+        Path(cls.LAST_CONTENT_F).write_bytes(sandbox_clipbd_data)
+        cls.write_clipboard(os.getenv("DISPLAY").lstrip(':'), sandbox_clipbd_data)
+        os._exit(0)
+    @classmethod
+    def read_clipboard(cls, XId) ->bytes|bool: # 这个只应该在fork出一个子进程后调用。它不os._exit, 只返回False或数据
+        if os.getpid() == 1: log_warn('在pid=1时read_clipboard()被调用，这不应该发生') ; print_stack(); return False
+        try:
+            proc = subprocess.Popen(
+                ['env', f'DISPLAY=:{XId}', 'xsel', '-b', '--output'], bufsize=0,
+                preexec_fn=subprocess_preexec, close_fds=True, restore_signals=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            ba = bytearray()
+            while True:
+                ready, _, wrong = select.select([proc.stdout], [], [proc.stdout], 99) # 超时由之前的signal设置
+                if wrong: log_warn('从xsel管道stdout读的过程中发生未知错误'); return False
+                elif ready:
+                    try: data = proc.stdout.read(8192)
+                    except Exception as err: try_showerr(lambda: proc.kill() ) ; log_warn(err) ; return False
+                    if not data: # 已读完
+                        try: proc.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            log_warn('管道已经结束，但等待xsel进程退出时超时'); return False
+                        if proc.returncode == 0:
+                            break
+                        else:
+                            log_warn(f'xsel failed with return code {proc.returncode}')
+                            return False
+                    ba.extend(data)
+                    if len(ba) > 1_000_000:
+                        try_showerr(lambda: proc.kill() )
+                        break
+            return bytes(ba)
+        except Exception as err:
+            log_warn(f'Failed to run xsel - {err}')
+            return False
+    @classmethod
+    def write_clipboard(cls, XId, data) ->bool : # 这个只应该在fork出一个子进程后调用。它不os._exit, 只返回真假
+        if os.getpid() == 1: log_warn('在pid=1时write_clipboard()被调用，这不应该发生') ; print_stack(); return False
+        log(f'准备将{len(data)}字节数据传给 :{XId} 的剪贴板')
+        try:
+            proc = subprocess.Popen(
+                ['env', f'DISPLAY=:{XId}', 'xsel', '-b', '--input'],
+                preexec_fn=subprocess_preexec, close_fds=True, restore_signals=True,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            stdout, stderr = proc.communicate(input=data, timeout=0.5)
+            if proc.returncode != 0:
+                # 捕获到错误，打印返回码和输出信息
+                log_warn(f'xsel failed with return code {proc.returncode}. stdout: "{stdout.decode()}", stderr: "{stderr.decode()}"')
+                return False
+            return True
+        except Exception as err:
+            log_warn(f'Failed to run xsel - {err}')
+            return False
+    @classmethod
+    def handle_client_clipbdFromHostSocket(cls, client_sock): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
+        if os.getpid() == 1: log_warn('在pid=1时handle_client_clipbdFromHostSocket()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
+        def timeout_handler(signum, frame):
+            log_warn(f'接收数据的过程中超时放弃')
+            os._exit(1) # 强制退出子进程
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
+        data = b''
+        try:
+            while True:
+                chunk = client_sock.recv(4096)
+                if not chunk: break
+                data += chunk
+                if len(data) > 1_000_000: log_warn('强制截断过长的剪贴板数据'); break # 超过 1MB
+        except Exception as err:
+            log_warn(err)
+            os._exit(1)
+        finally:
+            client_sock.close()
+        if data:
+            log(f'将主机发来的剪贴板内容往沙箱同步 {data[:20]}')
+            Path(cls.LAST_CONTENT_F).write_bytes(data)
+            os._exit(0 if cls.write_clipboard(si.newXId, data) is True else 1)
 
 
 def get_alive() -> list:
