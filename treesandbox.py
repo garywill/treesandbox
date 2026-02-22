@@ -829,6 +829,11 @@ class OutestProcsMonitor:
             self_see_pid = logItem.self_see_pid,
         )
     @classmethod
+    def sbx_exit_broadcast(cls):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        for lyrname in si.expected_alive_layers:
+            cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'))
+    @classmethod
     def sendmsg_to_lyr(cls, lyrname, msgobj):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
@@ -895,7 +900,6 @@ class OutestProcsMonitor:
 
             if logItem.event == 'error':
                 log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
-                # pipe_outest_exit_layer1.set_should_exit()
                 sys.exit(1)
 
             if logItem.ready_proc_name :
@@ -957,36 +961,6 @@ def get_nstypes(nsdir_path):
 def get_start_tick(statfile_path): # 返回的是字符串，不是数字
     return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
 
-class pipe_outest_exit_layer1:
-    _read_fd = None
-    _write_fd = None
-    @classmethod
-    def init(cls):
-        cls._read_fd, cls._write_fd = os.pipe()
-        fcntl.fcntl(cls._read_fd, fcntl.F_SETFL, fcntl.fcntl(cls._read_fd, fcntl.F_GETFL) | os.O_NONBLOCK) # 设置读为非阻塞
-        set_fd_keep_on_exec(cls._read_fd, False) # exec都不保留（但fork会保留)
-        set_fd_keep_on_exec(cls._write_fd, False)
-    @classmethod
-    def i_am_outest(cls):
-        os.close(cls._read_fd); cls._read_fd = None
-    @classmethod
-    def i_am_layer1(cls):
-        os.close(cls._write_fd); cls._write_fd = None
-    @classmethod
-    def set_should_exit(cls):
-        if cls._write_fd is None: return False
-        try:
-            os.write(cls._write_fd, b'x')
-        except OSError as err:
-            if err.errno != errno.EPIPE:  raise # 忽略 Broken pipe（layer1 已退出）
-    @classmethod
-    def is_should_exit_set(cls): # 无法区分outest是没发还是退出了，如果不是有了 pdeathsig 则需要改用心跳包
-        try:
-            data = os.read(cls._read_fd, 1) # 尝试读一个字节
-            return len(data) > 0
-        except OSError as err:
-            if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK): return False  # 无数据，非阻塞返回
-            else: raise
 
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
@@ -1076,20 +1050,17 @@ def main():
 
     skp_lyfk = TmpSocketPair()
     # log(f"即将fork")
-    if is_outest: pipe_outest_exit_layer1.init()
     pid = os.fork()
     if pid == 0: # 子进程
         atexit._clear()
         set_loghead (f'{tlcfg.layer_name} F: ')
         skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
-            pipe_outest_exit_layer1.i_am_layer1()
             set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
         main2(skp_lyfk)
         sys.exit()
     else: # 父进程
         skp_lyfk.i_am_pa()
-        if is_outest: pipe_outest_exit_layer1.i_am_outest()
 
         if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 为了改写子进程uid_map, 此时我看到的proc必须rw
             skp_lyfk.pa_recv(1, 5, BS.SetMeUidUser.value)
@@ -1181,7 +1152,7 @@ def daemon_outest():
     while True:
         OutestProcsMonitor.wdg()
 
-        if should_exit: pipe_outest_exit_layer1.set_should_exit()
+        if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
 
         if not exist_childtree(): sys.exit()
 
@@ -1189,23 +1160,17 @@ def daemon_outest():
 
 
 def daemon_pidnsleader():
-    global should_exit
     CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     PidnsleaderListener.i_am_pidnsleader()
     while True:
-        if should_exit: sys.exit()
+        if sig_say_exit: sys.exit()
 
         if (msg_from_outest := PidnsleaderListener.readmsg_from_outest() ):
-            if msg_from_outest.action == 'should_exit':
-                should_exit = True
+            if msg_from_outest.action == 'sbx_exit':
                 sys.exit()
             elif msg_from_outest.action == 'run_subp':
                 PidnsleaderListener.HAS_SUBP_BY_OUTEST = True
                 layer_run_subp(no_wait=True,  **msg_from_outest.subp_item )
-
-        if tlcfg.depth == 1 :
-            if pipe_outest_exit_layer1.is_should_exit_set() :
-                sys.exit()
 
         if PidnsleaderListener.HAS_SUBP_BY_OUTEST and not exist_childtree(): sys.exit()
 
@@ -1220,7 +1185,7 @@ class PidnsleaderListener():
         cls.oChdSkt = socket.socket(fileno=si.oSkt_fds[tlcfg.layer_name].chd)
     @classmethod
     def readmsg_from_outest(cls):
-        ready, _, _ = select.select([cls.oChdSkt], [], [], 0.5)
+        ready, _, _ = select.select([cls.oChdSkt], [], [], 0)
         if ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
 
 def main2(skp_lyfk):
@@ -1457,15 +1422,14 @@ def signals_handler_outest(signum, frame):
     _signals_handler(signum, is_outest=True)
 def signals_handler_pidnsleader(signum, frame):
     _signals_handler(signum)
-should_exit = False
+sig_say_exit = False
 def _signals_handler(signum, is_outest=False):
     # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
-    global should_exit
+    global sig_say_exit
     if signum in SIGS_TO_PASSBY:
         pass # TODO
     elif signum == signal.SIGTERM:
-        should_exit = True
-        if is_outest: pipe_outest_exit_layer1.set_should_exit()
+        sig_say_exit = True
     elif signum == signal.SIGCHLD:
         while True:
             try:
@@ -1473,7 +1437,7 @@ def _signals_handler(signum, is_outest=False):
                 pid, status = os.waitpid(-1, os.WNOHANG)
                 if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                should_exit = True ; break
+                sig_say_exit = True ; break
 
 
 def exist_childtree():
@@ -1845,7 +1809,7 @@ cleanup_symlinks_to_rm = []
 def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
     if os.getpid() == 1: return
     # if OG and OG.layer1_pid: try_pass(lambda: os.setpgid(OG.layer1_pid, 0) )
-    pipe_outest_exit_layer1.set_should_exit()
+    OutestProcsMonitor.sbx_exit_broadcast()
     log(f"准备退出，等待所有子进程结束后执行清理...")
     while exist_childtree(): time.sleep(0.1)
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
