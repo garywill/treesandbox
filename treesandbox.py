@@ -310,6 +310,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
 
+    CHK( len(cfg.layer_name.encode()) <= 15 , f"层名称 {cfg.layer_name} 大小超过15字节")
+
     # 配置中的数组类型去除None成员
     if cfg.fs:
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
@@ -696,6 +698,7 @@ def main2():
             signal.signal(sig, signals_handler)
 
     layer_set_status('afterRegSigs')
+    set_proc_dispname(thislyr_cfg.layer_name)
     layer_set_status('booted')
 
     direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
@@ -1214,6 +1217,11 @@ def cleanup_outest(outest_sbxdir):
 #==========================================
 #======= libc 工具函数 =========================
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+
+def set_proc_dispname(dispname):
+    PR_SET_NAME = 15
+    CHK( len(name_bytes := dispname.encode("utf-8")) <= 15 , f"进程名 {dispname} 大小超过15")
+    libc.prctl(PR_SET_NAME, name_bytes, 0, 0, 0)
 
 MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
