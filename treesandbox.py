@@ -92,6 +92,112 @@ def userconfig(si): # 这个只在顶层解析一次
 
     return uc
 
+def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
+    cmds_to_mask = []
+    paths_to_mask = []
+    mnts_dns = []
+    xephyr_extra_args = []
+    weston_extra_args = []
+    xwayland_extra_args = []
+
+    mnts_gui = [
+        *([
+        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
+        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
+        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
+        ] if uc.see_userfonts else [] ),
+        *([
+        d(plan='rosame', src='/dev/dri', SDS=1),
+        d(plan='rosame', src='/sys/class/drm', SDS=1),
+        *[ d(plan='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
+        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
+        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
+        ] if uc.gpus else [] ),
+    ]
+
+    if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
+        def is_XId_available(newXId):
+            if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
+            and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
+            and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
+            and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
+            and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
+                return True
+            else: return False
+        if uc.newXId:
+            CHK( is_XId_available(uc.newXId), f"指定的显示编号 {uc.newXId=} 被占用")
+            newXId = uc.newXId
+        else:
+            while (newXId := str(random.randrange(230, 980)) ) :
+                if is_XId_available(newXId): break
+
+    if uc.windowed_size:
+        if uc.gui == 'xephyr':
+            xephyr_extra_args = ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
+        elif uc.gui == 'weston' :
+            weston_extra_args = [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
+            xwayland_extra_args = ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
+
+    if uc.dbus_session == 'filter':
+        dbusproxy_argv = [
+            os.getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
+            '--talk=org.freedesktop.Notifications',
+            '--talk=org.kde.StatusNotifierWatcher',
+            '--talk=org.fcitx.*',
+            '--talk=org.freedesktop.IBus.*',
+            '--talk=org.freedesktop.portal.IBus',
+            '--talk=org.freedesktop.portal.Fcitx',
+            *(uc.dbusproxy_extra or [])]
+
+    # 处理 /etc/resolv.conf
+    CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "此Linux上，/var/run不是指向/run, 与现代发行版的习惯不同，暂时无法处理这种情况")
+    RSLVCF_is_link = True if Path('/etc/resolv.conf').is_symlink() else False
+    RSLVCF_is_file = is_file('/etc/resolv.conf')
+    CHK(RSLVCF_is_link or RSLVCF_is_file, f'/etc/resolv.conf非链接非文件，暂时无法处理这种情况')
+    dns_use_custom = isinstance(uc.net.custom_dns, list)
+    if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.net.custom_dns])
+    iface_use_real = uc.net.iface=='real'
+
+    # link/file | custom/notcustom | ifacereal 共8种情况
+    # TODO nscd
+    if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
+        if dns_use_custom:
+            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
+        else:
+            if iface_use_real: mnts_dns = [] # 原本的/etc/resolv.conf文件保持
+            else             : mnts_dns = [d(plan='empty-if-exist', dest='/etc/resolv.conf')] # 清空
+    else: # /etc/resolv.conf是链接
+        RSLVCF_target_dir = padir(rslvn('/etc/resolv.conf'))
+        CHK(RSLVCF_target_dir.startswith('/run/'), f'/etc/resolv.conf的指向{rslvn('/etc/resolv.conf')}不是在/run/xxx/内，暂时无法处理这种情况（现代发行版一般/etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx）')
+        if dns_use_custom:
+            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
+        else:
+            if iface_use_real: mnts_dns = [d(plan='robind', src=RSLVCF_target_dir, SDS=1)]
+            else             : pass # 让/run/xxxxx/resolv.conf继续不存在
+
+    if uc.mask_xdg_opens:
+        cmds_to_mask += [
+            "firefox", "firefox-esr", "seamonkey", "icecat",
+            "librewolf", "waterfox", "palemoon", "basilisk", "floop", "zen-browser",
+            "chromium", "chromium-browser",
+            "google-chrome", "google-chrome-stable", "ungoogled-chromium",
+            "microsoft-edge", "microsoft-edge-stable",
+            "vivaldi", "brave-browser", "opera",
+            "torbrowser-launcher", "torbrowser",
+            "konqueror", "falkon", "epiphany",
+            "lynx", "w3m", "links", "elinks", "browsh",
+            "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
+        ]
+    paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
+
+    if uc.machineid == 'zero':
+        machineid = '00000000000000000000000000000000'
+
+    dyncfg = d({k: v for k, v in locals().items()
+            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'sharedir_onhost',
+                     'dbusproxy_argv' , 'mnts_dns']})
+    return dyncfg
+
 # layer1 产生。 所有的layer_cfg都在 layer1 下
 def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
     # 第1层不跑任何程序，只用于PID隔离，和退出时的清理工作
@@ -314,166 +420,95 @@ def gen_layer4(si, uc, dyncfg):
         # dev_shell=True,  # 调试用
     )
 
-def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
-    cmds_to_mask = []
-    paths_to_mask = []
-    mnts_dns = []
-    xephyr_extra_args = []
-    weston_extra_args = []
-    xwayland_extra_args = []
-
-    mnts_gui = [
-        *([
-        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
-        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
-        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
-        ] if uc.see_userfonts else [] ),
-        *([
-        d(plan='rosame', src='/dev/dri', SDS=1),
-        d(plan='rosame', src='/sys/class/drm', SDS=1),
-        *[ d(plan='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
-        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
-        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
-        ] if uc.gpus else [] ),
-    ]
-
-    if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
-        def is_XId_available(newXId):
-            if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
-            and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
-            and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
-            and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
-            and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
-                return True
-            else: return False
-        if uc.newXId:
-            CHK( is_XId_available(uc.newXId), f"指定的显示编号 {uc.newXId=} 被占用")
-            newXId = uc.newXId
-        else:
-            while (newXId := str(random.randrange(230, 980)) ) :
-                if is_XId_available(newXId): break
-
-    if uc.windowed_size:
-        if uc.gui == 'xephyr':
-            xephyr_extra_args = ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
-        elif uc.gui == 'weston' :
-            weston_extra_args = [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
-            xwayland_extra_args = ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
-
-    if uc.dbus_session == 'filter':
-        dbusproxy_argv = [
-            os.getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
-            '--talk=org.freedesktop.Notifications',
-            '--talk=org.kde.StatusNotifierWatcher',
-            '--talk=org.fcitx.*',
-            '--talk=org.freedesktop.IBus.*',
-            '--talk=org.freedesktop.portal.IBus',
-            '--talk=org.freedesktop.portal.Fcitx',
-            *(uc.dbusproxy_extra or [])]
-
-    # 处理 /etc/resolv.conf
-    CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "此Linux上，/var/run不是指向/run, 与现代发行版的习惯不同，暂时无法处理这种情况")
-    RSLVCF_is_link = True if Path('/etc/resolv.conf').is_symlink() else False
-    RSLVCF_is_file = is_file('/etc/resolv.conf')
-    CHK(RSLVCF_is_link or RSLVCF_is_file, f'/etc/resolv.conf非链接非文件，暂时无法处理这种情况')
-    dns_use_custom = isinstance(uc.net.custom_dns, list)
-    if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.net.custom_dns])
-    iface_use_real = uc.net.iface=='real'
-
-    # link/file | custom/notcustom | ifacereal 共8种情况
-    # TODO nscd
-    if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
-        if dns_use_custom:
-            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
-        else:
-            if iface_use_real: mnts_dns = [] # 原本的/etc/resolv.conf文件保持
-            else             : mnts_dns = [d(plan='empty-if-exist', dest='/etc/resolv.conf')] # 清空
-    else: # /etc/resolv.conf是链接
-        RSLVCF_target_dir = padir(rslvn('/etc/resolv.conf'))
-        CHK(RSLVCF_target_dir.startswith('/run/'), f'/etc/resolv.conf的指向{rslvn('/etc/resolv.conf')}不是在/run/xxx/内，暂时无法处理这种情况（现代发行版一般/etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx）')
-        if dns_use_custom:
-            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
-        else:
-            if iface_use_real: mnts_dns = [d(plan='robind', src=RSLVCF_target_dir, SDS=1)]
-            else             : pass # 让/run/xxxxx/resolv.conf继续不存在
-
-    if uc.mask_xdg_opens:
-        cmds_to_mask += [
-            "firefox", "firefox-esr", "seamonkey", "icecat",
-            "librewolf", "waterfox", "palemoon", "basilisk", "floop", "zen-browser",
-            "chromium", "chromium-browser",
-            "google-chrome", "google-chrome-stable", "ungoogled-chromium",
-            "microsoft-edge", "microsoft-edge-stable",
-            "vivaldi", "brave-browser", "opera",
-            "torbrowser-launcher", "torbrowser",
-            "konqueror", "falkon", "epiphany",
-            "lynx", "w3m", "links", "elinks", "browsh",
-            "dillo", "qutebrowser", "midori", "otter-browser", "xombrero", "luakit", "dooble", "netsurf", "nyxt", "iridium", "surf"
-        ]
-    paths_to_mask += [ path for cmd in cmds_to_mask if (path := which_and_resolve_exist(cmd)) is not None ]
-
-    if uc.machineid == 'zero':
-        machineid = '00000000000000000000000000000000'
-
-    dyncfg = d({k: v for k, v in locals().items()
-            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'sharedir_onhost',
-                     'dbusproxy_argv' , 'mnts_dns']})
-    return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
 
-def recr_rm_empty_lyr(si, cfg):
-    def _recr(si, cfg):
-        # print(cfg.layer_name)
-        have_rmed = False
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
+def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
+    si = d()
 
-        cnt_cmds_0 = len(cfg.subprocs or [] )
-        cnt_sl_0 = len(cfg.sublayers or [] )
-        if cfg.subprocs : cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
-        if cfg.sublayers : cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
-        cnt_cmds_1 = len(cfg.subprocs or [] )
-        cnt_sl_1 = len(cfg.sublayers or [] )
+    # 从外部(linux host)启动沙箱的原本用户信息
+    uid = os.getuid()
+    gid = os.getgid()
+    username = pwd.getpwuid(uid).pw_name # 获取当前用户名
+    groupname = grp.getgrgid(gid).gr_name
+    HOME = f'/home/{username}' if uid>0 else '/root'
+    outest_pid = os.getpid()
+    log(f'PID = {outest_pid}')
+    startscript_on_host = scriptfilepath
+    CWD = scriptdirpath
+    PTMP = f'/tmp/tsbxs-{uid}'
+    hash_bootsbx_py = hashlib.blake2b(open(scriptfilepath, 'rb').read()).hexdigest()
 
-        if cnt_cmds_0 != cnt_cmds_1 or cnt_sl_0 != cnt_sl_1:
-            have_rmed = True
-        for sublyr_cfg in (cfg.sublayers or [] ):
-            if _recr(si, sublyr_cfg):
-                have_rmed = True
-        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell or cfg.isMainLyr):
-            # print('设置' , cfg.layer_name, '为disable')
-            cfg.disabled = True
-            have_rmed = True
-        # print(have_rmed)
-        return have_rmed
-    while _recr(si, cfg): pass
+    mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
+    os.chmod(PTMP, 0o700)
 
-def recursive_valid_lyrs(si, layer1_cfg):
-    used_proc_names = []
-    si.all_layers = []
-    def _recr(cfg):
-        nonlocal used_proc_names
-        CHK( cfg.layer_name not in used_proc_names, f"名称 {cfg.layer_name} 有重复")
-        si.all_layers.append(cfg.layer_name)
-        if cfg.unshare_pid:
-            used_proc_names.append(cfg.layer_name)
-        if cfg.isMainLyr:
-            si.mainLyr = cfg.layer_name
-        for subpItem in (cfg.subprocs or [] ):
-            CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
-            CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
-            CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
-            CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
-            CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
-            used_proc_names.append(subpItem.subp_name)
+    si.update( { k: v for k, v in locals().items() if k in
+        ['PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
+         'startscript_on_host', 'CWD', 'hash_bootsbx_py']
+    } )
 
-        if cfg.user_shell: used_proc_names.append('user_shell')
-        if cfg.dev_shell: used_proc_names.append('dev_shell')
-        for sublyr_cfg in (cfg.sublayers or [] ):
-            _recr(sublyr_cfg)
-    _recr(layer1_cfg)
-    wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
-    si.expected_alive_procs = wdg_target_procs
-    si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
+    uc = userconfig(si) # NOTE
+
+    # 沙箱名。不是子容器层名
+    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"沙箱名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
+    sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
+    sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
+    CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
+    CHK( len(sandbox_name) < 500, f'沙箱名太长： {sandbox_name}')
+
+    apps = uc.apps
+    if uc.reuseInstance: reuseInstance = uc.reuseInstance
+    if uc.idleKeepSbxTime: idleKeepSbxTime = uc.idleKeepSbxTime
+
+    if (sharedir_prefix := uc.sharedir_prefix):
+        CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
+        sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
+        si.sharedir_onhost = sharedir_onhost
+    else:
+        sharedir_onhost = None
+
+
+    dyncfg = gen_dynamic_cfg(si, uc) # NOTE
+
+    starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
+
+    n = 0
+    while True:
+        instance_name = f'{sandbox_name}_{starttime_str}-{n}'
+        if os.path.lexists( (outest_sbxdir := f'{PTMP}/{instance_name}') ) :
+            n+=1
+        else : break
+
+    if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
+
+    CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
+    CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
+    CG_SBX = f'{CG_TSBXS}/{instance_name}'
+    CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
+
+    BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+    pythonbin = sys.executable
+
+    si.update( { k: v for k, v in locals().items() if k in
+        ['sandbox_name', 'instance_name', 'reuseInstance', 'idleKeepSbxTime',  'outest_sbxdir',
+         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
+    } )
+
+    layer1_cfg = gen_layer1(si, uc, dyncfg)
+    start_lyrs_recursive_jobs(si, layer1_cfg)
+
+
+
+
+    OG = d(dyncfg=dyncfg, uc=uc)
+    return si, layer1_cfg, OG
+
+def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
+    recursive_lyrs_jobs(si, layer1_cfg, None, [])
+    recr_rm_empty_lyr(si, layer1_cfg)
+    recursive_valid_lyrs(si, layer1_cfg)
+
 
 def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
     # 计算本层深度
@@ -581,13 +616,60 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
 
 
-def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
-    recursive_lyrs_jobs(si, layer1_cfg, None, [])
-    recr_rm_empty_lyr(si, layer1_cfg)
-    recursive_valid_lyrs(si, layer1_cfg)
+def recursive_valid_lyrs(si, layer1_cfg):
+    used_proc_names = []
+    si.all_layers = []
+    def _recr(cfg):
+        nonlocal used_proc_names
+        CHK( cfg.layer_name not in used_proc_names, f"名称 {cfg.layer_name} 有重复")
+        si.all_layers.append(cfg.layer_name)
+        if cfg.unshare_pid:
+            used_proc_names.append(cfg.layer_name)
+        if cfg.isMainLyr:
+            si.mainLyr = cfg.layer_name
+        for subpItem in (cfg.subprocs or [] ):
+            CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
+            CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
+            CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
+            CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
+            CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
+            used_proc_names.append(subpItem.subp_name)
+
+        if cfg.user_shell: used_proc_names.append('user_shell')
+        if cfg.dev_shell: used_proc_names.append('dev_shell')
+        for sublyr_cfg in (cfg.sublayers or [] ):
+            _recr(sublyr_cfg)
+    _recr(layer1_cfg)
+    wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
+    si.expected_alive_procs = wdg_target_procs
+    si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
+
+def recr_rm_empty_lyr(si, cfg):
+    def _recr(si, cfg):
+        # print(cfg.layer_name)
+        have_rmed = False
+
+        cnt_cmds_0 = len(cfg.subprocs or [] )
+        cnt_sl_0 = len(cfg.sublayers or [] )
+        if cfg.subprocs : cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
+        if cfg.sublayers : cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
+        cnt_cmds_1 = len(cfg.subprocs or [] )
+        cnt_sl_1 = len(cfg.sublayers or [] )
+
+        if cnt_cmds_0 != cnt_cmds_1 or cnt_sl_0 != cnt_sl_1:
+            have_rmed = True
+        for sublyr_cfg in (cfg.sublayers or [] ):
+            if _recr(si, sublyr_cfg):
+                have_rmed = True
+        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell or cfg.isMainLyr):
+            # print('设置' , cfg.layer_name, '为disable')
+            cfg.disabled = True
+            have_rmed = True
+        # print(have_rmed)
+        return have_rmed
+    while _recr(si, cfg): pass
 
 
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, OG=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # dirmaker.xxx.name
@@ -733,496 +815,6 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
    # build_fs 时原有：
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
-def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
-    si = d()
-
-    # 从外部(linux host)启动沙箱的原本用户信息
-    uid = os.getuid()
-    gid = os.getgid()
-    username = pwd.getpwuid(uid).pw_name # 获取当前用户名
-    groupname = grp.getgrgid(gid).gr_name
-    HOME = f'/home/{username}' if uid>0 else '/root'
-    outest_pid = os.getpid()
-    log(f'PID = {outest_pid}')
-    startscript_on_host = scriptfilepath
-    CWD = scriptdirpath
-    PTMP = f'/tmp/tsbxs-{uid}'
-    hash_bootsbx_py = hashlib.blake2b(open(scriptfilepath, 'rb').read()).hexdigest()
-
-    mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
-    os.chmod(PTMP, 0o700)
-
-    si.update( { k: v for k, v in locals().items() if k in
-        ['PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
-         'startscript_on_host', 'CWD', 'hash_bootsbx_py']
-    } )
-
-    uc = userconfig(si) # NOTE
-
-    # 沙箱名。不是子容器层名
-    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"沙箱名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
-    sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
-    sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
-    CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
-    CHK( len(sandbox_name) < 500, f'沙箱名太长： {sandbox_name}')
-
-    apps = uc.apps
-    if uc.reuseInstance: reuseInstance = uc.reuseInstance
-    if uc.idleKeepSbxTime: idleKeepSbxTime = uc.idleKeepSbxTime
-
-    if (sharedir_prefix := uc.sharedir_prefix):
-        CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
-        sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
-        si.sharedir_onhost = sharedir_onhost
-    else:
-        sharedir_onhost = None
-
-
-    dyncfg = gen_dynamic_cfg(si, uc) # NOTE
-
-    starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
-
-    n = 0
-    while True:
-        instance_name = f'{sandbox_name}_{starttime_str}-{n}'
-        if os.path.lexists( (outest_sbxdir := f'{PTMP}/{instance_name}') ) :
-            n+=1
-        else : break
-
-    if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
-
-    CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
-    CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
-    CG_SBX = f'{CG_TSBXS}/{instance_name}'
-    CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
-
-    BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
-    pythonbin = sys.executable
-
-    si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'reuseInstance', 'idleKeepSbxTime',  'outest_sbxdir',
-         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
-    } )
-
-    layer1_cfg = gen_layer1(si, uc, dyncfg)
-    start_lyrs_recursive_jobs(si, layer1_cfg)
-
-
-
-
-    OG = d(dyncfg=dyncfg, uc=uc)
-    return si, layer1_cfg, OG
-
-def set_fd_keep_on_exec(fd:int, keep:bool):
-    if keep: new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
-    else:    new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC
-    fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
-
-
-class OutestProcsMonitor:
-    I_AM_OUTEST=None
-    @classmethod
-    def i_am_outest(cls):
-        cls.I_AM_OUTEST=True
-        cls.procs_alive = []
-        cls.procs_wdgsee = d()
-        cls.procs_histseen = d()
-        cls.logs_should_match_soon = []
-        cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
-        cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
-        cls.fd_wr_wdgsee = os.open(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_WRONLY)
-
-        cls.oPaSkts = d()
-        for lyrn, fdpair in dict.items(si.oSkt_fds):
-            cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
-        cls.tell_lyr_runsubp(si.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
-        OutsideServ.init()
-    @classmethod
-    def get_NSpid_arr(cls, status_file_path) -> list:
-        for line in Path(status_file_path).read_text().splitlines():
-            if line.startswith("NSpid:"):
-                return [int(x) for x in line.split()[1:]]
-    @classmethod
-    def get_procsalive_arr_from_cg(cls) -> list:
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        result = []
-        for pid in Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines():
-            try:
-                inode1 = os.stat(f'/proc/{pid}').st_ino
-
-                comm = Path(f'/proc/{pid}/comm').read_text().strip()
-                NSpid = cls.get_NSpid_arr(f'/proc/{pid}/status')
-                start_tick = get_start_tick(f'/proc/{pid}/stat')
-                ns = get_nstypes(f'/proc/{pid}/ns')
-                cmdvec = Path(f'/proc/{pid}/cmdline').read_text().strip('\x00').split('\x00')
-
-                inode2 = os.stat(f'/proc/{pid}').st_ino
-                if inode1 != inode2: continue
-            except:
-                continue
-            result.append(D( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
-        return result
-    @classmethod
-    def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        procsalive_arr = cls.get_procsalive_arr_from_cg()
-        # NOTE 必须 既写本cls内部变量，也更新路径文件内容
-        cls.procs_alive = procsalive_arr # 写cls内部
-        try: # 写文件
-            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
-            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_EX)
-            os.ftruncate(cls.fd_wr_alive, 0)
-            os.pwrite(cls.fd_wr_alive, json_str.encode(), 0)
-        finally:
-            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
-    @classmethod
-    def aliveproc_and_elproc_equal(cls, plv, pel): #plv="proc alive" | pel="proc from event log"
-        if plv.NSpid[-1] == pel.self_see_pid \
-        and plv.start_tick == pel.start_tick \
-        and plv.ns.pid == pel.ns.pid:
-            return True
-        else: return False
-    @classmethod
-    def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc seen"
-        if plv.NSpid[-1] == psn.self_see_pid \
-        and plv.start_tick == psn.start_tick \
-        and plv.ns.pid == psn.pidns :
-            return True
-        else: return False
-    @classmethod
-    def conv_to_seenproc(cls, aliveProc, logItem): # 输入的是一对互相符合的aliveProc和logItem条目
-        return D(
-            NSpid = aliveProc.NSpid,
-            pidns_tree = logItem.pidns_tree,
-            pidns_depth = logItem.pidns_depth,
-            start_tick = logItem.start_tick,
-            pidns = logItem.ns.pid,
-            self_see_pid = logItem.self_see_pid,
-        )
-    @classmethod
-    def sbx_exit_broadcast(cls):
-        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sbx_exit_broadcast()", 'warn') # 可能会在初始化之前被调用
-        for lyrname in si.expected_alive_layers:
-            cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'), loose=True)
-    @classmethod
-    def sendmsg_to_lyr(cls, lyrname, msgobj, loose=False):
-        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sendmsg_to_lyr()", 'warn' if loose else 'raise_exit')
-        try:
-            cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
-        except Exception as err:
-            if loose: log(f"警告：发送消息给{lyrname}未成功: {err}", file=sys.stderr)
-            else: raise
-    @classmethod
-    def tell_lyr_runsubp(cls, lyrname, subpItem):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subpItem=subpItem) )
-    @classmethod
-    def symlink_into_sbxdir(cls, dest, file_in_sbxdir): # 创建软链，从外部，链到本沙箱实例目录内的文件
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        linkto = napath(f'{si.outest_sbxdir}/{file_in_sbxdir}')
-        CHK( not Path(linkto).is_dir(), f'为了安全，不允许链接到目录')
-        symlink(linkto, dest)
-    @classmethod
-    def symlink_from_sbxdir_to_in_proc_rootfs(cls, slk_name, to_proc_name, target_in_proc_rootfs): # 创建软链，从本沙箱实例目录内, 链到本沙箱的进程的 rootfs 里的某文件
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        pid = cls.procs_histseen[to_proc_name].NSpid[0]
-        real_linkto = napath(f'/proc/{pid}/root/{target_in_proc_rootfs}')
-        CHK( not Path(real_linkto).is_dir(), f'为了安全，不允许链接到目录')
-        symlink(real_linkto, f'{si.outest_sbxdir}/into.{to_proc_name}.{slk_name}.link')
-    @classmethod
-    def custom_action_when_procname_seen(cls, proc_name):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
-            cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
-    @classmethod
-    def find_alive_proc_matching_logitem(cls, elp):
-        for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
-            if cls.aliveproc_and_elproc_equal(proc, elp):
-                return proc
-    @classmethod
-    def put_proc_into_seenlist(cls, proc_name, seenProc, logItem):
-        cls.procs_histseen[proc_name] = seenProc
-        if logItem in cls.logs_should_match_soon: # 上次已经加入了注意名单，现在可以移出注意名单
-            log(f'把这条消息从未识别的消息列表中删除 {logItem}')
-            cls.logs_should_match_soon.remove(logItem)
-        if proc_name in si.expected_alive_procs:
-            cls.procs_wdgsee[proc_name] = seenProc
-        cls.custom_action_when_procname_seen(proc_name)
-    @classmethod
-    def got_a_ready_proc_log(cls, logItem): # 被调用时，说明一个进程有了logItem出现
-        proc_name = logItem.ready_proc_name
-        # 判断这个进程是否已经在aliveProcs的列表里
-        if (aliveProc := cls.find_alive_proc_matching_logitem(logItem) ):
-            seenProc = cls.conv_to_seenproc(aliveProc, logItem)
-            cls.put_proc_into_seenlist(proc_name, seenProc, logItem)
-        else: # 不在aliveProcs列表里：1.可能暂时来不及出现，允许等下个周期再出现 2.若已经不是第1个周期，则判断进程死亡
-            if proc_name not in si.expected_alive_procs : # 看门狗不用管这个进程
-                return
-            if logItem not in cls.logs_should_match_soon: # 可能暂时来不及出现，允许等下个周期再出现
-                log(f'把此消息加入未识别的列表 {logItem}')
-                cls.logs_should_match_soon.append(logItem)
-            else: # 已经不是第1个周期，则判断进程死亡
-                log(f'收到过{proc_name}的启动消息，但一直未发现过存活，判断进程已死')
-                sys.exit()
-    @classmethod
-    def get_and_parse_new_wlog(cls):
-        new_logs = WlogReader.readnew()
-        for logItem in (cls.logs_should_match_soon + new_logs):
-            logItem = d(logItem)
-
-            if logItem.event == 'error':
-                log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
-                sys.exit(1)
-
-            if logItem.ready_proc_name :
-                cls.got_a_ready_proc_log(logItem)
-        cls.write_procs_seen_to_fd(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
-        cls.write_procs_seen_to_fd(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
-    @classmethod
-    def write_procs_seen_to_fd(cls, procs_seen_obj, fd):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        try:
-            json_str = '\n'.join(['{',
-                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
-                '}'])
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            os.ftruncate(fd, 0)
-            os.pwrite(fd, json_str.encode(), 0)
-        finally:
-            fcntl.flock(fd,  fcntl.LOCK_UN)
-    @classmethod
-    def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        cls.update_procsalive()
-        cls.get_and_parse_new_wlog()
-        for proc_name,psn in dict.items(cls.procs_wdgsee):
-            for plv in cls.procs_alive:
-                if cls.aliveproc_and_seenproc_equal(plv, psn):
-                    break
-            else:
-                log(f'{proc_name} 已不再存活，看门狗结束沙箱')
-                sys.exit()
-        OutsideServ.one_loop_task()
-
-class OutsideServ():
-    conns = []
-    cnt_recvmsg = 0
-    @classmethod
-    def init(cls):
-        cls.skt_OServLsn = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        cls.skt_OServLsn.bind(f'{si.outest_sbxdir}/OServ.socket')
-        cls.skt_OServLsn.listen(5)
-    @classmethod
-    def one_loop_task(cls):
-        # 处理已经建立的连接
-        for i in reversed(range(0, len(cls.conns))):
-            connItem = cls.conns[i]
-            ready, _, wrong = select.select([connItem.skt_conn], [], [connItem.skt_conn], 0)  # 非阻塞检查
-            if wrong:
-                log('警告：OutsideServ的一个连接出现异常', file=sys.stderr)
-                cls.close_conn(connItem)
-                continue
-            elif ready:
-                try: data = connItem.skt_conn.recv(300_000)
-                except Exception as err:
-                    log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
-                    cls.close_conn(connItem)
-
-                if data:
-                    connItem.last_tick = time.monotonic()
-                    # log(f"收到外部消息: {data!r}")
-                    try: cls.onDataRecved(data, connItem )
-                    except Exception as err:
-                        log(f'警告：处理收到的消息过程中出错:{err}', file=sys.stderr)
-                        cls.close_conn(connItem)
-                else:
-                    # log("外部连接已断开（recv 返回空）") # 发完消息正常断开
-                    cls.close_conn(connItem)
-            else: # 无消息
-                if connItem.last_tick + 60 < time.monotonic():
-                    log("警告：外部连接超时（连续无消息），关闭", file=sys.stderr)
-                    cls.close_conn(connItem)
-
-
-        # 有没有新的外部连接
-        ready, _, _ = select.select([cls.skt_OServLsn], [], [], 0)
-        if ready:
-            conn, client_addr = cls.skt_OServLsn.accept()
-            cls.cnt_recvmsg += 1
-            # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
-            cls.conns.append( d(skt_conn=conn, last_tick=time.monotonic() , index=cls.cnt_recvmsg) )
-    @classmethod
-    def onDataRecved(cls, data, connItem):
-        try: msgObj = d( json.loads( data.decode() ) )
-        except Exception as err:
-            errmsg = f'无法正确解析收到的消息:{err}'
-            log(f'警告：{errmsg}', file=sys.stderr)
-            cls.response_close(connItem, message=errmsg)
-            return False
-        for k,v in dict.items(msgObj.si_should_match or {}):
-            if not eq_ignore_order(si[k], v):
-                errmsg = f'si[{k}]不一致。\n正在运行的沙箱的值：{si[k]}\n消息中的值：{v}\n（如果修改过沙箱配置，可能需要先中止正在运行的沙箱）'
-                log(f'警告：{errmsg}', file=sys.stderr)
-                cls.response_close(connItem, message=errmsg)
-                return False
-        if msgObj.run_in_mainLyr_cmdvec:
-            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
-            cls.response_close(connItem, reuseSucceeded=True, message=f'mainApp_{connItem.index}')
-            return True
-    @classmethod
-    def response_close(cls, connItem, reuseSucceeded=None, youStartNewInstance=None, message=None):
-        responseObj = d()
-        if reuseSucceeded:      responseObj.reuseSucceeded = True
-        if youStartNewInstance: responseObj.youStartNewInstance = True
-        if message:             responseObj.message = message
-        try:
-            connItem.skt_conn.send( json.dumps(responseObj).encode() )
-            return True
-        except Exception as err:
-            log(f'警告：向外部连接回复失败 {err}', file=sys.stderr)
-            return False
-        finally:
-            cls.close_conn(connItem)
-
-    @classmethod
-    def close_conn(cls, connItem):
-        connItem.skt_conn.close()
-        try: cls.conns.remove(connItem)
-        except Exception as err: log(f'警告：关闭外部来的连接时发生错误（可能已被关闭过）: {err}', file=sys.stderr)
-
-def eq_ignore_order(v1, v2):
-    if type(v1) != type(v2): return False
-    if isinstance(v1, dict): return v1.keys() == v2.keys() and all(eq_ignore_order(v1[k], v2[k]) for k in v1)
-    if isinstance(v1, list): return len(v1) == len(v2) and sorted(v1, key=str) == sorted(v2, key=str)
-    return v1 == v2
-
-
-def read_alltext_from_fd(fd:int) -> str:
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        return os.pread(fd, os.fstat(fd).st_size, 0).decode()
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-
-def read_all_from_fd_then_jsonloads(fd) -> list|dict :
-    return d( json.loads( read_alltext_from_fd(fd) ) )
-
-def get_alive() -> list:
-    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_alive)
-
-def get_histseen() -> dict:
-    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_histseen
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_histseen)
-
-def get_wdgsee() -> dict:
-    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
-
-
-def get_nstypes(nsdir_path):
-    return D({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
-
-def get_start_tick(statfile_path): # 返回的是字符串，不是数字
-    return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
-
-def maybe_sendto_running_instance():
-    log('检查有无正在运行的同种沙箱')
-    MATCH_SI_K = ["hash_bootsbx_py", "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
-    def is_still_alive(instance_name):
-        if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
-            return True # is_still_alive() 返回 真
-
-    chosen_instance = None
-    sock_estb = None
-    for dir_in_PTMP in Path(si.PTMP).iterdir():
-        dirname = dir_in_PTMP.name
-        # 是否是同种沙箱
-        if not re.match(rf'^{si.sandbox_name}_\d{{4}}-\d{{4}}-\d+$', dirname) :
-            continue
-        # 是否无 xxx_exit 退出标记
-        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
-            continue
-
-        tmp_t = time.monotonic()
-        while time.monotonic() <= tmp_t+1.5 and is_still_alive(dirname): # 允许那个实例2s的时间建立OutsideServ的socket文件
-            if is_socket(f'{si.PTMP}/{dirname}/OServ.socket'):
-                break
-            time.sleep(0.1)
-        else: # 那个实例2s都没有设置socket文件
-            log(f"忽略一个可能异常的旧实例 {dirname}")
-            continue
-
-        # 再检查一次 是否无 xxx_exit 退出标记
-        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
-            continue
-
-        tmp_t = time.monotonic()
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        while time.monotonic() <= tmp_t+1 and is_still_alive(dirname): # 允许那个实例1s的时间开始监听那个它自己已经创建的socket
-            try:
-                sock.connect(f'{si.PTMP}/{dirname}/OServ.socket')
-                break
-            except ConnectionRefusedError:
-                time.sleep(0.05)
-        else:
-            log(f"忽略一个可能异常的旧实例(OServ.socket无响应): {dirname}")
-            continue
-
-
-        chosen_instance = dirname
-        sock_estb = sock
-        break
-    if chosen_instance and sock_estb:
-        log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
-        msgObj = d()
-        msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
-        msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
-
-        try:
-            sock_estb.send( json.dumps(msgObj).encode() )
-        except Exception as err:
-            log(f'错误：向找到的实例发送消息失败 {err}', file=sys.stderr)
-            sys.exit(1)
-
-        ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
-        if wrong:
-            log(f'警告：等待回复时出错，可能超时或未知错误', file=sys.stderr)
-            sys.exit(1)
-        elif ready:
-            try:
-                data = sock_estb.recv(300_000)
-            except Exception as err:
-                log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
-                sys.exit(1)
-            if data:
-                try:
-                    msgObj = d( json.loads( data.decode() ) )
-                except Exception as err:
-                    log(f'警告：无法正确解析收到的消息:{err}', file=sys.stderr)
-                    sys.exit(1)
-                if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
-                if msgObj.reuseSucceeded:
-                    log('成功发送app命令给该实例')
-                    sys.exit(0)
-                else:
-                    log(f'警告：该正在运行的实例未回复成功', file=sys.stderr)
-                    if msgObj.youStartNewInstance:
-                        log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
-                        return False
-                    sys.exit(1)
-            else:
-                log(f'警告：收到空回复', file=sys.stderr)
-                sys.exit(1)
-
-        else: # 未知
-            log(f'警告：未收到正在运行的实例的成功回复', file=sys.stderr)
-            sys.exit(1)
-        sys.exit(0)
-
-
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
 OG = None # outest global info
@@ -1361,139 +953,6 @@ def main():
 
 
 
-class TmpSocketPair:
-    def __init__(self):
-        self._skt_chd, self._skt_pa = socket.socketpair()
-        set_fd_keep_on_exec(self._skt_chd.fileno(), False)
-        set_fd_keep_on_exec(self._skt_pa.fileno(), False)
-        self.I_AM_PA = False ; self.I_AM_CHD = False
-    def i_am_pa(self):
-        CHK(not self.I_AM_CHD, "已设置为是fork的子进程端")
-        self._skt_chd.close() ; self.I_AM_PA = True
-    def i_am_chd(self):
-        CHK(not self.I_AM_PA, "已设置为是fork的父进程端")
-        self._skt_pa.close() ; self.I_AM_CHD = True
-    def pa_send(self, data):
-        CHK(self.I_AM_PA, "非fork的父进程调用了此函数")
-        if isinstance(data, BS): data = data.value
-        self._skt_pa.send(data)
-    def chd_send(self, data):
-        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数")
-        if isinstance(data, BS): data = data.value
-        self._skt_chd.send(data)
-    def pa_recv(self, byte_cnt, timeout, expect_data=None):
-        CHK(select.select([self._skt_pa], [], [], timeout)[0], "fork的父进程等待子进程的信号超时了")
-        if isinstance(expect_data, BS): expect_data = expect_data.value
-        data = self._skt_pa.recv(byte_cnt)
-        if expect_data is not None: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
-        return data
-    def chd_recv(self, byte_cnt, timeout, expect_data=None):
-        CHK(select.select([self._skt_chd], [], [], timeout)[0], "fork的子进程等待父进程的信号超时了")
-        if isinstance(expect_data, BS): expect_data = expect_data.value
-        data = self._skt_chd.recv(byte_cnt)
-        if expect_data is not None: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
-        return data
-    def close(self):
-        if self.I_AM_PA  and self._skt_pa:  self._skt_pa.close() ;  self._skt_pa = None
-        if self.I_AM_CHD and self._skt_chd: self._skt_chd.close() ; self._skt_chd = None
-
-
-
-class BS(enum.Enum): # fork前后父子进程之间通信用的，以及 最外层和内层之间通信用的单字节信号
-    @staticmethod
-    def _generate_next_value_(name, start, count, last_values):
-        return bytes([count])  # 或者 bytes([count & 0xFF]) 防止溢出
-    SetMeUidRoot = enum.auto()
-    SetYouUidRootDone = enum.auto()
-    SetMeUidUser = enum.auto()
-    SetYouUidUserDone = enum.auto()
-    IChdBorn = enum.auto()
-    YouChdGo = enum.auto()
-
-
-class WlogReader():
-    wlogf = None
-    @classmethod
-    def init(cls):
-        cls.wlogf = open(f'{si.outest_sbxdir}/events.layers.log', 'r')
-    @classmethod
-    def _read(cls):
-        try:
-            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_EX)
-            return cls.wlogf.read()
-        finally:
-            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_UN)
-    @classmethod
-    def readnew(cls) -> list:
-        new_logs = []
-        for line in cls._read().splitlines():
-            if not line.strip(): continue
-            new_logs.append(json.loads(line))
-        return new_logs
-
-
-def daemon_outest():
-    # TODO 等待5秒，等待主app启动的信号，否则退出
-
-    register_sig_handlers(outest=True)
-
-    WlogReader.init()
-    OutestProcsMonitor.i_am_outest()
-
-    while True:
-        OutestProcsMonitor.wdg()
-
-        if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
-
-        if not exist_childtree(): sys.exit()
-
-        time.sleep(0.2)
-
-
-
-lasttick_havechd = 0
-def daemon_pidnsleader():
-    global lasttick_havechd
-    CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-    PidnsleaderListener.i_am_pidnsleader()
-    PERIOD = 0.2
-    while True:
-        if sig_say_exit: sys.exit()
-
-        if (msg_from_outest := PidnsleaderListener.readmsg_from_outest() ):
-            if msg_from_outest.action == 'sbx_exit':
-                sys.exit()
-            elif msg_from_outest.action == 'run_subp':
-                layer_run_subp(no_wait=True,  **msg_from_outest.subpItem )
-
-                if tlcfg.isMainLyr: # 默认认为收到过的第一个run_subp指令就是mainApp
-                    PidnsleaderListener.MainApp_Ever_Started = True
-
-        if tlcfg.isMainLyr and PidnsleaderListener.MainApp_Ever_Started :
-            if not si.idleKeepSbxTime:
-                if not exist_childtree(): sys.exit()
-            else: # si.idleKeepSbxTime > 0:
-                if exist_childtree() :
-                    lasttick_havechd = time.monotonic()
-                else:
-                    tick_diff = time.monotonic() - lasttick_havechd
-                    if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} 主层空闲，若长时间空闲则结束沙箱')
-                    if time.monotonic() > lasttick_havechd+si.idleKeepSbxTime: sys.exit()
-
-        time.sleep(PERIOD)
-
-class PidnsleaderListener():
-    I_AM_PIDNSLEADER=None
-    MainApp_Ever_Started=False # 是否收到过来自最外层的mainApp的启动命令（仅主层使用）
-    @classmethod
-    def i_am_pidnsleader(cls):
-        cls.I_AM_PIDNSLEADER=True
-        cls.oChdSkt = socket.socket(fileno=si.oSkt_fds[tlcfg.layer_name].chd)
-    @classmethod
-    def readmsg_from_outest(cls):
-        ready, _, _ = select.select([cls.oChdSkt], [], [], 0)
-        if ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
-
 def main2(skp_lyfk):
     set_proc_dispname(tlcfg.layer_name)
 
@@ -1591,6 +1050,7 @@ def main2(skp_lyfk):
     else: # 如果不是 unshare_pid 的 ,这里将结束退出
         sys.exit()
 
+
 def layer_run_subp(cmdvec=None, subp_name=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
@@ -1672,132 +1132,6 @@ def layer_run_subp(cmdvec=None, subp_name=None,
         # l/v： 可变参 或 数组 来指定参数
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
-
-def get_important_fds():
-    return list(si.file_fds.values()) \
-            + list(si.subp_log_fds.values()) \
-            + [fd for fd_pair in dict.values(si.oSkt_fds) for fd in dict.values(fd_pair)]
-
-def set_important_fds_cloexec():
-    fds_to_cloexec = get_important_fds()
-    for fd in os.listdir('/proc/self/fd') :
-        if int(fd) in fds_to_cloexec: set_fd_keep_on_exec(int(fd), False)
-
-
-def close_important_fds():
-    fds_to_close = get_important_fds()
-    # log(f'要关闭fd： {fds_to_close}')
-    for fd in os.listdir('/proc/self/fd') :
-        if int(fd) in fds_to_close:
-            try:
-                os.close(int(fd))
-            except OSError as e:
-                # 本可忽略 9 错误（ EBADF 错误表示可能已关闭 （Bad file descriptor），但现在不忽略
-                if e.errno != 9:  raise_exit(f'{fd=}已经被提前关闭过，与整体设计不符')
-                else: raise
-
-
-
-def cleanup_pidnsleader():
-    if os.getpid() != 1 : log("错误：pid != 1 。应该只有领头进程运行此清理函数"); return
-    for u in range(3):
-        if not exist_childtree(): break
-        os.kill(-1, signal.SIGTERM)
-        for i in range(10):
-            if (clear := not exist_childtree()): break
-            time.sleep(0.1)
-        if clear: break
-    else:
-        os.kill(-1, signal.SIGKILL)
-
-
-SIGS_TO_IGN = []
-# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
-SIGS_TO_PASSBY = [signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, signal.SIGTSTP]
-SIGS_TO_HANDLE = SIGS_TO_PASSBY + [signal.SIGTERM, signal.SIGCHLD]
-def register_sig_handlers(outest=False, pidnsleader=False):
-    for sig in SIGS_TO_IGN:     signal.signal(sig, signal.SIG_IGN)
-    if pidnsleader:
-        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_pidnsleader)
-    if outest:
-        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_outest)
-def signals_handler_outest(signum, frame):
-    _signals_handler(signum, is_outest=True)
-def signals_handler_pidnsleader(signum, frame):
-    _signals_handler(signum)
-sig_say_exit = False
-def _signals_handler(signum, is_outest=False):
-    # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
-    global sig_say_exit
-    if signum in SIGS_TO_PASSBY:
-        pass # TODO
-    elif signum == signal.SIGTERM:
-        sig_say_exit = True
-    elif signum == signal.SIGCHLD:
-        while True:
-            try:
-                # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
-                pid, status = os.waitpid(-1, os.WNOHANG)
-                if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
-            except ChildProcessError:
-                if not tlcfg.isMainLyr or not si.idleKeepSbxTime: sig_say_exit = True ;
-                break
-
-
-def exist_childtree():
-    try:
-        pid, status = os.waitpid(-1, os.WNOHANG)
-        return True
-    except ChildProcessError:
-        return False
-
-# os.waitpid(-1, os.WNOHANG) 的结果说明：
-#     (child_pid, exit_status)	成功回收一个僵尸进程
-#     (0, 0)	无僵尸可回收，但子进程仍存在
-#     抛出 ChildProcessError（继承自 OSError	errno = ECHILD（No child processes） 值通常为 10 ）
-
-# def exist_other_procs():
-#     for entry in os.listdir('/proc'):
-#         if entry.isdigit() and int(entry) != os.getpid():
-#             return True
-#     return False
-
-
-
-
-ps1 = ">"
-def set_ps1(status):
-    global ps1
-    ps1 = ''.join( [
-        r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
-        ,
-        f'{si.sandbox_name} {tlcfg.layer_name} {status}',
-        r''' | \w > \[\e[0m\]'''
-    ])
-    os.environ['PS1'] = ps1
-
-def wlog(event, me_proc_info=False, **kw_args) :
-    if not (si and si.file_fds and si.file_fds.layerslog_a): return False
-    kw_args = d(kw_args)
-    if kw_args.errmsg: event = 'error' ; kw_args.errmsg=str(kw_args.errmsg)
-    logObj = d(
-        logger = loghead or tlcfg.layer_name if tlcfg else '',
-        event = event,
-        **kw_args
-    )
-    if event in ['layer_booted','subp_start']: me_proc_info = True
-    if me_proc_info:
-        logObj.self_see_pid=os.getpid()
-        logObj.start_tick=get_start_tick('/proc/self/stat')
-        logObj.ns = get_nstypes(f'/proc/self/ns')
-    try:
-        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_EX)
-        os.write(si.file_fds.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
-    except Exception as err:
-        traceback.print_exc(file=sys.stderr)
-    finally:
-        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_UN)
-
 
 def build_fs():
     if tlcfg.newrootfs: # 如果设置了将要变根，现在先提前确定新根的位置
@@ -2061,52 +1395,449 @@ def commit_remounts(remntPlans):
         flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
-UNSHR_MAP = types.SimpleNamespace( pid='PID', mnt='NS', user='USER', cgroup='CGROUP', ipc='IPC', time='TIME', uts='UTS', net='NET', )
-def lyrcfg_to_unshrcfg(lyrcfg):
-    unshr_cfg = d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
-    for x in dict.keys(unshr_cfg): CHK(x in UNSHR_MAP.__dict__.keys(), f'此unshare flag 未知：{x}')
-    return unshr_cfg
-def unshrflg(unshr_cfg):
-    unshr_flg = 0
-    for k,v in dict.items(unshr_cfg):
-        if v: unshr_flg |= os.__dict__['CLONE_NEW' + UNSHR_MAP.__dict__[k]]
-    return unshr_flg
 
-def safe_copy_script(copy_target_path):
-    old_content = Path(scriptfilepath).read_text()
+def maybe_sendto_running_instance():
+    log('检查有无正在运行的同种沙箱')
+    MATCH_SI_K = ["hash_bootsbx_py", "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
+    def is_still_alive(instance_name):
+        if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
+            return True # is_still_alive() 返回 真
 
-    lines_arr = old_content.splitlines()
+    chosen_instance = None
+    sock_estb = None
+    for dir_in_PTMP in Path(si.PTMP).iterdir():
+        dirname = dir_in_PTMP.name
+        # 是否是同种沙箱
+        if not re.match(rf'^{si.sandbox_name}_\d{{4}}-\d{{4}}-\d+$', dirname) :
+            continue
+        # 是否无 xxx_exit 退出标记
+        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
+            continue
 
-    start_marker = "# === HIDE_FOR_SUBLAYERS BEGIN ==="
-    end_marker =   "# === HIDE_FOR_SUBLAYERS END ==="
-    removed_mark = "# === HIDDEN_PART ==="
+        tmp_t = time.monotonic()
+        while time.monotonic() <= tmp_t+1.5 and is_still_alive(dirname): # 允许那个实例2s的时间建立OutsideServ的socket文件
+            if is_socket(f'{si.PTMP}/{dirname}/OServ.socket'):
+                break
+            time.sleep(0.1)
+        else: # 那个实例2s都没有设置socket文件
+            log(f"忽略一个可能异常的旧实例 {dirname}")
+            continue
 
-    start_index = None
-    end_index = None
+        # 再检查一次 是否无 xxx_exit 退出标记
+        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
+            continue
 
-    for i, line in enumerate(lines_arr):
-        if line.startswith(removed_mark):
-            make_file_exist(copy_target_path)
-            os.chmod(copy_target_path, 0o444)
-            mount(scriptfilepath, copy_target_path, None, MS.BIND|MS.RDONLY, None)
-            mount(None, copy_target_path, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
-            return
-        if line.startswith(start_marker):
-            start_index = i
-        elif line.startswith(end_marker):
-            end_index = i
-        if start_index is not None and end_index is not None:
-            break
-    if start_index is None: raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
-    if end_index is None: raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
-    if not (start_index < end_index): raise_exit("userconfig 的开始和结束标记顺序不正确")
+        tmp_t = time.monotonic()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        while time.monotonic() <= tmp_t+1 and is_still_alive(dirname): # 允许那个实例1s的时间开始监听那个它自己已经创建的socket
+            try:
+                sock.connect(f'{si.PTMP}/{dirname}/OServ.socket')
+                break
+            except ConnectionRefusedError:
+                time.sleep(0.05)
+        else:
+            log(f"忽略一个可能异常的旧实例(OServ.socket无响应): {dirname}")
+            continue
 
-    # 将范围内的所有行（包括开始和结束标记行）设置为空字符串
-    lines_arr[start_index] = removed_mark
-    lines_arr[start_index + 1 : end_index + 1] = [""] * (end_index - start_index)
-    script_content_safe = '\n'.join(lines_arr)
-    Path(copy_target_path).write_text(script_content_safe)
-    os.chmod(copy_target_path, 0o444)
+
+        chosen_instance = dirname
+        sock_estb = sock
+        break
+    if chosen_instance and sock_estb:
+        log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
+        msgObj = d()
+        msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
+        msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
+
+        try:
+            sock_estb.send( json.dumps(msgObj).encode() )
+        except Exception as err:
+            log(f'错误：向找到的实例发送消息失败 {err}', file=sys.stderr)
+            sys.exit(1)
+
+        ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
+        if wrong:
+            log(f'警告：等待回复时出错，可能超时或未知错误', file=sys.stderr)
+            sys.exit(1)
+        elif ready:
+            try:
+                data = sock_estb.recv(300_000)
+            except Exception as err:
+                log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
+                sys.exit(1)
+            if data:
+                try:
+                    msgObj = d( json.loads( data.decode() ) )
+                except Exception as err:
+                    log(f'警告：无法正确解析收到的消息:{err}', file=sys.stderr)
+                    sys.exit(1)
+                if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
+                if msgObj.reuseSucceeded:
+                    log('成功发送app命令给该实例')
+                    sys.exit(0)
+                else:
+                    log(f'警告：该正在运行的实例未回复成功', file=sys.stderr)
+                    if msgObj.youStartNewInstance:
+                        log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
+                        return False
+                    sys.exit(1)
+            else:
+                log(f'警告：收到空回复', file=sys.stderr)
+                sys.exit(1)
+
+        else: # 未知
+            log(f'警告：未收到正在运行的实例的成功回复', file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
+
+class OutsideServ():
+    conns = []
+    cnt_recvmsg = 0
+    @classmethod
+    def init(cls):
+        cls.skt_OServLsn = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        cls.skt_OServLsn.bind(f'{si.outest_sbxdir}/OServ.socket')
+        cls.skt_OServLsn.listen(5)
+    @classmethod
+    def one_loop_task(cls):
+        # 处理已经建立的连接
+        for i in reversed(range(0, len(cls.conns))):
+            connItem = cls.conns[i]
+            ready, _, wrong = select.select([connItem.skt_conn], [], [connItem.skt_conn], 0)  # 非阻塞检查
+            if wrong:
+                log('警告：OutsideServ的一个连接出现异常', file=sys.stderr)
+                cls.close_conn(connItem)
+                continue
+            elif ready:
+                try: data = connItem.skt_conn.recv(300_000)
+                except Exception as err:
+                    log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
+                    cls.close_conn(connItem)
+
+                if data:
+                    connItem.last_tick = time.monotonic()
+                    # log(f"收到外部消息: {data!r}")
+                    try: cls.onDataRecved(data, connItem )
+                    except Exception as err:
+                        log(f'警告：处理收到的消息过程中出错:{err}', file=sys.stderr)
+                        cls.close_conn(connItem)
+                else:
+                    # log("外部连接已断开（recv 返回空）") # 发完消息正常断开
+                    cls.close_conn(connItem)
+            else: # 无消息
+                if connItem.last_tick + 60 < time.monotonic():
+                    log("警告：外部连接超时（连续无消息），关闭", file=sys.stderr)
+                    cls.close_conn(connItem)
+
+
+        # 有没有新的外部连接
+        ready, _, _ = select.select([cls.skt_OServLsn], [], [], 0)
+        if ready:
+            conn, client_addr = cls.skt_OServLsn.accept()
+            cls.cnt_recvmsg += 1
+            # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
+            cls.conns.append( d(skt_conn=conn, last_tick=time.monotonic() , index=cls.cnt_recvmsg) )
+    @classmethod
+    def onDataRecved(cls, data, connItem):
+        try: msgObj = d( json.loads( data.decode() ) )
+        except Exception as err:
+            errmsg = f'无法正确解析收到的消息:{err}'
+            log(f'警告：{errmsg}', file=sys.stderr)
+            cls.response_close(connItem, message=errmsg)
+            return False
+        for k,v in dict.items(msgObj.si_should_match or {}):
+            if not eq_ignore_order(si[k], v):
+                errmsg = f'si[{k}]不一致。\n正在运行的沙箱的值：{si[k]}\n消息中的值：{v}\n（如果修改过沙箱配置，可能需要先中止正在运行的沙箱）'
+                log(f'警告：{errmsg}', file=sys.stderr)
+                cls.response_close(connItem, message=errmsg)
+                return False
+        if msgObj.run_in_mainLyr_cmdvec:
+            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
+            cls.response_close(connItem, reuseSucceeded=True, message=f'mainApp_{connItem.index}')
+            return True
+    @classmethod
+    def response_close(cls, connItem, reuseSucceeded=None, youStartNewInstance=None, message=None):
+        responseObj = d()
+        if reuseSucceeded:      responseObj.reuseSucceeded = True
+        if youStartNewInstance: responseObj.youStartNewInstance = True
+        if message:             responseObj.message = message
+        try:
+            connItem.skt_conn.send( json.dumps(responseObj).encode() )
+            return True
+        except Exception as err:
+            log(f'警告：向外部连接回复失败 {err}', file=sys.stderr)
+            return False
+        finally:
+            cls.close_conn(connItem)
+
+    @classmethod
+    def close_conn(cls, connItem):
+        connItem.skt_conn.close()
+        try: cls.conns.remove(connItem)
+        except Exception as err: log(f'警告：关闭外部来的连接时发生错误（可能已被关闭过）: {err}', file=sys.stderr)
+
+class OutestProcsMonitor:
+    I_AM_OUTEST=None
+    @classmethod
+    def i_am_outest(cls):
+        cls.I_AM_OUTEST=True
+        cls.procs_alive = []
+        cls.procs_wdgsee = d()
+        cls.procs_histseen = d()
+        cls.logs_should_match_soon = []
+        cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
+        cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
+        cls.fd_wr_wdgsee = os.open(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_WRONLY)
+
+        cls.oPaSkts = d()
+        for lyrn, fdpair in dict.items(si.oSkt_fds):
+            cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
+        cls.tell_lyr_runsubp(si.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        OutsideServ.init()
+    @classmethod
+    def get_NSpid_arr(cls, status_file_path) -> list:
+        for line in Path(status_file_path).read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return [int(x) for x in line.split()[1:]]
+    @classmethod
+    def get_procsalive_arr_from_cg(cls) -> list:
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        result = []
+        for pid in Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines():
+            try:
+                inode1 = os.stat(f'/proc/{pid}').st_ino
+
+                comm = Path(f'/proc/{pid}/comm').read_text().strip()
+                NSpid = cls.get_NSpid_arr(f'/proc/{pid}/status')
+                start_tick = get_start_tick(f'/proc/{pid}/stat')
+                ns = get_nstypes(f'/proc/{pid}/ns')
+                cmdvec = Path(f'/proc/{pid}/cmdline').read_text().strip('\x00').split('\x00')
+
+                inode2 = os.stat(f'/proc/{pid}').st_ino
+                if inode1 != inode2: continue
+            except:
+                continue
+            result.append(D( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
+        return result
+    @classmethod
+    def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        procsalive_arr = cls.get_procsalive_arr_from_cg()
+        # NOTE 必须 既写本cls内部变量，也更新路径文件内容
+        cls.procs_alive = procsalive_arr # 写cls内部
+        try: # 写文件
+            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
+            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_EX)
+            os.ftruncate(cls.fd_wr_alive, 0)
+            os.pwrite(cls.fd_wr_alive, json_str.encode(), 0)
+        finally:
+            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
+    @classmethod
+    def aliveproc_and_elproc_equal(cls, plv, pel): #plv="proc alive" | pel="proc from event log"
+        if plv.NSpid[-1] == pel.self_see_pid \
+        and plv.start_tick == pel.start_tick \
+        and plv.ns.pid == pel.ns.pid:
+            return True
+        else: return False
+    @classmethod
+    def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc seen"
+        if plv.NSpid[-1] == psn.self_see_pid \
+        and plv.start_tick == psn.start_tick \
+        and plv.ns.pid == psn.pidns :
+            return True
+        else: return False
+    @classmethod
+    def conv_to_seenproc(cls, aliveProc, logItem): # 输入的是一对互相符合的aliveProc和logItem条目
+        return D(
+            NSpid = aliveProc.NSpid,
+            pidns_tree = logItem.pidns_tree,
+            pidns_depth = logItem.pidns_depth,
+            start_tick = logItem.start_tick,
+            pidns = logItem.ns.pid,
+            self_see_pid = logItem.self_see_pid,
+        )
+    @classmethod
+    def sbx_exit_broadcast(cls):
+        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sbx_exit_broadcast()", 'warn') # 可能会在初始化之前被调用
+        for lyrname in si.expected_alive_layers:
+            cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'), loose=True)
+    @classmethod
+    def sendmsg_to_lyr(cls, lyrname, msgobj, loose=False):
+        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sendmsg_to_lyr()", 'warn' if loose else 'raise_exit')
+        try:
+            cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
+        except Exception as err:
+            if loose: log(f"警告：发送消息给{lyrname}未成功: {err}", file=sys.stderr)
+            else: raise
+    @classmethod
+    def tell_lyr_runsubp(cls, lyrname, subpItem):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subpItem=subpItem) )
+    @classmethod
+    def symlink_into_sbxdir(cls, dest, file_in_sbxdir): # 创建软链，从外部，链到本沙箱实例目录内的文件
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        linkto = napath(f'{si.outest_sbxdir}/{file_in_sbxdir}')
+        CHK( not Path(linkto).is_dir(), f'为了安全，不允许链接到目录')
+        symlink(linkto, dest)
+    @classmethod
+    def symlink_from_sbxdir_to_in_proc_rootfs(cls, slk_name, to_proc_name, target_in_proc_rootfs): # 创建软链，从本沙箱实例目录内, 链到本沙箱的进程的 rootfs 里的某文件
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        pid = cls.procs_histseen[to_proc_name].NSpid[0]
+        real_linkto = napath(f'/proc/{pid}/root/{target_in_proc_rootfs}')
+        CHK( not Path(real_linkto).is_dir(), f'为了安全，不允许链接到目录')
+        symlink(real_linkto, f'{si.outest_sbxdir}/into.{to_proc_name}.{slk_name}.link')
+    @classmethod
+    def custom_action_when_procname_seen(cls, proc_name):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        if proc_name == 'xephyr':
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
+            cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
+            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
+    @classmethod
+    def find_alive_proc_matching_logitem(cls, elp):
+        for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
+            if cls.aliveproc_and_elproc_equal(proc, elp):
+                return proc
+    @classmethod
+    def put_proc_into_seenlist(cls, proc_name, seenProc, logItem):
+        cls.procs_histseen[proc_name] = seenProc
+        if logItem in cls.logs_should_match_soon: # 上次已经加入了注意名单，现在可以移出注意名单
+            log(f'把这条消息从未识别的消息列表中删除 {logItem}')
+            cls.logs_should_match_soon.remove(logItem)
+        if proc_name in si.expected_alive_procs:
+            cls.procs_wdgsee[proc_name] = seenProc
+        cls.custom_action_when_procname_seen(proc_name)
+    @classmethod
+    def got_a_ready_proc_log(cls, logItem): # 被调用时，说明一个进程有了logItem出现
+        proc_name = logItem.ready_proc_name
+        # 判断这个进程是否已经在aliveProcs的列表里
+        if (aliveProc := cls.find_alive_proc_matching_logitem(logItem) ):
+            seenProc = cls.conv_to_seenproc(aliveProc, logItem)
+            cls.put_proc_into_seenlist(proc_name, seenProc, logItem)
+        else: # 不在aliveProcs列表里：1.可能暂时来不及出现，允许等下个周期再出现 2.若已经不是第1个周期，则判断进程死亡
+            if proc_name not in si.expected_alive_procs : # 看门狗不用管这个进程
+                return
+            if logItem not in cls.logs_should_match_soon: # 可能暂时来不及出现，允许等下个周期再出现
+                log(f'把此消息加入未识别的列表 {logItem}')
+                cls.logs_should_match_soon.append(logItem)
+            else: # 已经不是第1个周期，则判断进程死亡
+                log(f'收到过{proc_name}的启动消息，但一直未发现过存活，判断进程已死')
+                sys.exit()
+    @classmethod
+    def get_and_parse_new_wlog(cls):
+        new_logs = WlogReader.readnew()
+        for logItem in (cls.logs_should_match_soon + new_logs):
+            logItem = d(logItem)
+
+            if logItem.event == 'error':
+                log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
+                sys.exit(1)
+
+            if logItem.ready_proc_name :
+                cls.got_a_ready_proc_log(logItem)
+        cls.write_procs_seen_to_fd(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
+        cls.write_procs_seen_to_fd(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
+    @classmethod
+    def write_procs_seen_to_fd(cls, procs_seen_obj, fd):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        try:
+            json_str = '\n'.join(['{',
+                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
+                '}'])
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, json_str.encode(), 0)
+        finally:
+            fcntl.flock(fd,  fcntl.LOCK_UN)
+    @classmethod
+    def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        cls.update_procsalive()
+        cls.get_and_parse_new_wlog()
+        for proc_name,psn in dict.items(cls.procs_wdgsee):
+            for plv in cls.procs_alive:
+                if cls.aliveproc_and_seenproc_equal(plv, psn):
+                    break
+            else:
+                log(f'{proc_name} 已不再存活，看门狗结束沙箱')
+                sys.exit()
+        OutsideServ.one_loop_task()
+
+def daemon_outest():
+    # TODO 等待5秒，等待主app启动的信号，否则退出
+
+    register_sig_handlers(outest=True)
+
+    WlogReader.init()
+    OutestProcsMonitor.i_am_outest()
+
+    while True:
+        OutestProcsMonitor.wdg()
+
+        if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
+
+        if not exist_childtree(): sys.exit()
+
+        time.sleep(0.2)
+
+
+
+lasttick_havechd = 0
+def daemon_pidnsleader():
+    global lasttick_havechd
+    CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+    PidnsleaderListener.i_am_pidnsleader()
+    PERIOD = 0.2
+    while True:
+        if sig_say_exit: sys.exit()
+
+        if (msg_from_outest := PidnsleaderListener.readmsg_from_outest() ):
+            if msg_from_outest.action == 'sbx_exit':
+                sys.exit()
+            elif msg_from_outest.action == 'run_subp':
+                layer_run_subp(no_wait=True,  **msg_from_outest.subpItem )
+
+                if tlcfg.isMainLyr: # 默认认为收到过的第一个run_subp指令就是mainApp
+                    PidnsleaderListener.MainApp_Ever_Started = True
+
+        if tlcfg.isMainLyr and PidnsleaderListener.MainApp_Ever_Started :
+            if not si.idleKeepSbxTime:
+                if not exist_childtree(): sys.exit()
+            else: # si.idleKeepSbxTime > 0:
+                if exist_childtree() :
+                    lasttick_havechd = time.monotonic()
+                else:
+                    tick_diff = time.monotonic() - lasttick_havechd
+                    if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} 主层空闲，若长时间空闲则结束沙箱')
+                    if time.monotonic() > lasttick_havechd+si.idleKeepSbxTime: sys.exit()
+
+        time.sleep(PERIOD)
+
+class PidnsleaderListener():
+    I_AM_PIDNSLEADER=None
+    MainApp_Ever_Started=False # 是否收到过来自最外层的mainApp的启动命令（仅主层使用）
+    @classmethod
+    def i_am_pidnsleader(cls):
+        cls.I_AM_PIDNSLEADER=True
+        cls.oChdSkt = socket.socket(fileno=si.oSkt_fds[tlcfg.layer_name].chd)
+    @classmethod
+    def readmsg_from_outest(cls):
+        ready, _, _ = select.select([cls.oChdSkt], [], [], 0)
+        if ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
+
+def get_alive() -> list:
+    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_alive)
+
+def get_histseen() -> dict:
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_histseen
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_histseen)
+
+def get_wdgsee() -> dict:
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
+
 
 
 cleanup_symlinks_to_rm = []
@@ -2151,63 +1882,292 @@ def cleanup_outest():
                 try_showerr(lambda: Path(slkItem).unlink() )
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
-#==========================================
-#======= libc 工具函数 =========================
+def cleanup_pidnsleader():
+    if os.getpid() != 1 : log("错误：pid != 1 。应该只有领头进程运行此清理函数"); return
+    for u in range(3):
+        if not exist_childtree(): break
+        os.kill(-1, signal.SIGTERM)
+        for i in range(10):
+            if (clear := not exist_childtree()): break
+            time.sleep(0.1)
+        if clear: break
+    else:
+        os.kill(-1, signal.SIGKILL)
+
+
+# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
+SIGS_TO_IGN = []
+SIGS_TO_PASSBY = [signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, signal.SIGTSTP]
+SIGS_TO_HANDLE = SIGS_TO_PASSBY + [signal.SIGTERM, signal.SIGCHLD]
+def register_sig_handlers(outest=False, pidnsleader=False):
+    for sig in SIGS_TO_IGN:     signal.signal(sig, signal.SIG_IGN)
+    if pidnsleader:
+        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_pidnsleader)
+    if outest:
+        for sig in SIGS_TO_HANDLE:  signal.signal(sig, signals_handler_outest)
+def signals_handler_outest(signum, frame):
+    _signals_handler(signum, is_outest=True)
+def signals_handler_pidnsleader(signum, frame):
+    _signals_handler(signum)
+sig_say_exit = False
+def _signals_handler(signum, is_outest=False):
+    # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
+    global sig_say_exit
+    if signum in SIGS_TO_PASSBY:
+        pass # TODO
+    elif signum == signal.SIGTERM:
+        sig_say_exit = True
+    elif signum == signal.SIGCHLD:
+        while True:
+            try:
+                # -1 表示等待任意子进程 # os.WNOHANG 表示非阻塞：如果没有可回收的子进程，立即返回 (0, 0)
+                pid, status = os.waitpid(-1, os.WNOHANG)
+                if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
+            except ChildProcessError:
+                if not tlcfg.isMainLyr or not si.idleKeepSbxTime: sig_say_exit = True ;
+                break
+
+
+def exist_childtree():
+    try:
+        pid, status = os.waitpid(-1, os.WNOHANG)
+        return True
+    except ChildProcessError:
+        return False
+
+# os.waitpid(-1, os.WNOHANG) 的结果说明：
+#     (child_pid, exit_status)	成功回收一个僵尸进程
+#     (0, 0)	无僵尸可回收，但子进程仍存在
+#     抛出 ChildProcessError（继承自 OSError	errno = ECHILD（No child processes） 值通常为 10 ）
+
+loghead = ''
+def set_loghead(new_loghead):
+    global loghead
+    loghead = new_loghead
+def log(*args, **kwargs):
+    new_args = args
+    if loghead:
+        new_args = ( loghead,  *args)
+    print(*new_args, **kwargs)
+
+def wlog(event, me_proc_info=False, **kw_args) :
+    if not (si and si.file_fds and si.file_fds.layerslog_a): return False
+    kw_args = d(kw_args)
+    if kw_args.errmsg: event = 'error' ; kw_args.errmsg=str(kw_args.errmsg)
+    logObj = d(
+        logger = loghead or tlcfg.layer_name if tlcfg else '',
+        event = event,
+        **kw_args
+    )
+    if event in ['layer_booted','subp_start']: me_proc_info = True
+    if me_proc_info:
+        logObj.self_see_pid=os.getpid()
+        logObj.start_tick=get_start_tick('/proc/self/stat')
+        logObj.ns = get_nstypes(f'/proc/self/ns')
+    try:
+        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_EX)
+        os.write(si.file_fds.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
+    except Exception as err:
+        traceback.print_exc(file=sys.stderr)
+    finally:
+        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_UN)
+
+
+class WlogReader():
+    wlogf = None
+    @classmethod
+    def init(cls):
+        cls.wlogf = open(f'{si.outest_sbxdir}/events.layers.log', 'r')
+    @classmethod
+    def _read(cls):
+        try:
+            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_EX)
+            return cls.wlogf.read()
+        finally:
+            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_UN)
+    @classmethod
+    def readnew(cls) -> list:
+        new_logs = []
+        for line in cls._read().splitlines():
+            if not line.strip(): continue
+            new_logs.append(json.loads(line))
+        return new_logs
+
+
+
+def get_nstypes(nsdir_path):
+    return D({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
+
+def get_start_tick(statfile_path): # 返回的是字符串，不是数字
+    return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
+
+
+ps1 = ">"
+def set_ps1(status):
+    global ps1
+    ps1 = ''.join( [
+        r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
+        ,
+        f'{si.sandbox_name} {tlcfg.layer_name} {status}',
+        r''' | \w > \[\e[0m\]'''
+    ])
+    os.environ['PS1'] = ps1
+
+
+UNSHR_MAP = types.SimpleNamespace( pid='PID', mnt='NS', user='USER', cgroup='CGROUP', ipc='IPC', time='TIME', uts='UTS', net='NET', )
+def lyrcfg_to_unshrcfg(lyrcfg):
+    unshr_cfg = d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
+    for x in dict.keys(unshr_cfg): CHK(x in UNSHR_MAP.__dict__.keys(), f'此unshare flag 未知：{x}')
+    return unshr_cfg
+def unshrflg(unshr_cfg):
+    unshr_flg = 0
+    for k,v in dict.items(unshr_cfg):
+        if v: unshr_flg |= os.__dict__['CLONE_NEW' + UNSHR_MAP.__dict__[k]]
+    return unshr_flg
+
+
+class TmpSocketPair:
+    def __init__(self):
+        self._skt_chd, self._skt_pa = socket.socketpair()
+        set_fd_keep_on_exec(self._skt_chd.fileno(), False)
+        set_fd_keep_on_exec(self._skt_pa.fileno(), False)
+        self.I_AM_PA = False ; self.I_AM_CHD = False
+    def i_am_pa(self):
+        CHK(not self.I_AM_CHD, "已设置为是fork的子进程端")
+        self._skt_chd.close() ; self.I_AM_PA = True
+    def i_am_chd(self):
+        CHK(not self.I_AM_PA, "已设置为是fork的父进程端")
+        self._skt_pa.close() ; self.I_AM_CHD = True
+    def pa_send(self, data):
+        CHK(self.I_AM_PA, "非fork的父进程调用了此函数")
+        if isinstance(data, BS): data = data.value
+        self._skt_pa.send(data)
+    def chd_send(self, data):
+        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数")
+        if isinstance(data, BS): data = data.value
+        self._skt_chd.send(data)
+    def pa_recv(self, byte_cnt, timeout, expect_data=None):
+        CHK(select.select([self._skt_pa], [], [], timeout)[0], "fork的父进程等待子进程的信号超时了")
+        if isinstance(expect_data, BS): expect_data = expect_data.value
+        data = self._skt_pa.recv(byte_cnt)
+        if expect_data is not None: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        return data
+    def chd_recv(self, byte_cnt, timeout, expect_data=None):
+        CHK(select.select([self._skt_chd], [], [], timeout)[0], "fork的子进程等待父进程的信号超时了")
+        if isinstance(expect_data, BS): expect_data = expect_data.value
+        data = self._skt_chd.recv(byte_cnt)
+        if expect_data is not None: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        return data
+    def close(self):
+        if self.I_AM_PA  and self._skt_pa:  self._skt_pa.close() ;  self._skt_pa = None
+        if self.I_AM_CHD and self._skt_chd: self._skt_chd.close() ; self._skt_chd = None
+
+
+
+class BS(enum.Enum): # fork前后父子进程之间通信用的，以及 最外层和内层之间通信用的单字节信号
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return bytes([count])  # 或者 bytes([count & 0xFF]) 防止溢出
+    SetMeUidRoot = enum.auto()
+    SetYouUidRootDone = enum.auto()
+    SetMeUidUser = enum.auto()
+    SetYouUidUserDone = enum.auto()
+    IChdBorn = enum.auto()
+    YouChdGo = enum.auto()
+
+
+
+def set_fd_keep_on_exec(fd:int, keep:bool):
+    if keep: new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
+    else:    new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC
+    fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
+
+
+def read_alltext_from_fd(fd:int) -> str:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return os.pread(fd, os.fstat(fd).st_size, 0).decode()
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+def read_all_from_fd_then_jsonloads(fd) -> list|dict :
+    return d( json.loads( read_alltext_from_fd(fd) ) )
+
+def get_important_fds():
+    return list(si.file_fds.values()) \
+            + list(si.subp_log_fds.values()) \
+            + [fd for fd_pair in dict.values(si.oSkt_fds) for fd in dict.values(fd_pair)]
+
+def set_important_fds_cloexec():
+    fds_to_cloexec = get_important_fds()
+    for fd in os.listdir('/proc/self/fd') :
+        if int(fd) in fds_to_cloexec: set_fd_keep_on_exec(int(fd), False)
+
+
+def close_important_fds():
+    fds_to_close = get_important_fds()
+    # log(f'要关闭fd： {fds_to_close}')
+    for fd in os.listdir('/proc/self/fd') :
+        if int(fd) in fds_to_close:
+            try:
+                os.close(int(fd))
+            except OSError as e:
+                # 本可忽略 9 错误（ EBADF 错误表示可能已关闭 （Bad file descriptor），但现在不忽略
+                if e.errno != 9:  raise_exit(f'{fd=}已经被提前关闭过，与整体设计不符')
+                else: raise
+
+
+
+
+def run_a_cmd(cmdv, print_output=False):
+    prc = subprocess.Popen(cmdv,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, bufsize=1, universal_newlines=True
+                         )
+    stdout_data, _ = prc.communicate()
+    # prc.wait()
+    if print_output: log(stdout_data)
+    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
+
+def safe_copy_script(copy_target_path):
+    old_content = Path(scriptfilepath).read_text()
+
+    lines_arr = old_content.splitlines()
+
+    start_marker = "# === HIDE_FOR_SUBLAYERS BEGIN ==="
+    end_marker =   "# === HIDE_FOR_SUBLAYERS END ==="
+    removed_mark = "# === HIDDEN_PART ==="
+
+    start_index = None
+    end_index = None
+
+    for i, line in enumerate(lines_arr):
+        if line.startswith(removed_mark):
+            make_file_exist(copy_target_path)
+            os.chmod(copy_target_path, 0o444)
+            mount(scriptfilepath, copy_target_path, None, MS.BIND|MS.RDONLY, None)
+            mount(None, copy_target_path, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None)
+            return
+        if line.startswith(start_marker):
+            start_index = i
+        elif line.startswith(end_marker):
+            end_index = i
+        if start_index is not None and end_index is not None:
+            break
+    if start_index is None: raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
+    if end_index is None: raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
+    if not (start_index < end_index): raise_exit("userconfig 的开始和结束标记顺序不正确")
+
+    # 将范围内的所有行（包括开始和结束标记行）设置为空字符串
+    lines_arr[start_index] = removed_mark
+    lines_arr[start_index + 1 : end_index + 1] = [""] * (end_index - start_index)
+    script_content_safe = '\n'.join(lines_arr)
+    Path(copy_target_path).write_text(script_content_safe)
+    os.chmod(copy_target_path, 0o444)
+
+
+
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-
-def set_proc_dispname(dispname):
-    PR_SET_NAME = 15
-    CHK( len(name_bytes := dispname.encode("utf-8")) <= 15 , f"进程名 {dispname} 大小超过15")
-    libc.prctl(PR_SET_NAME, name_bytes, 0, 0, 0)
-
-MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
-def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
-    allowed_nonabs = ['tmpfs', 'proc', 'devpts']
-    if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
-        raise_exit(f"mount的来源{source}不是绝对路径，且不在允许的{allowed_nonabs}之内")
-    if isinstance(source, str) and source.startswith('/'):
-        source = napath(source)
-    target = napath(target)
-    if source and source.startswith('/') and rslvy(source) != source:
-        raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    if rslvy(target) != target:
-        raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    # log(f"执行挂载 {source} --> {target}")
-    ret = libc.mount(
-        source.encode() if source else None,
-        target.encode(),
-        fstype.encode() if fstype else None,
-        flags,
-        data.encode() if data else None
-    )
-    if ret != 0:
-        log(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
-        errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno), target)
-
-MNT = types.SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
-def umount(target, flags=0):
-    ret = libc.umount2(
-        target.encode(),
-        flags
-    )
-    if ret != 0:
-        errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno), target)
-
-mntflag_newrootfs = MS.NODEV | MS.NOSUID
-mntflag_proc = MS.NODEV|MS.NOSUID|MS.NOEXEC
-mntflag_newsbxdir = MS.NODEV|MS.NOSUID
-mntflag_apps = MS.NODEV|MS.NOSUID
-mntflag_sbxtemp = MS.NOSUID|MS.NODEV
-mntflag_binddir = MS.BIND|MS.REC|MS.NOSUID
-mntflag_tmpfs = MS.NOSUID|MS.NODEV # 这里设置nodev也会让/dev有nodev,但因为每个具体的设备是bind进去的，所以好像没问题
-
-def pivot_root(new_root, put_old):
-    res = libc.pivot_root(ctypes.c_char_p(new_root.encode()), ctypes.c_char_p(put_old.encode()))
-    if res != 0:
-        errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
 
 def drop_caps():
     PR_SET_NO_NEW_PRIVS = 38
@@ -2298,30 +2258,82 @@ def drop_caps():
 
 
 
+def pivot_root(new_root, put_old):
+    res = libc.pivot_root(ctypes.c_char_p(new_root.encode()), ctypes.c_char_p(put_old.encode()))
+    if res != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno))
+
+
+MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
+def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
+    allowed_nonabs = ['tmpfs', 'proc', 'devpts']
+    if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
+        raise_exit(f"mount的来源{source}不是绝对路径，且不在允许的{allowed_nonabs}之内")
+    if isinstance(source, str) and source.startswith('/'):
+        source = napath(source)
+    target = napath(target)
+    if source and source.startswith('/') and rslvy(source) != source:
+        raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+    if rslvy(target) != target:
+        raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+    # log(f"执行挂载 {source} --> {target}")
+    ret = libc.mount(
+        source.encode() if source else None,
+        target.encode(),
+        fstype.encode() if fstype else None,
+        flags,
+        data.encode() if data else None
+    )
+    if ret != 0:
+        log(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno), target)
+
+MNT = types.SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
+def umount(target, flags=0):
+    ret = libc.umount2(
+        target.encode(),
+        flags
+    )
+    if ret != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno), target)
+
+mntflag_newrootfs = MS.NODEV | MS.NOSUID
+mntflag_proc = MS.NODEV|MS.NOSUID|MS.NOEXEC
+mntflag_newsbxdir = MS.NODEV|MS.NOSUID
+mntflag_apps = MS.NODEV|MS.NOSUID
+mntflag_sbxtemp = MS.NOSUID|MS.NODEV
+mntflag_binddir = MS.BIND|MS.REC|MS.NOSUID
+mntflag_tmpfs = MS.NOSUID|MS.NODEV # 这里设置nodev也会让/dev有nodev,但因为每个具体的设备是bind进去的，所以好像没问题
+
+
 def set_pdeathsig(): # 由layer1的fork出来的子进程调用, 让真实父进程退出后沙箱内能够收到TERM信号
     PR_SET_PDEATHSIG = 1
     libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
 
-#============================
+def set_proc_dispname(dispname):
+    PR_SET_NAME = 15
+    CHK( len(name_bytes := dispname.encode("utf-8")) <= 15 , f"进程名 {dispname} 大小超过15")
+    libc.prctl(PR_SET_NAME, name_bytes, 0, 0, 0)
 
-def mkdirp(dirpath):
-    os.makedirs(dirpath, exist_ok=True)
+
+def get_appimg_sqoffset(appimg_path):
+    with open(appimg_path, 'rb') as f: elfHeader = f.read(64)
+    (bitness,endianness) = struct.unpack("4x B B 58x", elfHeader);
+    (shoff,shentsize,shnum) = struct.unpack(
+        (">" if endianness == 2 else "<") +
+        ("40x Q 10x H H 2x" if bitness == 2 else "32x L 10x H H 14x"),
+        elfHeader
+    );
+    return (shoff + shentsize * shnum)
+
 
 def napath(pstr):
     pstr = str(pstr)
     if not str(pstr.startswith('/')): raise_exit(f"不是绝对路径： {pstr}")
     return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
-
-def make_file_exist(path): # 路径不能已有目录
-    if is_dir(path): raise_exit(f"{path}已是文件夹")
-    if not os.path.exists(path):
-        mkdirp(Path(path).parent)
-        Path(path).touch()
-
-def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在哪个位置创建软链。
-    if Path(dest).is_symlink() and Path(dest).readlink() == linkto: return
-    mkdirp(Path(dest).parent)
-    os.symlink(linkto, dest)
 
 def which_and_resolve_exist(cmd):
     path = shutil.which(cmd)
@@ -2342,30 +2354,6 @@ def padir(path):
     if napath(path) == '/': raise_exit(f"{path}已是根路径，无法再取得上级目录")
     return str(Path(path).parent)
 
-def run_a_cmd(cmdv, print_output=False):
-    prc = subprocess.Popen(cmdv,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, bufsize=1, universal_newlines=True
-                         )
-    stdout_data, _ = prc.communicate()
-    # prc.wait()
-    if print_output: log(stdout_data)
-    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
-
-def is_unix_socket_listened(sock_path):
-    if not os.path.exists(sock_path):
-        return False
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.connect(sock_path)
-        sock.close()
-        return True
-    except (FileNotFoundError, ConnectionRefusedError):
-        sock.close()
-        return False
-    finally:
-        sock.close()
-
 def is_file(path):
     return not Path(path).is_symlink() and Path(path).is_file()
 def is_dir(path):
@@ -2382,6 +2370,35 @@ def is_socket(path):
     return not Path(path).is_symlink() and Path(path).is_socket()
 def is_ro(path):
     return os.statvfs(path).f_flag & MS.RDONLY
+
+def is_unix_socket_listened(sock_path):
+    if not os.path.exists(sock_path):
+        return False
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(sock_path)
+        sock.close()
+        return True
+    except (FileNotFoundError, ConnectionRefusedError):
+        sock.close()
+        return False
+    finally:
+        sock.close()
+
+def mkdirp(dirpath):
+    os.makedirs(dirpath, exist_ok=True)
+
+def make_file_exist(path): # 路径不能已有目录
+    if is_dir(path): raise_exit(f"{path}已是文件夹")
+    if not os.path.exists(path):
+        mkdirp(Path(path).parent)
+        Path(path).touch()
+
+def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在哪个位置创建软链。
+    if Path(dest).is_symlink() and Path(dest).readlink() == linkto: return
+    mkdirp(Path(dest).parent)
+    os.symlink(linkto, dest)
+
 
 class FileContent:
     def __init__(self, data):
@@ -2456,15 +2473,13 @@ class DotDict(EnhancedDict):
 d = EnhancedDict
 D = DotDict
 
-loghead = ''
-def set_loghead(new_loghead):
-    global loghead
-    loghead = new_loghead
-def log(*args, **kwargs):
-    new_args = args
-    if loghead:
-        new_args = ( loghead,  *args)
-    print(*new_args, **kwargs)
+
+def eq_ignore_order(v1, v2):
+    if type(v1) != type(v2): return False
+    if isinstance(v1, dict): return v1.keys() == v2.keys() and all(eq_ignore_order(v1[k], v2[k]) for k in v1)
+    if isinstance(v1, list): return len(v1) == len(v2) and sorted(v1, key=str) == sorted(v2, key=str)
+    return v1 == v2
+
 
 def try_pass(func):
     try:
@@ -2491,6 +2506,7 @@ def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
         if action == 'raise_exit': raise_exit(errmsg)
         elif action == 'warn': log(f"警告: {errmsg}", file=sys.stderr)
 
+
 ASK_OPEN='''\
 #!/bin/bash
 
@@ -2512,7 +2528,6 @@ EXITCODE=$DIALOG_R
 [[ $DIALOG_R -eq 2 ]] && EXITCODE=0
 exit $EXITCODE
 '''
-
 ICEWM_PREF='''
 ShowStartMenu=0
 SystemTray=0
@@ -2531,18 +2546,6 @@ EnableWorkspaces=0
 #ShowWorkspaceSwitcher=0
 #ShowWorkspaces=0
 '''
-
-def get_appimg_sqoffset(appimg_path):
-    with open(appimg_path, 'rb') as f: elfHeader = f.read(64)
-    (bitness,endianness) = struct.unpack("4x B B 58x", elfHeader);
-    (shoff,shentsize,shnum) = struct.unpack(
-        (">" if endianness == 2 else "<") +
-        ("40x Q 10x H H 2x" if bitness == 2 else "32x L 10x H H 14x"),
-        elfHeader
-    );
-    return (shoff + shentsize * shnum)
-
-#=====================================================
 
 if __name__ == "__main__":
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
