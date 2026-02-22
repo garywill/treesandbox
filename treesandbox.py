@@ -4,8 +4,9 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types, select, fcntl
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl
 from pathlib import Path
+from glob import glob
 
 # === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
 # 普通用户设置这里
@@ -255,9 +256,9 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         *([
         d(plan='rosame', src='/dev/dri', SDS=1),
         d(plan='rosame', src='/sys/class/drm', SDS=1),
-        *[ d(plan='rosame', src=p, SDS=1)        for p in glob.glob('/sys/dev/char/226:*') ],
-        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob.glob('/sys/devices/*/*/drm') ],
-        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob.glob('/sys/devices/*/*/drm') ],
+        *[ d(plan='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
+        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
+        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
         ] if uc.gpus else [] ),
     ]
 
@@ -1152,7 +1153,7 @@ def cleanup_outest(si):
     paths_rm_sub_files = [ #准备删这些目录的一级子文件和目录本身
         f'{si.outest_sbxdir}/temp',
         f'{si.outest_sbxdir}/apps',
-        *glob.glob(f'{si.outest_sbxdir}/new.*.rootfs'),
+        *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
         f'{si.outest_sbxdir}',
     ]
     for dirpath in paths_rm_sub_files:
