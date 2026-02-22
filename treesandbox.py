@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex
 from pathlib import Path
 from glob import glob
 
@@ -248,6 +248,7 @@ def gen_layer4(si, uc, dyncfg):
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
         workdir=uc.workdir if uc.workdir else None,
+        # user_shell=True,
         dropcap_then_cmds=[
             d( cmdvec=uc.default_app , stdin=True, stdout=True, stderr=True),
         ],
@@ -427,7 +428,9 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
         mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, None)
 
     if not os.path.lexists(f'{target_sbxdir_path}/dirmaker.layer.name'):
-        Path(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name').write_text(lyrcfg.layer_name)
+        with open(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name', 'w') as f:
+            f.write(lyrcfg.layer_name)
+            os.chmod(f.name, 0o444)
         symlink(f'dirmaker.layer.{lyrcfg.layer_name}.name', f'{target_sbxdir_path}/dirmaker.layer.name')
 
     Path(f'{target_sbxdir_path}/empty').touch()
@@ -457,7 +460,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
         with open(f'{target_sbxdir_path}/sbx.{si.sandbox_name}.name', 'w') as f:
             f.write(si.sandbox_name)
             os.chmod(f.name, 0o444)
-        os.symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/sbx.name')
+        symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/sbx.name')
 
     # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
     def create_lyrs_files_recr(lyr_cfg):
@@ -547,11 +550,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     os.chdir(outest_sbxdir)
     mkdirp(CG_TSBXS)
 
+    symlink(f'/proc/{outest_pid}', f'{outest_sbxdir}/sbx.proc')
     with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
         f.write(str(outest_pid))
         os.chmod(f.name, 0o444)
 
-    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
+    symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
 
     with open(f'{outest_sbxdir}/userconfig.json', 'w') as f:
         f.write(json.dumps(uc, indent=2, ensure_ascii=False))
@@ -750,7 +754,9 @@ def main():
 def daemon(is_outest, layer1_pid=None):
     if is_outest:
         si.layer1_pid = layer1_pid
-        Path(f'{si.outest_sbxdir}/proc.layer1.{layer1_pid}.pid').write_text(str(layer1_pid))
+        with open(f'{si.outest_sbxdir}/proc.layer1.{layer1_pid}.pid', 'w') as f:
+            f.write(str(layer1_pid))
+            os.chmod(f.name, 0o444)
         symlink(f'proc.layer1.{layer1_pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
 
         layer_set_status('outestDaemoning')
