@@ -1717,7 +1717,8 @@ class OutestProcsMonitor:
                 comm = Path(f'/proc/{pid}/comm').read_text().strip()
                 NSpid = cls.get_NSpid_arr(f'/proc/{pid}/status')
                 start_tick = get_start_tick(f'/proc/{pid}/stat')
-                ns = get_nstypes(f'/proc/{pid}/ns')
+                try: ns = get_nstypes(f'/proc/{pid}/ns')
+                except: ns = dn()
                 cmdvec = Path(f'/proc/{pid}/cmdline').read_text().strip('\x00').split('\x00')
 
                 inode2 = os.stat(f'/proc/{pid}').st_ino
