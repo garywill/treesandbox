@@ -74,7 +74,7 @@ def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变 0
-        unshare_user=True, setgroups_deny=True, uid_map=f'0 {si.uid} 1\n', gid_map=f'0 {si.gid} 1\n',
+        unshare_user=True, uid_map_as_root=True,
         # 准备开始第2层。这第1层的 sublayers 数组应该只有一个元素，即，第2层只有一个容器
         sublayers = [gen_layer2(si, uc, dyncfg)],
     )
@@ -120,7 +120,7 @@ def gen_layer2c(si, uc, dyncfg):
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
-        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+        unshare_user=True, uid_map_as_user=True,
 
         newrootfs=True,
         fs=[
@@ -243,7 +243,7 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
-        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+        unshare_user=True, uid_map_as_user=True,
 
         subprocs=[
             d( cmdvec=["icewm"] , subp_name='icewm') if uc.icewm else None ,
@@ -257,7 +257,7 @@ def gen_layer4(si, uc, dyncfg):
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
-        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+        unshare_user=True, uid_map_as_user=True,
 
         envset_grps = [uc.setenvs],
         workdir=uc.workdir if uc.workdir else None,
@@ -337,7 +337,7 @@ def recr_rm_empty_lyr(si, cfg):
         return have_rmed
     while _recr(si, cfg): pass
 
-def findout_expected_alive_procs(si, layer1_cfg):
+def recursive_valid_lyrs(si, layer1_cfg):
     used_names = []
     si.all_layers = []
     def _recr(cfg):
@@ -383,6 +383,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.subprocs :
         cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
         CHK( cfg.unshare_pid and cfg.unshare_mnt, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid+unshare_mnt")
+        CHK( cfg.uid_map_as_user, f"层{cfg.layer_name}有 subprocs 但没有启用 uid_map_as_user")
     if cfg.subprocs and cfg.sublayers:
         raise_exit("不能同时有 subprocs 和 sublayers")
     if cfg.envs_unset:
@@ -391,6 +392,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
     if cfg.start_after:
         cfg.start_after = [item for item in cfg.start_after if item is not None]
+    if cfg.uid_map_as_root or cfg.uid_map_as_user:
+        CHK( cfg.unshare_user, f"层{cfg.layer_name}有 uid_map_as_* 但没有启用 unshare_user")
 
     if cfg.unshare_pid and not cfg.unshare_mnt:
         raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
@@ -411,6 +414,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 
     # 对第1层检查
     if cfg.depth == 1:
+        CHK( cfg.uid_map_as_root,"第1层未启用 uid_map_as_root (要求启用)")
         CHK( cfg.unshare_pid, "第1层未启用 unshare_pid(要求启用)")
         CHK( len(cfg.sublayers) == 1, "第1层的sublayers数组的元素个数不为1 （要求为1）")
         CHK( not cfg.newrootfs, "第1层不可以启用newrootfs")
@@ -449,6 +453,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     cfg.pidns_depth = pa_pidns_depth + (0  if not cfg.unshare_pid else 1)
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
 
+
     if cfg.user_shell or cfg.dev_shell:
         if cfg.sublayers:
             log(f"警告： {cfg.layer_name} 设置了启动dev_shell或user_shell, 将忽略其子层", file=sys.stderr)
@@ -464,7 +469,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
     recursive_lyrs_jobs(si, layer1_cfg, None, [])
     recr_rm_empty_lyr(si, layer1_cfg)
-    findout_expected_alive_procs(si, layer1_cfg)
+    recursive_valid_lyrs(si, layer1_cfg)
 
 
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
@@ -711,7 +716,7 @@ class OutestProcsMonitor:
                 if inode1 != inode2: continue
             except:
                 continue
-            result.append(d( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
+            result.append(D( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
         return result
     @classmethod
     def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
@@ -735,7 +740,7 @@ class OutestProcsMonitor:
         else: return False
     @classmethod
     def logItem_to_seenprocItem(cls, NLOG):
-        return d(
+        return D(
             self_see_pid = NLOG.self_see_pid,
             start_tick = NLOG.start_tick,
             pidns = NLOG.ns.pid,
@@ -823,7 +828,7 @@ def read_recogprocs() -> dict:
 
 
 def get_nstypes(nsdir_path):
-    return d({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
+    return D({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
 
 def get_start_tick(statfile_path): # 返回的是字符串，不是数字
     return open(statfile_path,'r').read().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
@@ -883,6 +888,7 @@ def main():
         si = d(json.loads(open(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read()))
 
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
+    set_ps1('notready')
 
     if is_outest: # 是顶层
         log(f'在 {si.sharedir_onhost} 创建主机与沙箱之间的临时共享目录')
@@ -912,7 +918,7 @@ def main():
                 time.sleep(0.1)
                 pass
 
-    layer_set_status('beforeUnshare')
+    set_ps1('beforeUnshare')
 
     if is_outest:
         mkdirp(si.CG_SBX)
@@ -921,42 +927,34 @@ def main():
         Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
 
     # log(f"执行unshare")
-    unshare_flag = gen_unshareflag(tlcfg)
+    unshare_flag = unshrflg(d(tlcfg|d(unshare_mnt=False))) # unshare,但排除mnt（后面再做）
     os.unshare(unshare_flag)
 
-    layer_set_status('afterUnshare')
+    set_ps1('afterUnshare')
 
-    must_fork = True if tlcfg.unshare_pid or tlcfg.unshare_user or tlcfg.unshare_time else False
 
-    if not must_fork: # must_fork==False 即 不是最外层
+    # log(f"即将fork")
+    if is_outest: pipe_outest_exit_layer1.init()
+    pid = os.fork()
+    if pid == 0: # 子进程
+        atexit._clear()
+        set_loghead (f'{tlcfg.layer_name}F: ')
+
+        if tlcfg.depth == 1:
+            pipe_outest_exit_layer1.i_am_layer1()
+            set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
+        else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
+            while os.getppid() not in [0, 1] : time.sleep(0.03)
+
         main2()
         sys.exit()
-    else: # must_fork==True
-        # log(f"即将fork")
-        if is_outest: pipe_outest_exit_layer1.init()
-        pid = os.fork()
-        if pid == 0: # 子进程
-            if is_outest:
-                atexit._clear()
+    else: # 父进程
+        if is_outest: pipe_outest_exit_layer1.i_am_outest()
 
-                set_loghead (f'{tlcfg.layer_name}: ')
-
-                pipe_outest_exit_layer1.i_am_layer1()
-
-            if is_outest:
-                set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
-            else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
-                while os.getppid() not in [0, 1] : time.sleep(0.03)
-
-            main2()
+        if not is_outest:
             sys.exit()
-        else: # 父进程
-            if is_outest: pipe_outest_exit_layer1.i_am_outest()
-
-            if not is_outest:
-                sys.exit()
-            else:
-                daemon(True, pid)
+        else:
+            daemon(True, pid)
 
 
 class WlogReader():
@@ -992,7 +990,7 @@ def daemon(is_outest, layer1_pid=None):
         WlogReader.init()
         OutestProcsMonitor.i_am_outest()
 
-        layer_set_status('outestDaemoning')
+        set_ps1('outestDaemoning')
 
     if not is_outest:
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
@@ -1015,73 +1013,38 @@ def daemon(is_outest, layer1_pid=None):
         time.sleep(0.2)
 
 def main2():
-    # 写uid_map 等 。一般来说配合 unshare_user
-    if tlcfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
-    if tlcfg.uid_map: Path('/proc/self/uid_map').write_text(tlcfg.uid_map)
-    if tlcfg.gid_map: Path('/proc/self/gid_map').write_text(tlcfg.gid_map)
-    if tlcfg.setgroups_deny or tlcfg.uid_map or tlcfg.gid_map:
+    set_proc_dispname(tlcfg.layer_name)
+
+    if tlcfg.uid_map_as_root:
+        Path('/proc/self/setgroups').write_text('deny\n')
+        Path('/proc/self/uid_map').write_text(f'0 {si.uid} 1\n')
+        Path('/proc/self/gid_map').write_text(f'0 {si.gid} 1\n')
         log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
-    layer_set_status('forkedBeforeFs')
 
-    # 如果设置了将要变根，现在先提前确定新根的位置
-    if tlcfg.newrootfs:
-        tlcfg.newrootfs_path = f'{tlcfg.sbxdir_path0}/new.{tlcfg.layer_name}.rootfs'
-    else:
-        tlcfg.newrootfs_path = '/'
-    mkdirp(tlcfg.newrootfs_path)
+    if tlcfg.unshare_mnt: # 现在才做，保证不影响父进程所看到的 /proc
+        os.unshare(unshrflg(d(unshare_mnt=True)))
 
-    if tlcfg.fs:
-        build_fs() # 无论本层是否设置了变根，都调用这个函数
+    # 本层文件系统、挂载proc （维持 rw）， 变根
+    build_fs()
 
-    # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
-    new_proc_path = napath(tlcfg.newrootfs_path+'/proc')
-    if tlcfg.unshare_pid or tlcfg.newrootfs:
-        os.unshare(gen_unshareflag(d(unshare_mnt=True))) # 不管本层在开始有没有 unshare mnt ， 这里都要再 unshare mnt 一次, 保证不影响父进程所看到的 /proc
-        # log(f'挂载proc到 {new_proc_path}')
-        mkdirp(new_proc_path)
-        mount('proc', new_proc_path, 'proc', mntflag_proc, None)
-    # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
-    if not tlcfg.sublayers and os.getpid() != 1:
-        makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
-    if not tlcfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
-        make_proc_ro( new_proc_path , allow_newmntns=False )
-    layer_set_status('afterFs')
+    if tlcfg.uid_map_as_user:
+        Path('/proc/self/setgroups').write_text('deny\n')
+        Path('/proc/self/uid_map').write_text(f'{si.uid} 0 1\n')
+        Path('/proc/self/gid_map').write_text(f'{si.gid} 0 1\n')
+        log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
-    # 执行变根 (chroot)
-    if tlcfg.newrootfs:
-        mkdirp(f'{tlcfg.newrootfs_path}/oldroot')
-        # log(f'准备变根到 {tlcfg.newrootfs_path}')
-        pivot_root(tlcfg.newrootfs_path, f'{tlcfg.newrootfs_path}/oldroot')
-        os.chdir('/')
-        umount('/oldroot', MNT.DETACH)
-        os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
-        os.chmod('/', 0o555)
-        mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
-        # log(f'本层文件系统就绪 {os.listdir('/')}')
-    del tlcfg.newrootfs_path
-    del tlcfg.sbxdir_path0
-    del new_proc_path
-
-
-    if tlcfg.sbxdir_path1:
-        os.chdir(tlcfg.sbxdir_path1)
-
-    layer_set_status('afterChroot')
-
-    # 如果unshare_pid,则我是init进程(pid=1)
-    #   处理各种SIGNAL
+    # 清理函数、信号处理注册
     if tlcfg.unshare_pid:
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
         atexit.register(cleanup_pidnsleader)
-        # TODO 信号注册移到daemon中
         register_sig_handlers(pidnsleader=True)
 
-    layer_set_status('afterRegSigs')
-    set_proc_dispname(tlcfg.layer_name)
-    layer_set_status('booted')
+    set_ps1('ready')
 
+    #--- 创建 subp -----------------------------------
     inprepare_children = [] # 记录下直接创建的子进程，但可能用不上
 
+    # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
         pid, pipe = layer_run_subp( ['/bin/bash'] ,
                         **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
@@ -1089,13 +1052,13 @@ def main2():
         )
         inprepare_children.append((pid, pipe))
 
+    # 以subp启动普通辅助app，(但不放行)
     for subpItem in (tlcfg.subprocs or [] ) :
         pid, pipe = layer_run_subp (**subpItem)
         inprepare_children.append((pid, pipe))
 
-    sublyrItem = tlcfg.sublayers or []
-    # log(f"本层将生成 {len(sublyrItem)} 个子层")
-    for sublyr_cfg in (sublyrItem or []):
+    # 以subp启动子层（直接放行）
+    for sublyr_cfg in (tlcfg.sublayers or []):
         pid, pipe = layer_run_subp([
                         si.pythonbin ,
                         # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
@@ -1107,17 +1070,26 @@ def main2():
         )
         inprepare_children.append((pid, pipe))
 
+    #-------------------------------------------
 
-    # 如果unshare_pid,则我是init进程(pid=1)
-    #   如果有子进程，则等待，否则就退出
+    # 向最外层发送“本层已boot”，
+    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree)
+
+    #等待回信 TODO
+
+    # 子：判断若本层是否 new_proc_dir_mnted==True ，有则重挂 proc ro TODO
+
+    # 关闭重要fd
+    if not tlcfg.unshare_pid:
+        close_important_fds()
+
+    # 放行那些等待住的subp
+    for pid, pipe in inprepare_children:
+        pipe.send(b'x') ; pipe.close() # 回信给子进程
+
     if tlcfg.unshare_pid:
-        for pid, pipe in inprepare_children:
-            pipe.send(b'x') ; pipe.close() # 回信给子进程
         daemon(False)
     else: # 如果不是 unshare_pid 的 ,这里将结束退出
-        close_important_fds()
-        for pid, pipe in inprepare_children:
-            pipe.send(b'x') ; pipe.close() # 回信给子进程
         sys.exit()
 
 def layer_run_subp(cmdvec, subp_name=None,
@@ -1132,9 +1104,6 @@ def layer_run_subp(cmdvec, subp_name=None,
     if subp_name.startswith('layer'): subLayer = subp_name
     if subp_name == 'user_shell':     user_shell=True
     if subp_name == 'dev_shell':      dev_shell=True
-
-    if not (subLayer or dev_shell or user_shell):
-        CHK( os.statvfs('/proc').f_flag&MS.RDONLY , "/proc 非只读, 请检查分层模板配置")
 
     if workdir is None and tlcfg.workdir: workdir = tlcfg.workdir
 
@@ -1212,17 +1181,6 @@ def close_important_fds():
                 if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
 
 
-def makesure_proc_safe(proc_path, allow_newmntns):
-    # 删除了tmpfs覆盖/proc/1/fd 的代码，因为好像它自动会屏蔽
-    make_proc_ro(proc_path, allow_newmntns=allow_newmntns)
-
-def make_proc_ro(proc_path, allow_newmntns):
-    PROC_MNT_SAFE_OPTN = 'hidepid=1'
-    if not os.statvfs(proc_path).f_flag&MS.RDONLY :
-        if allow_newmntns :
-            log('创建并进入新的安全mnt ns以为新进程的运行做准备')
-            os.unshare(gen_unshareflag(d(unshare_mnt=True)))
-        mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, PROC_MNT_SAFE_OPTN)
 
 def cleanup_pidnsleader():
     if os.getpid() != 1 : log("错误：pid != 1 。应该只有领头进程运行此清理函数"); return
@@ -1292,7 +1250,7 @@ def exist_childtree():
 
 
 ps1 = ">"
-def layer_set_status(status):
+def set_ps1(status):
     global ps1
     ps1 = ''.join( [
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
@@ -1301,9 +1259,6 @@ def layer_set_status(status):
         r''' | \w > \[\e[0m\]'''
     ])
     os.environ['PS1'] = ps1
-
-    if status == 'booted':
-        wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree)
 
 def wlog(event, me_proc_info=False, **kw_args) :
     if not (si and si.fd.layerslog_a): return False
@@ -1329,11 +1284,39 @@ def wlog(event, me_proc_info=False, **kw_args) :
 
 
 def build_fs():
-    # 无论本层是否设置了变根，都调用这个函数
-    # 操作目标的基 可能是 '/' （不变根的话） ,  也可能是新根路径 （变根的话）
-    fsPlans = gen_fsPlans()
-    remountPlans = commit_fsPlans(fsPlans)
-    commit_remounts(remountPlans)
+    if tlcfg.newrootfs: # 如果设置了将要变根，现在先提前确定新根的位置
+        tlcfg.newrootfs_path = f'{tlcfg.sbxdir_path0}/new.{tlcfg.layer_name}.rootfs'
+    else:
+        tlcfg.newrootfs_path = '/'
+    mkdirp(tlcfg.newrootfs_path)
+
+    if tlcfg.fs:
+        fsPlans = gen_fsPlans()
+        remountPlans = commit_fsPlans(fsPlans)
+        commit_remounts(remountPlans)
+
+    # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
+    new_proc_path = napath(tlcfg.newrootfs_path+'/proc')
+    if tlcfg.unshare_pid or tlcfg.newrootfs:
+        # log(f'挂载proc到 {new_proc_path}')
+        mkdirp(new_proc_path)
+        mount('proc', new_proc_path, 'proc', mntflag_proc, 'hidepid=1')
+        tlcfg.new_proc_dir_mnted = True
+    set_ps1('afterFs')
+
+    # 执行变根 (chroot)
+    if tlcfg.newrootfs:
+        mkdirp(f'{tlcfg.newrootfs_path}/oldroot')
+        # log(f'准备变根到 {tlcfg.newrootfs_path}')
+        pivot_root(tlcfg.newrootfs_path, f'{tlcfg.newrootfs_path}/oldroot')
+        os.chdir('/')
+        umount('/oldroot', MNT.DETACH)
+        os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
+        os.chmod('/', 0o555)
+        mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
+        # log(f'本层文件系统就绪 {os.listdir('/')}')
+    del tlcfg.newrootfs_path
+    del tlcfg.sbxdir_path0
 
 
 def commit_fsPlans(fsPlans):
@@ -1559,7 +1542,7 @@ def commit_remounts(remntPlans):
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
 
-def gen_unshareflag(cfg):
+def unshrflg(cfg):
     unshare_flag = 0
     unshare_flag |= os.CLONE_NEWPID if cfg.unshare_pid else 0
     unshare_flag |= os.CLONE_NEWNS if cfg.unshare_mnt else 0
