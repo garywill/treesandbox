@@ -587,6 +587,8 @@ def main():
         # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
         if is_outest:
             set_pdeathsig()
+        else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
+            while os.getppid() not in [0, 1] : time.sleep(0.03)
 
         main2(si, thislyr_cfg)
         # log(f"fork后的子进程即将退出")
