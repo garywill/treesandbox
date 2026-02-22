@@ -48,10 +48,12 @@ def userconfig(si): # 这个只在顶层解析一次
     # 若不设置gui则内部无任何X11
     uc.gui="realX" # 使用真实的 X11
     # uc.gui="xephyr"
+    # uc.gui="weston"
 
     # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
-    uc.icewm = True if uc.gui == 'xephyr' else False
+    uc.icewm = True if uc.gui in ['xephyr','weston'] else False
+    uc.windowed_size = (1000, 600)
 
     uc.gpus     =      True if uc.gui else False
     uc.see_userfonts = True if uc.gui else False
@@ -149,7 +151,8 @@ def gen_layer2c(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
         subprocs=[
-            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac",  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
     )
@@ -160,6 +163,7 @@ def gen_layer2z(si, uc, dyncfg):
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
+            d(waittype='socket-listened', path=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston' else None,
         ],
         newrootfs=True,
         fs=[
@@ -167,6 +171,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(plan='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston' else None,
             d(plan='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -211,6 +216,7 @@ def gen_layer3(si, uc, dyncfg):
             ] if uc.gui=='realX' else [] ),
 
             d(plan='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston' else None,
 
             *dyncfg.mnts_gui,
 
@@ -244,15 +250,17 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
         envs_unset=[
-            "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
+            "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DISPLAY=f':{si.newXId}') if uc.gui=='xephyr' else None,
+            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston'] else None,
+            # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
         sublayers=[
             gen_layer4c(si, uc, dyncfg),
+            gen_layer4d(si, uc, dyncfg),
             gen_layer4(si, uc, dyncfg),
         ],
     )
@@ -265,8 +273,25 @@ def gen_layer4c(si, uc, dyncfg):
         # uid 变回 1000
         unshare_user=True, uid_map_as_user=True,
 
+        start_after = [
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='weston' else None,
+        ],
+
         subprocs=[
             d( cmdvec=["icewm"] , subp_name='icewm') if uc.icewm else None ,
+        ],
+    )
+
+def gen_layer4d(si, uc, dyncfg):
+    return d(
+        layer_name='layer4d', # 默认模板的 layer_name 不要修改
+        unshare_pid=True, unshare_mnt=True,
+
+        # uid 变回 1000
+        unshare_user=True, uid_map_as_user=True,
+
+        subprocs=[
+            d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
         ],
     )
 
@@ -280,6 +305,10 @@ def gen_layer4(si, uc, dyncfg):
         unshare_user=True, uid_map_as_user=True,
 
         envset_grps = [uc.setenvs],
+
+        start_after = [
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='weston' else None,
+        ],
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
     )
@@ -288,6 +317,9 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = []
     paths_to_mask = []
     mnts_dns = []
+    xephyr_extra_args = []
+    weston_extra_args = []
+    xwayland_extra_args = []
 
     mnts_gui = [
         *([
@@ -307,16 +339,25 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
         def is_XId_available(newXId):
             if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
+            and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
             and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
+            and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
             and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
                 return True
             else: return False
         if uc.newXId:
-            CHK( is_XId_available(uc.newXId), f"指定的 {uc.newXId=} 被占用")
+            CHK( is_XId_available(uc.newXId), f"指定的显示编号 {uc.newXId=} 被占用")
             newXId = uc.newXId
         else:
             while (newXId := str(random.randrange(230, 980)) ) :
                 if is_XId_available(newXId): break
+
+    if uc.windowed_size:
+        if uc.gui == 'xephyr':
+            xephyr_extra_args = ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
+        elif uc.gui == 'weston' :
+            weston_extra_args = [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
+            xwayland_extra_args = ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
 
     if uc.dbus_session == 'filter':
         dbusproxy_argv = [
@@ -374,7 +415,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost',
+            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'sharedir_onhost',
                      'dbusproxy_argv' , 'mnts_dns']})
     return dyncfg
 
@@ -886,9 +927,9 @@ class OutestProcsMonitor:
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
+            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个

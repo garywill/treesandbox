@@ -20,6 +20,7 @@
 可选：
 
 - xdg-dbus-proxy
+- Weston + Xwayland + icewm (隔离X11)
 - Xephyr + icewm (隔离X11)
 - squashfuse (内部AppImage挂载)
 
@@ -55,10 +56,12 @@
      |          [dbus-daemon --session] (内部的隔离的用户dbus服务)
      |          [dbus-daemon --system] (内部的系统级dbus)
      |          [keyring] (内部的Keyring服务)
-     |          [icewm] (轻量级WM,一般配合Xephyr)
+     |          [icewm] (轻量级WM,一般配合Xephyr/Xwayland)
      |          
      |--[子容器:辅助进程(组1):半信任]
             [Xephyr] (隔离X11)
+            [Weston] (隔离Wayland)
+            [Xwayland] (隔离X11)
             [Xpra client] (无缝隔离X11客户端)
             [dbus-proxy] (dbus通信过滤和转发)
         
@@ -92,6 +95,7 @@
 - [x] 可挂载AppImage在内部mount ns
 - 沙箱内使用GUI
     - [x] 可选暴露真实X11接口给沙箱
+    - [x] 可选使用Weston+Xwayland隔离X11（配icewm）
     - [x] 可选使用Xephyr隔离X11（配icewm）
     - [ ] 可选使用Xpra隔离的无缝X11代理
     - [ ] 可选暴露wayland接口给沙箱

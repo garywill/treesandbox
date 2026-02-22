@@ -24,6 +24,7 @@ Required:
 Optional:
 
 - xdg-dbus-proxy
+- Weston + Xwayland + icewm (for isolated X11)
 - Xephyr + icewm (for isolated X11)
 - squashfuse (for mounting AppImage internally)
 
@@ -55,10 +56,12 @@ Here's an example, the sandbox container tree might look like:
       |         [dbus-daemon --session]   Internal user dbus service
       |         [dbus-daemon --system]    Internal system-level dbus
       |         [keyring daemon]          Internal Keyring Service
-      |         [icewm]            Lightweight Window Manager, usually paired with Xephyr
+      |         [icewm]            Lightweight Window Manager, usually paired with Xephyr/Xwayland
       |         
       |-[Sub-container : Semi-trusted zone : Companion Processes (Group 1)]
                 [Xephyr]           Isolated X11 Server + Client
+                [Weston]           Isolated Wayland Server + Client
+                [Xwayland]         Isolated X11 Server 
                 [Xpra client]      Seamless Isolated X11 Client
                 [dbus-proxy]       Filters and forwards dbus
 
@@ -91,6 +94,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - [x] Mount AppImage internally
 - Use GUI in sandbox:
     - [x] Optional host X11 exposure to sandbox
+    - [x] Optional isolated X11 with Weston+Xwayland
     - [x] Optional isolated X11 with Xephyr
     - [ ] Optional Xpra seamless X11 proxy 
     - [ ] Optional host Wayland exposure to sandbox
