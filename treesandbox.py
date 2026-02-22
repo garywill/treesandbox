@@ -76,11 +76,6 @@ def userconfig(si): # 这个只在顶层解析一次
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (来自flatpak) 的额外参数
 
-    uc.net=d(
-        iface='real', # 使用真实的网络介面
-        # custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
-    )
-
     uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
 
     # uc.pulseaudio=True,
@@ -96,6 +91,50 @@ def userconfig(si): # 这个只在顶层解析一次
         # ENV_VAR_NAME1 = 'ENV_VAR_VAL1',
         # ENV_VAR_NAME2 = 'ENV_VAR_VAL2',
     )
+
+    uc.net=d(
+        # iface='real', # 使用真实的网络介面。不unshare net ns
+        iface='tun', # 用 pasta 创建新的 net ns 和管理网络介面
+        custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
+    )
+    uc.pasta_custom_args = [ # NOTE 只有uc.net.iface=tun才有用
+        # NOTE （注意如果去省略这则允许全部）不允许沙箱访问主机localhost任何端口
+        '-T', 'none', '-U', 'none',
+
+        '--config-net', '--host-lo-to-ns-lo',
+
+        # '--no-map-gw',  # 如果不设置内部地址，则内部地址与主机地址相同 ，则可以考虑开启这个
+        '-a', '172.16.1.2', '-n', '30',  '-g', '172.16.1.1', '-a', 'fd00::2',  '-g', 'fd00::1',
+        # '--ns-mac-addr', '00:00:00:00:00:04', # 若无则为随机MAC
+
+        # '--debug', '--trace',
+    ] if uc.net.iface=='tun' else None
+
+    # NOTE 只有 uc.net.iface=tun 时，才可以启用 set_nftables
+    uc.set_nftables = True # 启用这个则会在沙箱内部应用下面的nftables规则
+    if uc.set_nftables == True : uc.nftables_rule = '''
+        define DYNAMIC_BANIP_V4 = { 224.0.0.0/4 }
+        # 可选阻止 224.0.0.0/4,  组播
+        # 可选阻止 127.0.0.0/8,  回环
+        define DYNAMIC_BANIP_V6 = { ff00::/8 }
+        # 可选阻止 ff00::/8,  组播
+        # 可选阻止 ::1, 回环
+        table inet myfiltertable {
+            set banip_v4 { type ipv4_addr; flags interval
+                elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 255.255.255.255, $DYNAMIC_BANIP_V4  }
+            }
+            set banip_v6 { type ipv6_addr; flags interval
+                elements = { ::/128, ::ffff:0:0/96, ::ffff:0:0:0/96, fc00::/7, fe80::/10, $DYNAMIC_BANIP_V6 }
+            }
+            chain myoutputchain { type filter hook output priority 0; policy accept;
+                ct state established,related accept
+                meta l4proto ipv6-icmp ip6 daddr { ff02::1, ff02::2, ff02::1:ff00:0/104 } accept
+                meta l4proto { tcp, udp } th dport { 53 } accept
+                ip  daddr @banip_v4 reject with icmp   type admin-prohibited
+                ip6 daddr @banip_v6 reject with icmpv6 type admin-prohibited
+            }
+        }
+    '''.strip()
 
     return uc
 
