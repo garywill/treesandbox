@@ -1,6 +1,6 @@
 # Tree Sandbox
 
-可无限嵌套的Linux沙箱。（带有经过设计的默认嵌套模板）
+可无限嵌套的Linux沙箱。（内置一为普通用户设计的默认嵌套模板）
 
 一定程度上可作为Firejail、Flatpak、Bubblewrap的替代品。
 
@@ -41,7 +41,7 @@
 ```verilog
 [Linux Host]
     [X11] (真实桌面)
-    [dbus-daemon --session] (A) (真实dbus用户服务)
+    [dbus-daemon --session] (真实dbus用户服务)
     [fcitx5-daemon] (真实输入法)
     
     [TreeSandbox沙箱] 
@@ -52,8 +52,7 @@
      |   |  
      |   |--[子容器:辅助进程(组2):不信任] 
      |          [Xpra X server] (隔离的X11服务端)
-     |          [dbus-proxy] (C) (分流转发用户dbus通信到内部(D)和外部(B))
-     |          [dbus-daemon --session] (D) (内部的用户dbus服务)
+     |          [dbus-daemon --session] (内部的隔离的用户dbus服务)
      |          [dbus-daemon --system] (内部的系统级dbus)
      |          [keyring] (内部的Keyring服务)
      |          [icewm] (轻量级WM,一般配合Xephyr)
@@ -61,7 +60,7 @@
      |--[子容器:辅助进程(组1):半信任]
             [Xephyr] (隔离X11)
             [Xpra client] (无缝隔离X11客户端)
-            [dbus-proxy] (B) (dbus通信过滤和转发在A与C之间转发)
+            [dbus-proxy] (dbus通信过滤和转发)
         
 （以上并非全都用到，会根据选项决定启动哪些）
 ```
@@ -71,9 +70,7 @@
 
 ## 为什么做这个？它安全性如何？
 
-我暂时把它称为Firejail/Flatpak替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也是，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套，和便捷的容器树配置。
-
-在开箱即用性方面，TreeSandbox介于Firejail和Bubblewrap之间。TreeSandbox没有像Firejail那样为每种App适配一种模板，而TreeSandbox有一个内置的、可随用户选项灵活适应的默认模板，可以覆盖95%的情景，因此比Bubblewrap方便。甚至如果高级用户愿意去修改模板，则可达到比Bubblewrap更强的控制力。
+我暂时把它称为Firejail/Flatpak替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也有诸多不便，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套，和便捷的容器树配置。
 
 这个项目处于早期，可以使用，但要知道，目前无专业团队参与。
 
@@ -106,11 +103,12 @@
     - [x] 可选暴露真实dbus接口给沙箱
     - [x] 可选过滤dbus通信
 - [ ] 可选的网络流量控制
-- 实例管理与命令参数传递
+- 同种沙箱的：单App、多App、单实例、多实例（启动App选择、实例管理、命令参数传递）
+    - [x] 同种沙箱可设置多个app，启动时可指定app（例如同一公司的不同app可以放同一沙箱里）
     - [x] 同种沙箱多实例（从主机多次启动同种沙箱，会运行多个实例，互相隔离、互相独立)
     - [ ] 同种沙箱单实例（从主机启动一种App的沙箱后，再次启动同种App的沙箱，则传递命令参数至已运行的沙箱。说明：以你设置的`sandbox_name`来区分“同种沙箱”）
-- [x] 看门狗（若沙箱内app或辅助app退出，则结束沙箱）
 - [ ] 容器内部shell接口暴露给主机
+- [x] 看门狗（若沙箱内app或辅助app退出，则结束沙箱）
 - 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
 
 ## 简单用例 
