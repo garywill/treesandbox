@@ -62,7 +62,6 @@ def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
     return d(
         layer_name='layer1', # 默认模板的 layer_name 不要修改
         unshare_pid=True, # 第1层必须
-        unshare_mnt=True, # 第1层尝试有unshare mnt但不newrootfs
 
         unshare_chdir=True, # chdir()不影响其他
 
@@ -227,7 +226,7 @@ def gen_layer3(si, uc, dyncfg):
 def gen_layer4a(si, uc, dyncfg):
     return d(
         layer_name='layer4a', # 默认模板的 layer_name 不要修改
-        unshare_pid=True, unshare_mnt=True,
+        unshare_pid=True,
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
@@ -241,7 +240,7 @@ def gen_layer4a(si, uc, dyncfg):
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
-        unshare_pid=True, unshare_mnt=True,
+        unshare_pid=True,
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
@@ -326,8 +325,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.start_after:
         cfg.start_after = [item for item in cfg.start_after if item is not None]
 
-    if cfg.unshare_pid and not cfg.unshare_mnt:
-        raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
     if (cfg.newrootfs or cfg.fs) and not cfg.unshare_mnt:
         raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
     if bool(cfg.fs) != bool(cfg.newrootfs):
@@ -347,6 +344,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.depth == 1:
         CHK( cfg.unshare_pid, "第1层未启用 unshare_pid(要求启用)")
         CHK( len(cfg.sublayers) == 1, "第1层的sublayers数组的元素个数不为1 （要求为1）")
+        CHK( not cfg.newrootfs, "第1层不可以启用newrootfs")
 
     # 对第2层检查
     if cfg.depth == 2:
@@ -610,7 +608,7 @@ def main():
 
     layer_set_status('afterUnshare')
 
-    must_fork = True if thislyr_cfg.unshare_pid or thislyr_cfg.unshare_user else False
+    must_fork = True if thislyr_cfg.unshare_pid or thislyr_cfg.unshare_user or thislyr_cfg.unshare_time else False
 
     if not must_fork: # must_fork==False 即 不是最外层
         main2()
@@ -664,6 +662,7 @@ def main2():
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
     if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
+        os.unshare(gen_unshareflag(d(unshare_mnt=True)))
         # log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
@@ -771,7 +770,7 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
                 makesure_proc_safe('/proc', allow_newmntns=True)
             else:
                 log('加入已有的安全mnt ns为新进程的运行做准备')
-                os.setns(safe_mntns_fd, gen_unshareflag(unshare_mnt))
+                os.setns(safe_mntns_fd, gen_unshareflag(d(unshare_mnt=True)))
 
             drop_caps()
         child_sock.send(b'x') # 给父进程发送信号
@@ -832,7 +831,7 @@ def make_proc_ro(proc_path, allow_newmntns):
     if not os.statvfs(proc_path).f_flag&MS.RDONLY :
         if allow_newmntns :
             log('创建并进入新的安全mnt ns以为新进程的运行做准备')
-            os.unshare(gen_unshareflag(unshare_mnt))
+            os.unshare(gen_unshareflag(d(unshare_mnt=True)))
         mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
 
 def cleanup_pidnsleader():
