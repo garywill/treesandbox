@@ -906,8 +906,14 @@ def wlog(*args, kvpairs={},  logNs=False, errmsg=None):
         logObj.ns = d()
         for nstype in os.listdir('/proc/self/ns'):
             logObj.ns[nstype] = os.stat(f'/proc/self/ns/{nstype}').st_ino
+    try:
+        fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_EX)
+        os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
+    except Exception as err:
+        traceback.print_exc(file=sys.stderr)
+    finally:
+        fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_UN)
 
-    try_showerr(lambda: os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode()) )
 
 def build_fs():
     # 无论本层是否设置了变根，都调用这个函数
