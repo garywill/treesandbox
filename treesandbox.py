@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io
 from pathlib import Path
 from glob import glob
 shutil.rmtree = None
@@ -1780,7 +1780,7 @@ class OutestProcsMonitor:
                         os.setns(pidfd_seeto, unshrflg(d(mnt=1)))
                         os.setns(pidfd_seefrom, unshrflg(d(user=1)))
 
-                        drop_caps(no_check_after_dropcap=True)
+                        drop_caps(no_textcheck_after_dropcap=True)
                         log('execvp sleep infinity')
                         os.execvp('sleep', ['sleep', 'infinity'])
                         log_warn('exec sleep 未成功')
@@ -1994,7 +1994,7 @@ def cleanup_outest():
     ]
     def safe_call(f):
         try: return f()
-        except Exception as err: traceback.print_exc(file=sys.stderr); return []
+        except Exception as err: print_exc(); return []
     for dirpath in paths_rm_sub_files:
         for f in safe_call(lambda: Path(dirpath).iterdir() ):
             if is_file(f) or f.is_symlink() or f.is_socket():
@@ -2072,10 +2072,28 @@ def exist_childtree():
 #     (0, 0)	无僵尸可回收，但子进程仍存在
 #     抛出 ChildProcessError（继承自 OSError	errno = ECHILD（No child processes） 值通常为 10 ）
 
+
+def lines_add_prefix(text):
+    prefix = f'[ {loghead} ]' if loghead else ''
+    return ''.join( [prefix + l for l in text.splitlines(True)] )
+def print_exc(*args): # 替代原 traceback.print_exc()
+    sio = io.StringIO()
+    traceback.print_exc(*args, file=sio)
+    print( lines_add_prefix(sio.getvalue()) , file=sys.stderr)
+def print_stack(*args): # 替代原 traceback.print_stack()
+    sio = io.StringIO()
+    traceback.print_stack(*args, file=sio)
+    print( lines_add_prefix(sio.getvalue()) , file=sys.stderr)
+
+def custom_excepthook(*args):
+    tb_str = "".join(traceback.format_exception(*args))
+    print( lines_add_prefix(tb_str) , file=sys.stderr)
+
 loghead = ''
 def set_loghead(new_loghead):
     global loghead
     loghead = new_loghead
+    sys.excepthook = custom_excepthook
 def log(*args, **kwargs):
     new_args = args
     if loghead: new_args = ( loghead,  *args)
@@ -2102,7 +2120,7 @@ def wlog(event, me_proc_info=False, **kw_args) :
         fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_EX)
         os.write(si.file_fds.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
     except Exception as err:
-        traceback.print_exc(file=sys.stderr)
+        print_exc()
     finally:
         fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_UN)
 
@@ -2128,7 +2146,7 @@ class WlogReader():
         return new_logs
 
 
-
+# TODO def get_pUniqId()
 def get_nstypes(nsdir_path):
     return D({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
 
@@ -2267,7 +2285,7 @@ def run_a_cmd(cmdv, print_output=False):
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
-def drop_caps():
+def drop_caps(no_textcheck_after_dropcap=False):
     PR_SET_NO_NEW_PRIVS = 38
     PR_GET_NO_NEW_PRIVS = 39
     PR_CAPBSET_DROP = 24
@@ -2329,24 +2347,13 @@ def drop_caps():
         return (ret, errno, errstr)
 
     show_clear_result = False
-    log('降权前', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
-    log('清除中', get_caps_dict()) if show_clear_result else None
     amb_clear(doprint=show_clear_result)
-    log('清除中', get_caps_dict()) if show_clear_result else None
     set_nonewpriv(doprint=show_clear_result)
-    log('清除中', get_caps_dict()) if show_clear_result else None
     bnd_clear(si.BND_MAX,  doprint=show_clear_result)
-    log('清除中', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
-    log('降权后', get_caps_dict()) if show_clear_result else None
 
     # ------验证------------
-
-    # 验证 /proc/self/status 中所有能力字段为 0
-    caps_dict = get_caps_dict()
-    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" ) # 用pop不用get
-    for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
 
     # libc验证 no_new_privs
     CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
@@ -2354,6 +2361,13 @@ def drop_caps():
     for cap_id in range(si.BND_MAX +1): # 内核只支持0~40
         CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
 
+    if no_textcheck_after_dropcap:
+        return
+
+    # 验证 /proc/self/status 中所有能力字段为 0
+    caps_dict = get_caps_dict()
+    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" ) # 用pop不用get
+    for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
 
 
 def pivot_root(new_root, put_old):
@@ -2587,11 +2601,11 @@ def try_showerr(func):
     try:
         return func()
     except Exception as err:
-        traceback.print_exc(file=sys.stderr)
+        print_exc()
 
 
 def raise_exit(err_msg, no_cleanup=False):
-    traceback.print_stack(file=sys.stderr)
+    print_stack()
     print(loghead + err_msg, file=sys.stderr)
     wlog('error', errmsg=err_msg)
     if not no_cleanup: sys.exit(1)
