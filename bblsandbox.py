@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill/bblsandbox
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types, select
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types, select, fcntl
 from pathlib import Path
 
 # === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
@@ -137,7 +137,6 @@ def gen_layer3(si, uc, dyncfg):
         layer_name='layer3', # 默认模板的 layer_name 不要修改
         unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
-        unshare_fd=True,
         unshare_cg=True,
         unshare_ipc=True,
         unshare_time=True,
@@ -310,6 +309,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
 
+    CHK( not cfg.unshare_fd, f"层{cfg.layer_name}启用了unshare_fd （不应该启用）")
+
     # 配置中的数组类型去除None成员
     if cfg.fs:
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
@@ -359,8 +360,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     if cfg.layer_name == 'layer3': # 对第3层检查
         if cfg.fs and any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs) :
             raise_exit(f"层{cfg.layer_name}不应该在fs中使用 batch_plan='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
-        if not (cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_fd and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_chdir, unshare_fd, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
+        if not (cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_chdir, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
 
@@ -385,11 +386,17 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
         # apps/ 挂为 tmpfs rw
         # overlays.xxx.dirs/ 挂载为tmpfs 可能rw (暂未实现）
     if call_at_begin: # 刚启动脚本
-        target_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
+        target_sbxdir_path = napath(si.outest_sbxdir)
         old_sbxdir_path = None
     elif call_at_buildfs: # 为本层接下来的新文件系统准备的 （可能 变根=新旧路径不同  ，也可能 不变根=新旧路径同）
         target_sbxdir_path = napath(f'{thislyr_cfg.newrootfs_path}/{thislyr_cfg.sbxdir_path1}')
         old_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
+
+    if call_at_begin: # 刚启动脚本
+        si.fd_layerslog_a = os.open(f'{target_sbxdir_path}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+        flags = fcntl.fcntl(si.fd_layerslog_a, fcntl.F_GETFD)
+        flags = flags & ~fcntl.FD_CLOEXEC
+        fcntl.fcntl(si.fd_layerslog_a, fcntl.F_SETFD, flags)
 
     if target_sbxdir_path == old_sbxdir_path:
         return
@@ -449,7 +456,6 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
         with open(f'{target_sbxdir_path}/lyr_cfg.{thislyr_cfg.layer_name}.json', 'w') as f:
             f.write(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
             os.chmod(f.name, 0o444)
-
 
     if new_tmpfs_for_sbxdir:
         os.chmod(target_sbxdir_path, 0o555)
@@ -517,6 +523,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     layer1_cfg = gen_container_cfgs(sbxinfo, uc, dyncfg)
     recursive_lyrs_jobs(sbxinfo, layer1_cfg, None)
 
+    make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
+
     # 还要加将给app的cli参数
     return sbxinfo, layer1_cfg
 
@@ -565,9 +573,6 @@ def main():
             while not is_unix_socket_listened(wait_task.path):
                 time.sleep(0.1)
                 pass
-
-    if is_outest:
-        make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=True)
 
     set_ps1(si, thislyr_cfg, 'beforeUnshare')
 
@@ -851,6 +856,13 @@ def set_ps1(si, thislyr_cfg, status):
         r''' | \w > \[\e[0m\]'''
     ])
     os.environ['PS1'] = ps1
+
+    logobj = d(
+        layer = thislyr_cfg.layer_name,
+        event = status,
+        # ns =
+    )
+    os.write(si.fd_layerslog_a, ''.join([json.dumps(logobj), '\n']).encode())
 
 def build_thislyr_fs(si, thislyr_cfg):
     # 无论本层是否设置了变根，都调用这个函数
