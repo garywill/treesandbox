@@ -915,11 +915,13 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             RO = True if plan == 'rofile' else False
             with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
-                os.chmod(f.name, 0o444) if RO else None
-                os.chmod(f.name, pItem.destmode) if pItem.destmode else None
+                mode = None ; optn = None
+                if RO :             mode = 0o444
+                if pItem.destmode : mode = pItem.destmode
+                if mode is not None : os.chmod(f.name, mode) ; optn = f'mode={mode:o}'
                 make_file_exist(real_dest)
-                mount(f.name, real_dest, None, MS.BIND, None)
-                mount(None,   real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if RO else None
+                mount(f.name, real_dest, None, MS.BIND|(MS.RDONLY if RO else 0), optn)
+                try_pass(lambda: mount(None,real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) if RO else None )
         elif plan == 'symlink':
             symlink(pItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
@@ -932,10 +934,10 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
                 mount('tmpfs', real_dest, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
             elif Path(real_dest).is_char_device() or Path(real_dest).is_block_device(): # 设备文件
                 mount('/dev/null', real_dest,  None, MS.BIND|MS.RDONLY, optn)
-                mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
+                try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
             else: # 普通文件、socket, fifo
                 mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
-                mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn)
+                try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
         elif plan == 'sbxdir-in-newrootfs':
             CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
             make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_buildfs=True)
@@ -1131,14 +1133,8 @@ def cleanup_outest(si):
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
             if f.is_file() :
-                try:
-                    f.unlink()
-                except:
-                    pass
-        try:
-            os.rmdir(dirpath)
-        except:
-            pass
+                try_pass(lambda: f.unlink() )
+            try_pass(lambda: os.rmdir(dirpath) )
 
 #==========================================
 #======= libc 工具函数 =========================
@@ -1425,6 +1421,12 @@ def log(*args, **kwargs):
     if loghead:
         new_args = ( loghead,  *args)
     print(*new_args, **kwargs)
+
+def try_pass(func):
+    try:
+        return func()
+    except:
+        pass
 
 def raise_exit(err_msg):
     raise Exception( loghead + err_msg)
