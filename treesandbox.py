@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum
 from pathlib import Path
 from glob import glob
 
@@ -563,8 +563,9 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
    # build_fs 时原有：
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
-
+OG = None
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
+    global OG
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
 
     sbxinfo = d()
@@ -676,7 +677,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
-    # 还要加将给app的cli参数
+    OG = d(dyncfg=dyncfg, uc=uc)
     return sbxinfo, layer1_cfg
 
 
@@ -751,6 +752,7 @@ class OutestProcsMonitor:
     def got_a_ready_proc_log(cls, NLOG):
         NPROC = cls.logItem_to_seenprocItem(NLOG)
         cls.procs_histseen[NLOG.ready_proc_name] = NPROC
+        # if NLOG.ready_proc_name == 'xephyr': # TODO
         if not NLOG.ready_proc_name in si.expected_alive_procs :
             return
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
@@ -760,12 +762,11 @@ class OutestProcsMonitor:
                     cls.should_seen_soon.remove(NLOG)
                 NPROC.NSpid = proc.NSpid
                 cls.procs_wdgsee[NLOG.ready_proc_name] = NPROC
-                # dict.update(cls.procs_wdgsee, NPROC)
                 break
         else: # 是我们要关注的新进程启动的消息，但未在目前存活的进程列表中找到
             if NLOG in cls.should_seen_soon: # 上次就加进去了，这次还没就认为出错
                 log(f'收到过{NLOG.ready_proc_name}的启动消息，但一直未发现过存活，可能出错')
-                # sys.exit()
+                sys.exit()
             else:
                 log(f'把此消息加入未识别的列表 {NLOG}')
                 cls.should_seen_soon.append(NLOG)
@@ -890,10 +891,12 @@ def main():
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
     set_ps1('notready')
 
-    if is_outest: # 是顶层
+    # 创建主机与沙箱之间的临时共享目录
+    if is_outest:
         log(f'在 {si.sharedir_onhost} 创建主机与沙箱之间的临时共享目录')
         mkdirp(si.sharedir_onhost)
 
+    # ----------------------------
     # 预先算好变根后的 sbxdir_path1
     if not tlcfg.newrootfs:
         tlcfg.sbxdir_path1 = tlcfg.sbxdir_path0
@@ -904,7 +907,9 @@ def main():
     # 变根前 0 = 刚启动本层启动脚本时
     # 变根后 1 = 即将运行下层的启动脚本时
     # 变根不一定发生，由本层配置决定，但也把两个sbxdir_path以 前 后 来称呼
+    # ----------------------------
 
+    # 环境变量
     for env_to_unset in (tlcfg.envs_unset or [] ):
         os.environ.pop(env_to_unset, None)
     for envg in (tlcfg.envset_grps or [] ) :
@@ -927,34 +932,88 @@ def main():
         Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
 
     # log(f"执行unshare")
-    unshare_flag = unshrflg(d(tlcfg|d(unshare_mnt=False))) # unshare,但排除mnt（后面再做）
+    # TODO 用个数组储存 pid time 是fork前做，其他main2做
+    unshr_cfg = d({k:v for k,v in dict.items(tlcfg) if k.startswith('unshare_') })
+    unshr_cfg.unshare_mnt=False # unshare排除mnt（后面再做）
+    if tlcfg.depth != 1: unshr_cfg.unshare_user=False # 非首层则unshare排除user（后面再做）
+    unshare_flag = unshrflg(unshr_cfg)
     os.unshare(unshare_flag)
 
     set_ps1('afterUnshare')
 
-
+    skp_lyfk = TmpSocketPair()
     # log(f"即将fork")
     if is_outest: pipe_outest_exit_layer1.init()
     pid = os.fork()
     if pid == 0: # 子进程
         atexit._clear()
         set_loghead (f'{tlcfg.layer_name}F: ')
-
+        skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
             pipe_outest_exit_layer1.i_am_layer1()
             set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
         else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
             while os.getppid() not in [0, 1] : time.sleep(0.03)
 
-        main2()
+        main2(skp_lyfk)
         sys.exit()
     else: # 父进程
+        skp_lyfk.i_am_pa()
         if is_outest: pipe_outest_exit_layer1.i_am_outest()
+
+        if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 为了改写子进程uid_map, 此时我看到的proc必须rw
+            skp_lyfk.pa_recv(1, 5, BS.SetMeUidUser.value)
+            Path(f'/proc/{pid}/setgroups').write_text('deny\n')
+            Path(f'/proc/{pid}/uid_map').write_text(f'{si.uid} 0 1\n')
+            Path(f'/proc/{pid}/gid_map').write_text(f'{si.gid} 0 1\n')
+            skp_lyfk.pa_send(BS.SetYouUidUserDone.value)
+        skp_lyfk.close()
 
         if not is_outest:
             sys.exit()
         else:
             daemon(True, pid)
+
+
+
+class TmpSocketPair:
+    def __init__(self):
+        self._skt_chd, self._skt_pa = socket.socketpair()
+        self.I_AM_PA = False ; self.I_AM_CHD = False
+    def i_am_pa(self):
+        CHK(not self.I_AM_CHD, "已设置为是fork的子进程端")
+        self._skt_chd.close() ; self.I_AM_PA = True
+    def i_am_chd(self):
+        CHK(not self.I_AM_PA, "已设置为是fork的父进程端")
+        self._skt_pa.close() ; self.I_AM_CHD = True
+    def pa_send(self, data):
+        CHK(self.I_AM_PA, "非fork的父进程调用了此函数"); self._skt_pa.send(data)
+    def chd_send(self, data):
+        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数"); self._skt_chd.send(data)
+    def pa_recv(self, byte_cnt, timeout, expect_data=None):
+        CHK(select.select([self._skt_pa], [], [], timeout)[0], "fork的父进程等待子进程的信号超时了")
+        data = self._skt_pa.recv(byte_cnt)
+        if expect_data: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        return data
+    def chd_recv(self, byte_cnt, timeout, expect_data):
+        CHK(select.select([self._skt_chd], [], [], timeout)[0], "fork的子进程等待父进程的信号超时了")
+        data = self._skt_chd.recv(byte_cnt)
+        if expect_data: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        return data
+    def close(self):
+        if self.I_AM_PA  and self._skt_pa:  self._skt_pa.close() ;  self._skt_pa = None
+        if self.I_AM_CHD and self._skt_chd: self._skt_chd.close() ; self._skt_chd = None
+
+
+
+class BS(enum.Enum): # fork前后父子进程之间通信用的，以及 最外层和内层之间通信用的单字节信号
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return bytes([count])  # 或者 bytes([count & 0xFF]) 防止溢出
+    SetMeUidRoot = enum.auto()
+    SetYouUidRootDone = enum.auto()
+    SetMeUidUser = enum.auto()
+    SetYouUidUserDone = enum.auto()
 
 
 class WlogReader():
@@ -980,7 +1039,7 @@ class WlogReader():
 
 def daemon(is_outest, layer1_pid=None):
     if is_outest:
-        si.layer1_pid = layer1_pid
+        OG.layer1_pid = layer1_pid
         # TODO 等待5秒，等待主app启动的信号，否则退出
 
         register_sig_handlers(outest=True)
@@ -1012,9 +1071,10 @@ def daemon(is_outest, layer1_pid=None):
 
         time.sleep(0.2)
 
-def main2():
+def main2(skp_lyfk):
     set_proc_dispname(tlcfg.layer_name)
 
+    # 变内部uid=0 (root)
     if tlcfg.uid_map_as_root:
         Path('/proc/self/setgroups').write_text('deny\n')
         Path('/proc/self/uid_map').write_text(f'0 {si.uid} 1\n')
@@ -1024,13 +1084,20 @@ def main2():
     if tlcfg.unshare_mnt: # 现在才做，保证不影响父进程所看到的 /proc
         os.unshare(unshrflg(d(unshare_mnt=True)))
 
+
     # 本层文件系统、挂载proc （维持 rw）， 变根
     build_fs()
+    # 若符合条件， proc 改 ro
+    if tlcfg.new_proc_dir_mnted and not tlcfg.sublayers :
+        mount(None  , '/proc', None, mntflag_proc|MS.REMOUNT|MS.RDONLY, 'hidepid=1')
 
-    if tlcfg.uid_map_as_user:
-        Path('/proc/self/setgroups').write_text('deny\n')
-        Path('/proc/self/uid_map').write_text(f'{si.uid} 0 1\n')
-        Path('/proc/self/gid_map').write_text(f'{si.gid} 0 1\n')
+    # Unshare User (非首层)
+    if tlcfg.unshare_user and tlcfg.depth > 1 : # 第1层的若要做在之前就做了
+        os.unshare(unshrflg(d(unshare_user=True)))
+    # 变内部uid=1000 (user)
+    if tlcfg.uid_map_as_user: # NOTE 此时父进程看到的 proc 必须为 rw
+        skp_lyfk.chd_send(BS.SetMeUidUser.value)
+        skp_lyfk.chd_recv(1, 2, BS.SetYouUidUserDone.value)
         log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 清理函数、信号处理注册
@@ -1042,7 +1109,7 @@ def main2():
     set_ps1('ready')
 
     #--- 创建 subp -----------------------------------
-    inprepare_children = [] # 记录下直接创建的子进程，但可能用不上
+    inprepare_children = []
 
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
@@ -1074,16 +1141,13 @@ def main2():
 
     # 向最外层发送“本层已boot”，
     wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree)
-
-    #等待回信 TODO
-
-    # 子：判断若本层是否 new_proc_dir_mnted==True ，有则重挂 proc ro TODO
+    skp_lyfk.close()
 
     # 关闭重要fd
     if not tlcfg.unshare_pid:
         close_important_fds()
 
-    # 放行那些等待住的subp
+    # 放行那些等待住的subp (为了等 重要fd 关闭)
     for pid, pipe in inprepare_children:
         pipe.send(b'x') ; pipe.close() # 回信给子进程
 
@@ -1123,6 +1187,8 @@ def layer_run_subp(cmdvec, subp_name=None,
         atexit._clear()
         set_loghead(f"{loghead}subp: ")
         parent_sock.close() # 关闭不需要的 socket 端
+
+        # TODO 关闭本层的 与最外层通信的那个oSkt 的fd
 
         if not keep_caps:
             drop_caps()
@@ -1263,7 +1329,7 @@ def set_ps1(status):
 def wlog(event, me_proc_info=False, **kw_args) :
     if not (si and si.fd.layerslog_a): return False
     kw_args = d(kw_args)
-    if kw_args.errmsg: event = 'error'
+    if kw_args.errmsg: event = 'error' ; kw_args.errmsg=str(kw_args.errmsg)
     logObj = d(
         logger = tlcfg.layer_name if tlcfg else '',
         event = event,
@@ -1593,10 +1659,10 @@ def safe_copy_script(copy_target_path):
     os.chmod(copy_target_path, 0o444)
 
 
-
+cleanup_symlinks_to_rm = []
 def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
     if os.getpid() == 1: return
-    # if si and si.layer1_pid: try_pass(lambda: os.setpgid(si.layer1_pid, 0) )
+    # if OG and OG.layer1_pid: try_pass(lambda: os.setpgid(OG.layer1_pid, 0) )
     pipe_outest_exit_layer1.set_should_exit()
     log(f"准备退出，等待所有子进程结束后执行清理...")
     while exist_childtree(): time.sleep(0.1)
@@ -1617,6 +1683,7 @@ def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
         try_pass(lambda: os.rmdir(dirpath) )
     for emptydir in [cg_dir, sharedir_onhost]:
         try_pass(lambda: os.rmdir(emptydir))
+    # for slkItem in cleanup_symlinks_to_rm: # TODO
 
 #==========================================
 #======= libc 工具函数 =========================
@@ -1814,8 +1881,9 @@ def run_a_cmd(cmdv):
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, bufsize=1, universal_newlines=True
                          )
-    prc.wait()
-    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}）")
+    stdout_data, _ = prc.communicate()
+    # prc.wait()
+    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
 
 def is_unix_socket_listened(sock_path):
     if not os.path.exists(sock_path):
@@ -2017,5 +2085,8 @@ if __name__ == "__main__":
     scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
     scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
     scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
-
-    main()
+    try:
+        main()
+    except Exception as err:
+        wlog('error', errmsg=err)
+        raise
