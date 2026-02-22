@@ -121,7 +121,7 @@ def gen_layer2a(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
         subprocs=[
-            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
         ],
     )
 
@@ -234,14 +234,13 @@ def gen_layer4a(si, uc, dyncfg):
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
         subprocs=[
-            d( cmdvec=["icewm"] ) if uc.icewm else None ,
+            d( cmdvec=["icewm"] , subp_name='icewm') if uc.icewm else None ,
         ],
     )
 
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
-        mainApp_lyr=True, # 这是 主要的 app 层
         unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
@@ -252,7 +251,7 @@ def gen_layer4(si, uc, dyncfg):
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
         subprocs=[
-            d( cmdvec=uc.default_app , mainApp=True), # mainApp=True 表示这是启动 主app进程 的命令
+            d( cmdvec=uc.default_app , subp_name='mainApp'),
         ],
     )
 
@@ -325,6 +324,27 @@ def recr_rm_empty_lyr(si, cfg):
         return have_rmed
     while _recr(si, cfg): pass
 
+def findout_expected_live_procs(si, layer1_cfg):
+    used_names = []
+    def _recr(cfg):
+        nonlocal used_names
+        CHK( cfg.layer_name not in used_names, f"名称 {cfg.layer_name} 有重复")
+        if cfg.unshare_pid:
+            used_names.append(cfg.layer_name)
+        for subpItem in (cfg.subprocs or [] ):
+            CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
+            CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
+            CHK( subpItem.subp_name not in used_names, f"名称 {subpItem.subp_name} 有重复")
+            CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
+            used_names.append(subpItem.subp_name)
+
+        if cfg.user_shell: used_names.append('user_shell')
+        if cfg.dev_shell: used_names.append('dev_shell')
+        for sublyr_cfg in (cfg.sublayers or [] ):
+            _recr(sublyr_cfg)
+    _recr(layer1_cfg)
+    wdg_target_procs = [x for x in used_names if x != 'mainApp'] # 不看主app, 只看它所属层
+    si.expected_live_procs = wdg_target_procs
 
 def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
     # 计算本层深度
@@ -410,15 +430,25 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     cfg.pidns_depth = pa_pidns_depth + (0  if not cfg.unshare_pid else 1)
     cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
 
+    if cfg.user_shell or cfg.dev_shell:
+        if cfg.sublayers:
+            log(f"警告： {cfg.layer_name} 设置了启动dev_shell或user_shell, 将忽略其子层", file=sys.stderr)
+            cfg.sublayers = []
+        if cfg.subprocs and [x for x in cfg.subprocs if x.subp_name == 'mainApp']:
+            log(f"警告： {cfg.layer_name} 设置了启动dev_shell或user_shell, 将忽略其mainApp", file=sys.stderr)
+            cfg.subprocs = [x for x in cfg.subprocs if x.subp_name != 'mainApp']
+
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
+
 
 def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
     recursive_lyrs_jobs(si, layer1_cfg, None, [])
     recr_rm_empty_lyr(si, layer1_cfg)
+    findout_expected_live_procs(si, layer1_cfg)
 
 
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'mainApp', 'mainApp_lyr']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # dirmaker.xxx.name
@@ -451,7 +481,6 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
     new_tmpfs_for_sbxdir = True if call_at_buildfs else False
     if new_tmpfs_for_sbxdir:
         mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, 'mode=700')
-
 
     if not os.path.lexists(f'{target_sbxdir_path}/dirmaker.layer.name'):
         with open(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name', 'w') as f:
@@ -510,11 +539,6 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
    # build_fs 时原有：
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
-def create_file_for_sbx_fd(filepath, open_flag, filemode):
-    fd = os.open(filepath, open_flag, filemode)
-    new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
-    fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
-    return fd
 
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
@@ -572,6 +596,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     print(f"cgroup：{CG_SBX}")
+    print(f"沙箱看门狗要轮询的进程：{sbxinfo.expected_live_procs}")
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX) ) # 顶层父进程注册清理函数
 
@@ -592,6 +617,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
 
+    sbxinfo.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+
+    def create_file_for_sbx_fd(filepath, open_flag, filemode):
+        fd = os.open(filepath, open_flag, filemode)
+        new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
+        fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
+        return fd
+
     sbxinfo.fd = d()
     sbxinfo.fd.update( d(
         layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
@@ -600,7 +633,10 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     ) )
 
-    sbxinfo.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+    sbxinfo.logs_fd = d()
+    for pn in sbxinfo.expected_live_procs:
+        if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
+            sbxinfo.logs_fd[pn] = create_file_for_sbx_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
@@ -916,13 +952,9 @@ def main2():
     inprepare_children = [] # 记录下直接创建的子进程，但可能用不上
 
     if tlcfg.user_shell or tlcfg.dev_shell:
-        if tlcfg.sublayers or tlcfg.subprocs:
-            log("警告：因为启用了user_shell 或 dev_shell, 本层其余的子进程或子层都会被忽略", file=sys.stderr)
-            tlcfg.sublayers = []
-            tlcfg.subprocs = []
         pid, pipe = layer_run_subp( ['/bin/bash'] ,
-                        **( d(user_shell=True) if tlcfg.user_shell else {}),
-                        **( d(dev_shell=True)  if tlcfg.dev_shell  else {}),
+                        **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
+                        **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
         )
         inprepare_children.append((pid, pipe))
 
@@ -940,7 +972,7 @@ def main2():
                         f'{tlcfg.sbxdir_path1}/bootsbx.py',
                         '--lyrcfg', f'{tlcfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
                     ],
-                    subLayer=sublyr_cfg.layer_name
+                    subp_name=sublyr_cfg.layer_name
         )
         inprepare_children.append((pid, pipe))
 
@@ -957,17 +989,19 @@ def main2():
             pipe.send(b'x') ; pipe.close() # 回信给子进程
         sys.exit()
 
-def layer_run_subp(cmdvec,
-
-                   mainApp=False, # mainApp==False则视为辅助进程
-                   subLayer=None,
-                   user_shell=None,
-                   dev_shell=None,
-
+def layer_run_subp(cmdvec, subp_name=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
                    workdir=None,  # None则使用本层设置的workdir
                    ): # TODO pty或setsid
+
+    mainApp=None; subLayer=None; user_shell=None; dev_shell=None;
+
+    if subp_name == 'mainApp':        mainApp=True
+    if subp_name.startswith('layer'): subLayer = subp_name
+    if subp_name == 'user_shell':     user_shell=True
+    if subp_name == 'dev_shell':      dev_shell=True
+
     if not (subLayer or dev_shell or user_shell):
         CHK( os.statvfs('/proc').f_flag&MS.RDONLY , "/proc 非只读, 请检查分层模板配置")
 
@@ -976,21 +1010,10 @@ def layer_run_subp(cmdvec,
     if dev_shell:
         keep_caps=True
 
-    if user_shell or dev_shell:
-        stdin=True; stdout=True; stderr=True
-    else:
+    if not (user_shell or dev_shell):
         if not workdir: workdir = si.HOME
-        if mainApp is False:
-            if stdin  is None: stdin  = False
-            if stdout is None: stdout = False
-            if stderr is None: stderr = False
-        else: # mainApp==True
-            if stdin  is None: stdin  = True
-            if stdout is None: stdout = True
-            if stderr is None: stderr = True
 
     if subLayer:
-        stdin=True; stdout=True; stderr=True
         keep_caps=True
 
     child_sock, parent_sock = socket.socketpair()
@@ -1009,29 +1032,32 @@ def layer_run_subp(cmdvec,
         CHK( child_sock.recv(1) == b'x', "收到的来自原进程的信号不符合预期")
         child_sock.close()
 
-        wlog('subp_start', me_proc_info=True , extra_kvs=d(subp_cmdvec=cmdvec) )
-
-        # === 去掉沙箱级别的fd  # NOTE 下面无法再 wlog
-        if not (dev_shell or subLayer):
-            close_important_fds()
-        # NOTE 无法再 wlog NOTE
+        wlog('subp_start', me_proc_info=True , extra_kvs=d(
+            subp_cmdvec=cmdvec, proc_name=subp_name
+        ) )
 
         if subLayer:    startTip = f'启动子层 {subLayer}'
         elif dev_shell: startTip = '启动 dev_shell'
         elif user_shell:startTip = '启动 user_shell'
-        elif keep_caps: startTip = '启动子进程（带权限）'
-        else:           startTip = '启动子进程'
+        elif keep_caps: startTip = f'启动子进程（带权限） {subp_name}'
+        else:           startTip = f'启动子进程 {subp_name}'
         log(f'{startTip} : ', cmdvec)
 
         if workdir: os.chdir(workdir)
 
         # === 去掉 stdin/out/err 中不需要的 # NOTE 下面无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
-        if not stdin:  os.dup2(devnull, 0)
-        if not stdout: os.dup2(devnull, 1)
-        if not stderr: os.dup2(devnull, 2)
+        if subp_name in dict.keys(si.logs_fd):
+            os.dup2(devnull, 0)
+            os.dup2(si.logs_fd[subp_name], 1)
+            os.dup2(si.logs_fd[subp_name], 2)
         os.close(devnull)
         # NOTE 无法再 log 或 print NOTE
+
+        # === 去掉沙箱级别的fd  # NOTE 下面无法再 wlog
+        if not subLayer:
+            close_important_fds()
+        # NOTE 无法再 wlog NOTE
 
         os.execvp(cmdvec[0], cmdvec)
         raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
@@ -1050,7 +1076,7 @@ def layer_run_subp(cmdvec,
 
 def close_important_fds():
     for fd in os.listdir('/proc/self/fd') :
-        if fd in si.fd.values():
+        if int(fd) in list(si.fd.values()) + list(si.logs_fd.values()):
             try:
                 os.close(int(fd))
             except OSError as e:
