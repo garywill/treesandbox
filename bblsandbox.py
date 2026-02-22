@@ -560,13 +560,13 @@ def main():
 
     set_ps1(si, thislyr_cfg, 'beforeUnshare')
 
-    log(f"执行unshare")
+    # log(f"执行unshare")
     unshare_flag = gen_unshareflag_by_lyrcfg(thislyr_cfg)
     os.unshare(unshare_flag)
 
     set_ps1(si, thislyr_cfg, 'afterUnshare')
 
-    log(f"即将fork")
+    # log(f"即将fork")
     pid = os.fork()
     if pid == 0: # 子进程
         # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
@@ -615,7 +615,7 @@ def main2(si, thislyr_cfg):
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
     if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
-        log(f'挂载proc到 {new_proc_path}')
+        # log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
     # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
@@ -628,14 +628,14 @@ def main2(si, thislyr_cfg):
     # 执行变根 (chroot)
     if thislyr_cfg.newrootfs:
         mkdirp(f'{thislyr_cfg.newrootfs_path}/oldroot')
-        log(f'准备变根到 {thislyr_cfg.newrootfs_path}')
+        # log(f'准备变根到 {thislyr_cfg.newrootfs_path}')
         pivot_root(thislyr_cfg.newrootfs_path, f'{thislyr_cfg.newrootfs_path}/oldroot')
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
         mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
-        log(f'本层文件系统就绪 {os.listdir('/')}')
+        # log(f'本层文件系统就绪 {os.listdir('/')}')
     del thislyr_cfg.newrootfs_path
     del thislyr_cfg.sbxdir_path0
     del new_proc_path
@@ -678,7 +678,7 @@ def main2(si, thislyr_cfg):
         direct_child_pids.append(pid)
 
     sublayers = thislyr_cfg.sublayers or []
-    log(f"本层将生成 {len(sublayers)} 个子层")
+    # log(f"本层将生成 {len(sublayers)} 个子层")
     for sublyr_cfg in (sublayers or []):
         log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
         pid = layer_run_subp(thislyr_cfg, [
@@ -857,7 +857,7 @@ def build_thislyr_fs(si, thislyr_cfg):
 
 def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
     target_fs_path = thislyr_cfg.newrootfs_path
-    log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
+    # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
     def z(rmtItem):
         remountPlans.append(rmtItem)
