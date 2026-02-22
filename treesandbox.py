@@ -369,6 +369,17 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
     if cfg.layer_name in ['layer2a', 'layer4a', 'layer4']:
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
 
+    if parent_cfg is None:
+        pa_pidns_depth = 0
+        pa_pidns_tree = []
+    else:
+        pa_pidns_depth = parent_cfg.pidns_depth
+        pa_pidns_tree  = parent_cfg.pidns_tree
+
+    cfg.pidns_depth = pa_pidns_depth + (0  if not cfg.unshare_pid else 1)
+    cfg.pidns_tree  = pa_pidns_tree  + ([] if not cfg.unshare_pid else [cfg.layer_name])
+    # print(cfg.layer_name, cfg.pidns_depth, cfg.pidns_tree)
+
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
 
