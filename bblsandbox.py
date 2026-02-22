@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-# Box-in-Box Linux Sandbox
+# Box-in-Box Linux (BBL) Sandbox
 # Licensed under GPL
 # https://github.com/garywill/bblsandbox
 
@@ -58,7 +58,6 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
 
         # uid 变 0
         unshare_user=True, setgroups_deny=True, uid_map=f'0 {si.uid} 1\n', gid_map=f'0 {si.gid} 1\n',
-
         # 准备开始第2层。这第1层的 sublayers 数组应该只有一个元素，即，第2层只有一个容器
         sublayers = [
             d( # 第2层。 只适合跑 信任的 和要以信任身份显示在X11的： xpra client , dbus proxy . squashfs挂载
@@ -82,6 +81,10 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     d(batch_plan='mask-privacy', destbase='/zrootfs'),
                     d(plan='empty-if-exist', dest=f'/zrootfs/{PTMP}'),
                 ],
+                envs_unset=[
+                    "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
+                ],
+
                 sublayers = [
                     d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
                         layer_name='layer2a', unshare_pid=True, unshare_mnt=True,
@@ -155,6 +158,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='tmpfs',dest='/dev/shm'),
             d(plan='robind', dest='/sys', src='/sys'),
             ] if uc.see_real_hw else [] ),
+            # TODO 1. 改用dyncfg  2. layer2里也加
 
             d(plan='bind', dest=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
 
@@ -194,10 +198,7 @@ def gen_layer3(si, uc, dyncfg):
 
         ],
         envs_unset=[
-            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "ICEAUTHORITY", "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "XDG_CACHE_HOME",
-            "XAUTHORITY", "DISPLAY",
-            "XAUTHLOCALHOSTNAME",
-            "IBUS_ADDRESS", "IBUS_DAEMON_PID",
+            "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,

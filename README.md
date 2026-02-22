@@ -54,7 +54,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
 ## Features and Implementation Status
 
 - [x] No root needed. No daemon. No host cap/suid needed.
-- [x] No traces in home or disk. Temp data in `/tmp` deleted automatically
+- [x] No junk or traces in home or disk. Temp data in `/tmp` deleted automatically
 - [x] Image-free: no container images to download like Docker/LXC. Reuse the host system so tools such as vim/git don’t need to be reinstalled inside
 - [x] Fully customizable nested namespaces
     - [x] Per-layer PID/mount/... ns controls
@@ -79,8 +79,8 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - [ ] Optional Seccomp 
 - [ ] Optional network traffic control 
 - Instance Manage and Args Passing
-    - [x] Multi-instances for same sandbox (Multiple startups of same sandbox will have multi-instances running. Each other isolated) 
-    - [ ] Single-instance for same sandbox (Multiple startups of same sandbox will send args to the first-started running instance)
+    - [x] Multi-instances for same sandbox (Multiple startups of same sandbox will have multi-instances running. Each other isolated and independent) 
+    - [ ] Single-instance for same sandbox (Multiple startups of same-app sandbox will send args to the first-started running instance. Instruction: Uses `sandbox_name` field you set to distiguish same-app sandbox)
 - [ ] In-container shell socket exposed to host 
 - Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
     
