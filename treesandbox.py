@@ -28,20 +28,20 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.user_mnts = [
         # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
-        # d(batch_plan='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
+        # d(many_op='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
 
         # 用当前目录下的 fakehome 目录，作为沙箱内 HOME 的永久储存（否则tmpfs作HOME）
-        # d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
+        # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
         # HOME/bin
-        d(plan='robind', src=f'{si.HOME}/bin', SDS=1),
+        d(op='robind', src=f'{si.HOME}/bin', SDS=1),
 
         # HOME/.local/{bin,lib}
-        d(plan='robind', src=f'{si.HOME}/.local/bin', SDS=1),
-        d(plan='robind', src=f'{si.HOME}/.local/lib', SDS=1),
+        d(op='robind', src=f'{si.HOME}/.local/bin', SDS=1),
+        d(op='robind', src=f'{si.HOME}/.local/lib', SDS=1),
 
         # /home/linuxbrew
-        # d(plan='robind', src='/home/linuxbrew', SDS=1),
+        # d(op='robind', src='/home/linuxbrew', SDS=1),
 
     ]
 
@@ -106,16 +106,16 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     mnts_gui = [
         *([
-        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
-        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
-        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
+        d(op='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
+        d(op='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
+        d(op='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
         ] if uc.see_userfonts else [] ),
         *([
-        d(plan='rosame', src='/dev/dri', SDS=1),
-        d(plan='rosame', src='/sys/class/drm', SDS=1),
-        *[ d(plan='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
-        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
-        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
+        d(op='rosame', src='/dev/dri', SDS=1),
+        d(op='rosame', src='/sys/class/drm', SDS=1),
+        *[ d(op='rosame', src=p, SDS=1)        for p in glob('/sys/dev/char/226:*') ],
+        *[ d(op='rosame', src=padir(p), SDS=1) for p in glob('/sys/devices/*/*/drm') ],
+        *[ d(op='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
         ] if uc.gpus else [] ),
     ]
 
@@ -166,17 +166,17 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     # TODO nscd
     if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
         if dns_use_custom:
-            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
+            mnts_dns = [d(op='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
         else:
             if iface_use_real: mnts_dns = [] # 原本的/etc/resolv.conf文件保持
-            else             : mnts_dns = [d(plan='empty-if-exist', dest='/etc/resolv.conf')] # 清空
+            else             : mnts_dns = [d(op='empty-if-exist', dest='/etc/resolv.conf')] # 清空
     else: # /etc/resolv.conf是链接
         RSLVCF_target_dir = padir(rslvn('/etc/resolv.conf'))
         CHK(RSLVCF_target_dir.startswith('/run/'), f'/etc/resolv.conf的指向{rslvn('/etc/resolv.conf')}不是在/run/xxx/内，暂时无法处理这种情况（现代发行版一般/etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx）')
         if dns_use_custom:
-            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
+            mnts_dns = [d(op='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
         else:
-            if iface_use_real: mnts_dns = [d(plan='robind', src=RSLVCF_target_dir, SDS=1)]
+            if iface_use_real: mnts_dns = [d(op='robind', src=RSLVCF_target_dir, SDS=1)]
             else             : pass # 让/run/xxxxx/resolv.conf继续不存在
 
     if uc.mask_xdg_opens:
@@ -221,23 +221,23 @@ def gen_layer2(si, uc, dyncfg):
         layer_name='layer2', # 默认模板的 layer_name 不要修改
         unshare_mnt=True,
         newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
-        fs=[ # fs全称fs_plans_for_new_rootfs 。
+        fs=[ # fs全称 fs_operations_for_new_rootfs 。
             # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
-            d(batch_plan='container-rootfs'),
-            d(batch_plan='basic-dev'),
-            d(batch_plan='mask-privacy', destbase='/'),
-            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+            d(many_op='container-rootfs'),
+            d(many_op='basic-dev'),
+            d(many_op='mask-privacy', destbase='/'),
+            d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             *dyncfg.mnts_gui,
 
-            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-            d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
+            d(op='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(op='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
 
-            d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
+            d(op='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
 
-            d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
-            d(batch_plan='mask-privacy', destbase='/zrootfs'),
-            d(plan='empty-if-exist', dest=f'/zrootfs/{si.PTMP}'),
+            d(many_op='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
+            d(many_op='mask-privacy', destbase='/zrootfs'),
+            d(op='empty-if-exist', dest=f'/zrootfs/{si.PTMP}'),
         ],
         envs_unset=[
             "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
@@ -258,8 +258,8 @@ def gen_layer2c(si, uc, dyncfg):
 
         newrootfs=True,
         fs=[
-            d(batch_plan='dup-rootfs', destbase='/'),
-            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+            d(many_op='dup-rootfs', destbase='/'),
+            d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
         subprocs=[
             d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac",  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
@@ -278,12 +278,12 @@ def gen_layer2z(si, uc, dyncfg):
         ],
         newrootfs=True,
         fs=[
-            d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
-            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+            d(many_op='dup-rootfs', srcbase='/zrootfs'),
+            d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
-            d(plan='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(plan='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston' else None,
-            d(plan='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
+            d(op='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
+            d(op='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston' else None,
+            d(op='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
@@ -300,67 +300,67 @@ def gen_layer3(si, uc, dyncfg):
         unshare_net=True if uc.net.iface != 'real' else False,
 
         newrootfs=True, # 有newrootfs则必须有fs
-        fs=[ # fs全称fs_plans_for_new_rootfs 。
-            d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
-            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
-            d(plan='empty-if-exist', dest=rslvn(si.startscript_on_host)),
+        fs=[ # fs全称fs_operations_for_new_rootfs 。
+            d(many_op='container-rootfs'),  # 不包括 dev 。不包括 proc
+            d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
+            d(op='empty-if-exist', dest=rslvn(si.startscript_on_host)),
 
             # ---- 以上是不变条目 ----
 
-            d(plan='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
+            d(op='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
 
-            d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
+            d(many_op='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
 
-            d(plan='robind', src=f'/run/user/{si.uid}/pulse/native', SDS=1) if uc.pulseaudio else None,
-            d(plan='robind', src=rslvy('/var/run/cups/cups.sock'), SDS=1) if uc.cups else None,
+            d(op='robind', src=f'/run/user/{si.uid}/pulse/native', SDS=1) if uc.pulseaudio else None,
+            d(op='robind', src=rslvy('/var/run/cups/cups.sock'), SDS=1) if uc.cups else None,
 
             *([
-            d(plan='robind', dest='/dev', src='/dev'),
-            d(plan='tmpfs',dest='/dev/shm'),
-            d(plan='robind', dest='/sys', src='/sys'),
+            d(op='robind', dest='/dev', src='/dev'),
+            d(op='tmpfs',dest='/dev/shm'),
+            d(op='robind', dest='/sys', src='/sys'),
             ] if uc.see_real_hw else [] ),
             # TODO 1. 改用dyncfg  2. layer2里也加
 
             *([
-            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-            d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
+            d(op='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(op='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
-            d(plan='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(plan='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston' else None,
+            d(op='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
+            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston' else None,
 
             *dyncfg.mnts_gui,
 
-            d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
-            *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
+            d(op='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
+            *[d(op='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
-            d(plan='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
-            d(plan='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
+            d(op='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(op='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
 
-            d(plan='empty-if-exist', dest='/etc/fstab'),
-            d(plan='empty-if-exist', dest='/etc/systemd'),
-            d(plan='empty-if-exist', dest='/etc/init.d'),
-            d(plan='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
-            d(plan='rofile', dest='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
+            d(op='empty-if-exist', dest='/etc/fstab'),
+            d(op='empty-if-exist', dest='/etc/systemd'),
+            d(op='empty-if-exist', dest='/etc/init.d'),
+            d(op='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
+            d(op='rofile', dest='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
             *dyncfg.mnts_dns,
 
             *([
-            d(plan='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
-            d(plan='rofile', dest=f'{si.HOME}/.icewm/prefoverride', content=ICEWM_PREF),
-            d(plan='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),
-            d(plan='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
-            d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/prefoverride', content=ICEWM_PREF),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if uc.icewm else [] ),
 
             *([
-            d(plan='bind', src=si.sharedir_onhost, dest='/tmp/share'),
-            d(plan='bind', src=si.sharedir_onhost, SDS=1),
+            d(op='bind', src=si.sharedir_onhost, dest='/tmp/share'),
+            d(op='bind', src=si.sharedir_onhost, SDS=1),
             ] if si.sharedir_onhost else []),
 
             # NOTE 用户挂载要放最后
             *uc.user_mnts, # NOTE 用户挂载要放最后
-            d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
+            d(op='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
         envs_unset=[
             "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
@@ -558,8 +558,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         if fsItem.destbase: fsItem.destbase = napath(fsItem.destbase)
 
     if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
-        if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
-            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 batch_plan = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
+        if not any( opItem.many_op == 'sbxdir-in-newrootfs' for opItem in cfg.fs):
+            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 many_op = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
 
     # 对第1层检查
     if cfg.depth == 1:
@@ -573,18 +573,18 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         CHK( cfg.unshare_mnt, "第2层未启用 unshare_mnt （要求启用）")
         CHK( cfg.newrootfs, "第2层未启用 newrootfs （要求启用）")
         CHK( cfg.fs, "第2层未设置 fs （要求设置）")
-        if not any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs):
-            raise_exit("第2层的fs中无 batch_plan='dup-rootfs' 的条目 （要求有）")
-        if not any( pItem.batch_plan == 'mask-privacy' for pItem in cfg.fs):
-            raise_exit("第2层的fs中无 batch_plan='mask-privacy' 的条目 （要求有）")
+        if not any( opItem.many_op == 'dup-rootfs' for opItem in cfg.fs):
+            raise_exit("第2层的fs中无 many_op='dup-rootfs' 的条目 （要求有）")
+        if not any( opItem.many_op == 'mask-privacy' for opItem in cfg.fs):
+            raise_exit("第2层的fs中无 many_op='mask-privacy' 的条目 （要求有）")
 
     if cfg.layer_name == 'layer3': # 对第3层检查
-        if cfg.fs and any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}不应该在fs中使用 batch_plan='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
+        if cfg.fs and any( opItem.many_op == 'dup-rootfs' for opItem in cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}不应该在fs中使用 many_op='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
         if not (cfg.unshare_mnt and cfg.unshare_cgroup and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
             raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_cgroup, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
-        if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
-            raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
+        if not any( opItem.many_op == 'container-rootfs' for opItem in cfg.fs):
+            raise_exit(f"层{cfg.layer_name}的fs中无 many_op='container-rootfs' 的条目 （要求有）")
 
     if cfg.layer_name in ['layer2c', 'layer4c', 'layer4']:
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
@@ -889,7 +889,7 @@ def main(lyrcfg_in):
     if not tlcfg.newrootfs:
         tlcfg.sbxdir_path1 = tlcfg.sbxdir_path0
     else:
-        tlcfg.sbxdir_path1 = next((pItem.dest for pItem in tlcfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
+        tlcfg.sbxdir_path1 = next((opItem.dest for opItem in tlcfg.fs if opItem.many_op == 'sbxdir-in-newrootfs'), None)
     # sbxdir_path 说明
     # 本层变根 前 后 的 sbxdir_path ( sbxdir_path0 sbxdir_path1)
     # 变根前 0 = 刚启动本层启动脚本时
@@ -1145,11 +1145,11 @@ def build_fs():
     mkdirp(tlcfg.newrootfs_path)
 
     if tlcfg.fs:
-        fsPlans = gen_fsPlans()
-        remountPlans = commit_fsPlans(fsPlans)
+        fsOpertns = gen_fsOpertns()
+        remountPlans = commit_fsOpertns(fsOpertns)
         commit_remounts(remountPlans)
 
-    # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
+    # 在build_fs完了之后挂载/proc, 与fsOpertns那边的代码解耦
     new_proc_path = napath(tlcfg.newrootfs_path+'/proc')
     if tlcfg.unshare_pid or tlcfg.newrootfs:
         # log(f'挂载proc到 {new_proc_path}')
@@ -1173,7 +1173,7 @@ def build_fs():
     del tlcfg.sbxdir_path0
 
 
-def commit_fsPlans(fsPlans):
+def commit_fsOpertns(fsOpertns):
     target_fs_path = tlcfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
@@ -1194,16 +1194,16 @@ def commit_fsPlans(fsPlans):
     CHK( Path(target_fs_path).is_mount() , f"{target_fs_path} 不是挂载点")
     mkdirp(f'{target_fs_path}/proc') # proc不在这里做，预留个目录
 
-    for pItem in fsPlans:
-        plan = pItem.plan
-        src = pItem.src
-        dest = pItem.dest
+    for opItem in fsOpertns:
+        op = opItem.op
+        src = opItem.src
+        dest = opItem.dest
         real_dest = napath(f'{target_fs_path}/{dest}')
-        if plan in ['same', 'rosame', 'bind', 'robind'] :
+        if op in ['same', 'rosame', 'bind', 'robind'] :
             CHK( os.path.lexists(src) , f"来源{src}不存在")
-            if plan in ['bind', 'robind'] :
+            if op in ['bind', 'robind'] :
                 src = rslvy(src)
-            RO = True if plan in ['rosame', 'robind'] else False
+            RO = True if op in ['rosame', 'robind'] else False
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 symlink(Path(src).readlink(), real_dest)
                 # TODO chroot 前后对symlink做一致性检查
@@ -1221,34 +1221,34 @@ def commit_fsPlans(fsPlans):
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
             else:
                 raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
-        elif plan in ['tmpfs', 'rotmpfs']:
-            RO = True if plan == 'rotmpfs' else False
+        elif op in ['tmpfs', 'rotmpfs']:
+            RO = True if op == 'rotmpfs' else False
             mkdirp(real_dest)
-            flag = pItem.flag or mntflag_tmpfs
+            flag = opItem.flag or mntflag_tmpfs
             mount('tmpfs', real_dest, 'tmpfs', flag , 'mode=755')
             if RO : z(d(dirpath=real_dest, flag=flag))
-        elif plan == 'dir':
+        elif op == 'dir':
             mkdirp(real_dest)
-        elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
+        elif op == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
             if not os.path.lexists(real_dest):
                 make_file_exist(real_dest)
-        elif plan in ['file', 'rofile'] :
+        elif op in ['file', 'rofile'] :
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
-            RO = True if plan == 'rofile' else False
+            RO = True if op == 'rofile' else False
             with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
-                f.write(pItem.content)
+                f.write(opItem.content)
                 mode = None ; optn = None
                 if RO :             mode = 0o444
-                if pItem.destmode : mode = pItem.destmode
+                if opItem.destmode : mode = opItem.destmode
                 if mode is not None : os.chmod(f.name, mode) ; optn = f'mode={mode:o}'
                 make_file_exist(real_dest)
                 mount(f.name, real_dest, None, MS.BIND|(MS.RDONLY if RO else 0), optn)
                 try_pass(lambda: mount(None,real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) if RO else None )
-        elif plan == 'symlink':
-            symlink(pItem.linkto, real_dest)
+        elif op == 'symlink':
+            symlink(opItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
-        elif plan == 'empty-if-exist' : # TODO landlock 优先
+        elif op == 'empty-if-exist' : # TODO landlock 优先
             if not os.path.lexists(real_dest): continue
             optn='mode=0000'
             if Path(real_dest).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
@@ -1261,68 +1261,68 @@ def commit_fsPlans(fsPlans):
             else: # 普通文件、socket, fifo
                 mount(f'{tlcfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
                 try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
-        elif plan == 'sbxdir-in-newrootfs':
+        elif op == 'sbxdir-in-newrootfs':
             CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
             make_mnt_fill_sbxdir(si,  tlcfg, call_at_buildfs=True)
-        elif plan == 'devpts':
+        elif op == 'devpts':
             mkdirp(real_dest)
             mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
-        elif plan in ['appimg-mount', 'sqfs-mount'] :
+        elif op in ['appimg-mount', 'sqfs-mount'] :
             mkdirp(real_dest)
             src = rslvy(src)
-            offset = get_appimg_sqoffset(src) if plan == 'appimg-mount' else 0
+            offset = get_appimg_sqoffset(src) if op == 'appimg-mount' else 0
             # TODO 先做symlink链接到真实appimage文件路径，再调用 squashfuse命令
             run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
-        elif plan == 'remountro':
-            z(d(dirpath=real_dest, flag=pItem.flag or 0))
+        elif op == 'remountro':
+            z(d(dirpath=real_dest, flag=opItem.flag or 0))
         else:
-            raise_exit(f"无法识别的fsPlan条目 {pItem}")
+            raise_exit(f"无法识别的fsOp条目 {opItem}")
 
     return remountPlans
 
-def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
-    fsPlans = []
+def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
+    fsOpertns = []
     def a(stepobj):
-        fsPlans.append(stepobj)
+        fsOpertns.append(stepobj)
 
-    for pItem in tlcfg.fs:
-        # 一个 pItem 里， batch_plan 和 plan 只应该出现其中一种
-        batch_plan = pItem.batch_plan # 预设的多个plan的集合
-        plan = pItem.plan # 一个plan
-        if batch_plan == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
-            destbase = pItem.destbase or '/'
-            srcbase = pItem.srcbase or '/'
+    for opItem in tlcfg.fs:
+        # 一个 opItem 里， many_op 和 op 只应该出现其中一种
+        many_op = opItem.many_op # 预设的多个op的集合
+        op = opItem.op # 一个op
+        if many_op == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
+            destbase = opItem.destbase or '/'
+            srcbase = opItem.srcbase or '/'
             CHK( destbase in ['/', '/zrootfs'], "dup-rootfs要求destbase必须为'/'或'/zrootfs'")
             CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs要求srcbase 必须为'/'或'/zrootfs'")
             if destbase != '/':
-                a( d( plan='rotmpfs', dest=destbase , flag=mntflag_newrootfs) )
+                a( d( op='rotmpfs', dest=destbase , flag=mntflag_newrootfs) )
             for x in os.listdir(srcbase):
                 if x in [ 'proc', 'sbxdir', 'zrootfs', ]: continue
-                a( d( plan='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
-            a( d( plan='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
-        elif batch_plan == 'sbxdir-in-newrootfs':
-            dcp_pItem = copy.deepcopy(pItem)
-            a( d({'plan': dict.pop(dcp_pItem, 'batch_plan'), **dcp_pItem} ) )
-        elif batch_plan == 'basic-dev':
+                a( d( op='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
+            a( d( op='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
+        elif many_op == 'sbxdir-in-newrootfs':
+            dcp_pItem = copy.deepcopy(opItem)
+            a( d({'op': dict.pop(dcp_pItem, 'many_op'), **dcp_pItem} ) )
+        elif many_op == 'basic-dev':
             # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
-            a( d( plan='rotmpfs', dest='/dev' ) )
+            a( d( op='rotmpfs', dest='/dev' ) )
             basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random',] # 'tty', 'console'
             for dname in basic_devs:
-                a( d( plan='same', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
-            a( d( plan='devpts',  dest='/dev/pts') )
-            a( d( plan='symlink', dest='/dev/ptmx', linkto='pts/ptmx' ) )
-            a( d( plan='symlink', dest='/dev/fd',     linkto='/proc/self/fd' ) )
-            a( d( plan='symlink', dest='/dev/stdin',  linkto='/proc/self/fd/0' ) )
-            a( d( plan='symlink', dest='/dev/stdout', linkto='/proc/self/fd/1' ) )
-            a( d( plan='symlink', dest='/dev/stderr', linkto='/proc/self/fd/2' ) )
-            a( d( plan='symlink', dest='/dev/core',   linkto='/proc/kcore' ) )
-            a( d( plan='tmpfs', dest='/dev/shm' ) )
-        elif batch_plan == 'container-rootfs':
+                a( d( op='same', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
+            a( d( op='devpts',  dest='/dev/pts') )
+            a( d( op='symlink', dest='/dev/ptmx', linkto='pts/ptmx' ) )
+            a( d( op='symlink', dest='/dev/fd',     linkto='/proc/self/fd' ) )
+            a( d( op='symlink', dest='/dev/stdin',  linkto='/proc/self/fd/0' ) )
+            a( d( op='symlink', dest='/dev/stdout', linkto='/proc/self/fd/1' ) )
+            a( d( op='symlink', dest='/dev/stderr', linkto='/proc/self/fd/2' ) )
+            a( d( op='symlink', dest='/dev/core',   linkto='/proc/kcore' ) )
+            a( d( op='tmpfs', dest='/dev/shm' ) )
+        elif many_op == 'container-rootfs':
             # 只读挂载的重要系统路径
             paths_to_rosame = [ '/bin', '/sbin', '/usr', '/lib64', '/lib', '/etc',
                 '/var/lib/ca-certificates', '/var/lib/dbus', '/var/cache/fontconfig' , ]
             for p in paths_to_rosame:
-                a( d( plan='rosame', dest=p, src=p ) )
+                a( d( op='rosame', dest=p, src=p ) )
             # 需要 tmpfs 的可写路径（容器内部用）
             paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
                 '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
@@ -1331,11 +1331,11 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
                 f'{si.HOME}/.local/share/recently-used.xbel',
                 f'{si.HOME}/.local/share/Trash', ]
             for p in paths_to_tmpfs:
-                a( d( plan='tmpfs', dest=p ) )
-            a( d( plan='symlink', dest='/var/run', linkto='/run' ) )
-            a( d( plan='symlink', dest='/var/lock', linkto='/run/lock' ) )
-        elif batch_plan == 'mask-privacy':
-            destbase = pItem.destbase
+                a( d( op='tmpfs', dest=p ) )
+            a( d( op='symlink', dest='/var/run', linkto='/run' ) )
+            a( d( op='symlink', dest='/var/lock', linkto='/run/lock' ) )
+        elif many_op == 'mask-privacy':
+            destbase = opItem.destbase
             CHK( destbase in ['/', '/zrootfs'], "mask-privacy要求destbase必须为'/'或'/zrootfs'")
             path_maskfile = f'{si.HOME}/.config/treesandbox/paths_never_access.txt'
             maskfile = Path(path_maskfile)
@@ -1346,53 +1346,53 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
                 CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
                 path = napath(path)
                 if os.path.lexists(path):
-                    a( d( plan='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
-        elif batch_plan == 'appimage':
-            a( d(plan='appimg-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.dirname}') )
+                    a( d( op='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
+        elif many_op == 'appimage':
+            a( d(op='appimg-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.dirname}') )
             start_sh_content = f'''#!/bin/bash
                 script=$(readlink -f "$0")
                 scriptpath=$(dirname "$script")
-                env APPDIR="$scriptpath/{pItem.dirname}" "$scriptpath"/{pItem.dirname}/AppRun "$@"
+                env APPDIR="$scriptpath/{opItem.dirname}" "$scriptpath"/{opItem.dirname}/AppRun "$@"
             '''
-            a( d(plan='rofile', dest=f'/sbxdir/apps/run_{pItem.dirname}', destmode=0o555, content=start_sh_content) )
-        elif batch_plan == 'squashfs':
-            a( d(plan='sqfs-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.dirname}') )
-        # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
-        elif plan:
-            a( pItem )
+            a( d(op='rofile', dest=f'/sbxdir/apps/run_{opItem.dirname}', destmode=0o555, content=start_sh_content) )
+        elif many_op == 'squashfs':
+            a( d(op='sqfs-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.dirname}') )
+        # 下面是 op 而不是 many_op 。因为它们两个不应同时有，所以用同一if树
+        elif op:
+            a( opItem )
         else:
-            raise_exit(f"无法识别的fs条目 {pItem}")
+            raise_exit(f"无法识别的fs条目 {opItem}")
 
-    for i, pItem in enumerate(fsPlans):
-        if pItem.SDS:
-            if   pItem.src and not pItem.dest: pItem.dest = pItem.src
-            elif pItem.dest and not pItem.src: pItem.src = pItem.dest
-            elif not pItem.src and not pItem.dest:        raise_exit(f"{pItem} 既无 src 也无 dest")
-            elif napath(pItem.src) != napath(pItem.dest): raise_exit(f"{pItem}设置了SDS，但src与dest不一致")
-            del pItem.SDS
-        dcp_pItem = copy.deepcopy(pItem)
-        dcp_pItem = d({'plan': dict.pop(dcp_pItem, 'plan'), **dcp_pItem})
-        fsPlans[i] = dcp_pItem
+    for i, opItem in enumerate(fsOpertns):
+        if opItem.SDS:
+            if   opItem.src and not opItem.dest: opItem.dest = opItem.src
+            elif opItem.dest and not opItem.src: opItem.src = opItem.dest
+            elif not opItem.src and not opItem.dest:        raise_exit(f"{opItem} 既无 src 也无 dest")
+            elif napath(opItem.src) != napath(opItem.dest): raise_exit(f"{opItem}设置了SDS，但src与dest不一致")
+            del opItem.SDS
+        dcp_pItem = copy.deepcopy(opItem)
+        dcp_pItem = d({'op': dict.pop(dcp_pItem, 'op'), **dcp_pItem})
+        fsOpertns[i] = dcp_pItem
 
     # 查找移除重复的dest
     def find_dup_dest():
         used_dest = set()
-        for i in reversed(range(0, len(fsPlans))):
-            pItem = fsPlans[i]
-            if pItem.dest in used_dest:
-                log(f"debug:因dest重复(={pItem.dest})，移除{pItem}")
-                fsPlans[i] = d(removed=True)
-            used_dest.add(pItem.dest)
+        for i in reversed(range(0, len(fsOpertns))):
+            opItem = fsOpertns[i]
+            if opItem.dest in used_dest:
+                log(f"debug:因dest重复(={opItem.dest})，移除{opItem}")
+                fsOpertns[i] = d(removed=True)
+            used_dest.add(opItem.dest)
     # TODO 分为 普通、remount、overlay 几个组来去重
     find_dup_dest()
-    fsPlans = [pItem for pItem in fsPlans if not pItem.removed]
+    fsOpertns = [opItem for opItem in fsOpertns if not opItem.removed]
 
-    # 排序 fsPlans
-    fsPlans = sorted(fsPlans, key=lambda pItem: napath(pItem['dest']).split(os.sep) )
-    fsPlans = sorted(fsPlans, key=lambda x: 0 if (isinstance(x, dict) and x.get('plan') == 'sbxdir-in-newrootfs') else 1)
+    # 排序 fsOpertns
+    fsOpertns = sorted(fsOpertns, key=lambda opItem: napath(opItem['dest']).split(os.sep) )
+    fsOpertns = sorted(fsOpertns, key=lambda x: 0 if (isinstance(x, dict) and x.get('op') == 'sbxdir-in-newrootfs') else 1)
 
-    # [log(pItem) for pItem in fsPlans] # debug
-    return fsPlans
+    # [log(opItem) for opItem in fsOpertns] # debug
+    return fsOpertns
 
 def commit_remounts(remntPlans):
     for rItem in remntPlans:

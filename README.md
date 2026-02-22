@@ -133,8 +133,8 @@ Edit `.py` file and edit `userconfig` part like this:
 ```python
 uc.sandbox_name='freecad'
 uc.user_mnts = [
-    d(batch_plan='appimage', dirname='freecad', src=f'{si.CWD}/FreeCAD.AppImage'),
-    d(plan='bind', src='/anyhdd2/projects_save/', SDS=1),
+    d(many_op='appimage', dirname='freecad', src=f'{si.CWD}/FreeCAD.AppImage'),
+    d(op='bind', src='/anyhdd2/projects_save/', SDS=1),
 ]
 uc.gui="realX"
 ```
@@ -158,9 +158,9 @@ Configure:
 ```python
 uc.sandbox_name='firefox' # sandbox name
 uc.user_mnts = [
-    d(plan='robind', src=f'{si.CWD}/firefox', SDS=1), 
+    d(op='robind', src=f'{si.CWD}/firefox', SDS=1), 
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
-    d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
+    d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX"
 uc.dbus_session="filter" # input methods and other components need dbus
@@ -169,7 +169,7 @@ uc.dbus_session="filter" # input methods and other components need dbus
 
 ```python
 uc.user_mnts = [
-    d(plan='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
+    d(op='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
 ]
 ```
 ## Sandbox layering model
@@ -253,42 +253,42 @@ Each layer follows this basic flow:
 
 ## Filesystem view inside the sandbox
 
-A typical untrusted app’s visible filesystem inside the sandbox is assembled from plan entries like:
+A typical untrusted app’s visible filesystem inside the sandbox is assembled from op entries like:
 
 ```yml
 // # system directories read-only from the host
-{'plan': 'robind', 'dest': '/bin', 'src': '/bin'}
-{'plan': 'robind', 'dest': '/etc', 'src': '/etc'}
-{'plan': 'robind', 'dest': '/lib64', 'src': '/lib64'}
+{'op': 'robind', 'dest': '/bin', 'src': '/bin'}
+{'op': 'robind', 'dest': '/etc', 'src': '/etc'}
+{'op': 'robind', 'dest': '/lib64', 'src': '/lib64'}
 .....
 
 // # minimal /dev
-{'plan': 'rotmpfs', 'dest': '/dev'}
-{'plan': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
-{'plan': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
-{'plan': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
-{'plan': 'devpts', 'dest': '/dev/pts'}
-{'plan': 'tmpfs', 'dest': '/dev/shm'}
+{'op': 'rotmpfs', 'dest': '/dev'}
+{'op': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
+{'op': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
+{'op': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
+{'op': 'devpts', 'dest': '/dev/pts'}
+{'op': 'tmpfs', 'dest': '/dev/shm'}
 ......
 
 // # temporary writable directories
-{'plan': 'tmpfs', 'dest': '/home/username'}
-{'plan': 'tmpfs', 'dest': '/run'}
-{'plan': 'tmpfs', 'dest': '/run/user/1000'}
-{'plan': 'tmpfs', 'dest': '/tmp'}
+{'op': 'tmpfs', 'dest': '/home/username'}
+{'op': 'tmpfs', 'dest': '/run'}
+{'op': 'tmpfs', 'dest': '/run/user/1000'}
+{'op': 'tmpfs', 'dest': '/tmp'}
 ......
 
 // # user-configured mounts
-{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
-{'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
+{'op': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
+{'op': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
+{'op': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
+{'op': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
 
 // # sandbox configuration directory
-{'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
+{'many_op': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
 ```
 
-(These plan entries are included in the default template so users usually don't have to create them manually.)
+(These op entries are included in the default template so users usually don't have to create them manually.)
 
 The `/sbxdir` directory contains:
 

@@ -136,8 +136,8 @@
 ```python
 uc.sandbox_name='freecad' # 沙箱名称
 uc.user_mnts = [
-    d(batch_plan='appimage', dirname='freecad',  src=f'{si.CWD}/FreeCAD.AppImage'),
-    d(plan='bind', src='/anyhdd2/projects_save/', SDS=1), 
+    d(many_op='appimage', dirname='freecad',  src=f'{si.CWD}/FreeCAD.AppImage'),
+    d(op='bind', src='/anyhdd2/projects_save/', SDS=1), 
 ]
 uc.gui="realX" # 使用真实的 X11
 ```
@@ -161,9 +161,9 @@ TreeSandbox实现了在内部预先挂载AppImage，不需要把fuse挂载权限
 ```python
 uc.sandbox_name='firefox' # 沙箱名称
 user_mnts = [
-    d(plan='robind', src=f'{si.CWD}/firefox', SDS=1), 
+    d(op='robind', src=f'{si.CWD}/firefox', SDS=1), 
     # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
-    d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
+    d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX" # 使用真实的 X11
 uc.dbus_session="filter" # 输入法等通信需要dbus
@@ -174,7 +174,7 @@ uc.dbus_session="filter" # 输入法等通信需要dbus
 
 ```python
 uc.user_mnts = [
-    d(plan='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
+    d(op='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
 ]
 ```
 
@@ -263,35 +263,35 @@ layer1 = d( # 第1层
 
 ```yml
 // # 真实的系统目录
-{'plan': 'robind', 'dest': '/bin', 'src': '/bin'}
-{'plan': 'robind', 'dest': '/etc', 'src': '/etc'}
-{'plan': 'robind', 'dest': '/lib64', 'src': '/lib64'}
+{'op': 'robind', 'dest': '/bin', 'src': '/bin'}
+{'op': 'robind', 'dest': '/etc', 'src': '/etc'}
+{'op': 'robind', 'dest': '/lib64', 'src': '/lib64'}
 .....
 
 // # 最小的/dev
-{'plan': 'rotmpfs', 'dest': '/dev'}
-{'plan': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
-{'plan': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
-{'plan': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
-{'plan': 'devpts', 'dest': '/dev/pts'}
-{'plan': 'tmpfs', 'dest': '/dev/shm'}
+{'op': 'rotmpfs', 'dest': '/dev'}
+{'op': 'bind', 'dest': '/dev/console', 'src': '/dev/console'}
+{'op': 'bind', 'dest': '/dev/null', 'src': '/dev/null'}
+{'op': 'bind', 'dest': '/dev/random', 'src': '/dev/random'}
+{'op': 'devpts', 'dest': '/dev/pts'}
+{'op': 'tmpfs', 'dest': '/dev/shm'}
 ......
 
 // # 创建空的临时目录
-{'plan': 'tmpfs', 'dest': '/home/username'}
-{'plan': 'tmpfs', 'dest': '/run'}
-{'plan': 'tmpfs', 'dest': '/run/user/1000'}
-{'plan': 'tmpfs', 'dest': '/tmp'}
+{'op': 'tmpfs', 'dest': '/home/username'}
+{'op': 'tmpfs', 'dest': '/run'}
+{'op': 'tmpfs', 'dest': '/run/user/1000'}
+{'op': 'tmpfs', 'dest': '/tmp'}
 ......
 
 // # 以下根据用户配置情况而变
-{'plan': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
-{'plan': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
-{'plan': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
-{'plan': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
+{'op': 'appimg-mount', 'src': '/anyhdd/freecad/FreeCAD.AppImage', 'dest': '/sbxdir/apps/freecad'}
+{'op': 'robind', 'src': '/anyhdd/ffx/firefox', 'dest': '/sbxdir/apps/firefox'}
+{'op': 'robind', 'dest': '/tmp/.X11-unix/X0', 'src': '/tmp/.X11-unix/X0'}
+{'op': 'robind', 'dest': '/tmp/dbus-session.socket', 'src': '/run/user/1000/bus'}
 
 // # 沙箱配置目录
-{'batch_plan': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
+{'many_op': 'sbxdir-in-newrootfs', 'dest': '/sbxdir'}
 ```
 
 （以上所列文件系统已经写进模板里，不需要用户去创建）
