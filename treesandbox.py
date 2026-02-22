@@ -2071,13 +2071,14 @@ def padir(path):
     if napath(path) == '/': raise_exit(f"{path}已是根路径，无法再取得上级目录")
     return str(Path(path).parent)
 
-def run_a_cmd(cmdv):
+def run_a_cmd(cmdv, print_output=False):
     prc = subprocess.Popen(cmdv,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, bufsize=1, universal_newlines=True
                          )
     stdout_data, _ = prc.communicate()
     # prc.wait()
+    if print_output: log(stdout_data)
     if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
 
 def is_unix_socket_listened(sock_path):
