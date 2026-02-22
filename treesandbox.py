@@ -1299,7 +1299,8 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
                 a( d( plan='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
             a( d( plan='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
-            a( d({'plan': dict.pop(pItem, 'batch_plan'), **pItem} ) )
+            dcp_pItem = copy.deepcopy(pItem)
+            a( d({'plan': dict.pop(dcp_pItem, 'batch_plan'), **dcp_pItem} ) )
         elif batch_plan == 'basic-dev':
             # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
             a( d( plan='rotmpfs', dest='/dev' ) )
@@ -1360,14 +1361,16 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
         else:
             raise_exit(f"无法识别的fs条目 {pItem}")
 
-    for pItem in fsPlans:
+    for i, pItem in enumerate(fsPlans):
         if pItem.SDS:
             if   pItem.src and not pItem.dest: pItem.dest = pItem.src
             elif pItem.dest and not pItem.src: pItem.src = pItem.dest
             elif not pItem.src and not pItem.dest:        raise_exit(f"{pItem} 既无 src 也无 dest")
             elif napath(pItem.src) != napath(pItem.dest): raise_exit(f"{pItem}设置了SDS，但src与dest不一致")
             del pItem.SDS
-    fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
+        dcp_pItem = copy.deepcopy(pItem)
+        dcp_pItem = d({'plan': dict.pop(dcp_pItem, 'plan'), **dcp_pItem})
+        fsPlans[i] = dcp_pItem
 
     # 查找移除重复的dest
     def find_dup_dest():
