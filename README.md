@@ -29,7 +29,7 @@ Optional:
 
 
 
-## Overview
+## What is "container tree"?
 
 This tool focus on a smooth sub-namespaces nesting experience. You can create a tree of layer-on-layer containers as you like.
 
@@ -42,7 +42,7 @@ Here's an example, the sandbox container tree might look like:
 ```verilog
 [Linux Host]
     [X11]   Real Desktop
-    [dbus-daemon --session]  <A>    Real user dbus service
+    [dbus-daemon --session]  Real user dbus service
 
     [Tree Sandbox Sandbox]
       |-[Sub-container : Untrusted zone]
@@ -52,8 +52,7 @@ Here's an example, the sandbox container tree might look like:
       |   | 
       |   |-[Sub-container : Untrusted : Companion Processes (Group 2)]
       |         [Xpra X server]      Isolated X11 Server
-      |         [dbus-proxy]  <C>    Splits and forwards user dbus to internal D and external B
-      |         [dbus-daemon --session]  <D>  Internal user dbus service
+      |         [dbus-daemon --session]   Internal user dbus service
       |         [dbus-daemon --system]    Internal system-level dbus
       |         [keyring daemon]          Internal Keyring Service
       |         [icewm]            Lightweight Window Manager, usually paired with Xephyr
@@ -61,7 +60,7 @@ Here's an example, the sandbox container tree might look like:
       |-[Sub-container : Semi-trusted zone : Companion Processes (Group 1)]
                 [Xephyr]           Isolated X11 Server + Client
                 [Xpra client]      Seamless Isolated X11 Client
-                [dbus-proxy]  <B>  Filters and forwards dbus, relaying between A and C
+                [dbus-proxy]       Filters and forwards dbus
 
 (Usually not all above will be started. It depends on user options)
 ```
@@ -88,6 +87,7 @@ Early-stage. It works and you can read the code, but it has not been developed o
         - [x] Symlink
     - [x] Environment variable control inside the sandbox
     - [x] UID=0 in layer1, back to uid=1000 in last layer; drop caps; no_new_privs
+- [ ] Handle PGID/SID and signals
 - [x] Mount AppImage internally
 - Use GUI in sandbox:
     - [x] Optional host X11 exposure to sandbox
@@ -95,15 +95,19 @@ Early-stage. It works and you can read the code, but it has not been developed o
     - [ ] Optional Xpra seamless X11 proxy 
     - [ ] Optional host Wayland exposure to sandbox
     - [ ] Optional isolated full desktop in isolated GUI
-- [ ] Optional access to real hardware or just GPU  
+- Optionally expose real hardwares to sandbox
+    - [x] Expose GPU to sandbox
+    - [ ] Expose all hardwares to sandbox
 - DBus:
     - [x] Optional host DBus exposure to sandbox
     - [x] Optional DBus proxy filtering DBus communication
 - [ ] Optional network traffic control 
-- Instance Manage and Args Passing
+- Same sandbox: Single-app, multiple-app, single instance, multiple-instance (startup app choosing, instance managing, args passing)
+    - [x] Multiple apps for same sandbox (apps by same inc. run in same sandbox)
     - [x] Multi-instances for same sandbox (Multiple startups of same sandbox will have multi-instances running. Each other isolated and independent) 
     - [ ] Single-instance for same sandbox (Multiple startups of same-app sandbox will send args to the first-started running instance. Instruction: Uses `sandbox_name` field you set to distiguish same-app sandbox)
 - [ ] In-container shell socket exposed to host 
+- [x] Watchdog (when in-sandbox app of companion app exits, sandbox terminated)
 - Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
     
 
