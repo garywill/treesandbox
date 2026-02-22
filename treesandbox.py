@@ -436,6 +436,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     PTMP = f'/tmp/tsbxs-{uid}'
     hash_bootsbx_py = hashlib.blake2b(open(scriptfilepath, 'rb').read()).hexdigest()
 
+    CHK(uid != 0 and gid != 0, f'目前本沙箱未支持以root运行')
+    if not os.getenv("XDG_RUNTIME_DIR"):
+        os.environ.update({"XDG_RUNTIME_DIR": f'/run/user/{uid}'})
+        log_warn(f'检测到无环境变量 XDG_RUNTIME_DIR, 将其设置为 {os.getenv("XDG_RUNTIME_DIR")}')
+
+
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
     os.chmod(PTMP, 0o700)
 
@@ -982,14 +988,6 @@ def main2(skp_lyfk):
         while os.getppid() not in [0, 1] : time.sleep(0.03)
 
 
-    # 清理函数、信号处理注册
-    if tlcfg.unshare_pid:
-        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-        atexit.register(cleanup_pidnsleader)
-        register_sig_handlers(pidnsleader=True)
-
-    set_ps1('ready')
-
     #--- 创建 subp -----------------------------------
     # NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
 
@@ -1001,6 +999,14 @@ def main2(skp_lyfk):
         if pid == 0:
             return sublyr_cfg # 让main2()返回，准备开始下一层
         inprepare_children.append((pid, skp_spfk)) # 原进程才需要pid和skp_spfk
+
+    # 清理函数、信号处理注册 (要在sublayer之后)
+    if tlcfg.unshare_pid:
+        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        atexit.register(cleanup_pidnsleader)
+        register_sig_handlers(pidnsleader=True)
+
+    set_ps1('ready')
 
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
@@ -2497,6 +2503,7 @@ ICEWM_WINOPTIONS='''
 .ignorePositionHint: 1
 '''
 
+# NOTE 不要启用icewm的启动器、程序菜单等，因为那样所启动的程序与沙箱的主层不是同一个pidns
 ICEWM_PREF='''
 ShowStartMenu=0
 ShowLogoutMenu=0
