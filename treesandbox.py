@@ -1371,9 +1371,9 @@ def layer_run_subp(cmdvec=None, subp_name=None,
         # === 去掉 stdin/out/err 中不需要的 # NOTE 下面无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
         if subp_name in dict.keys(si.subp_log_fds):
-            os.dup2(devnull, 0)
-            os.dup2(si.subp_log_fds[subp_name], 1)
-            os.dup2(si.subp_log_fds[subp_name], 2)
+            os.dup2(devnull, 0) if not stdin else None
+            os.dup2(si.subp_log_fds[subp_name], 1) if not stdout else None
+            os.dup2(si.subp_log_fds[subp_name], 2) if not stderr else None
         os.close(devnull)
         # NOTE 无法再 log 或 print NOTE
 
