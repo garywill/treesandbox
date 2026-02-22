@@ -47,14 +47,14 @@ def userconfig(si): # 这个只在顶层解析一次
 
 
     # 若不设置gui则内部无任何X11
-    uc.gui="realX" # 使用真实的 X11
+    # uc.gui="realX" # 使用真实的 X11
     # uc.gui="xephyr"
-    # uc.gui="weston"
+    uc.gui="weston"
 
     # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
     uc.icewm = True if uc.gui in ['xephyr','weston'] else False
-    uc.windowed_size = (1000, 600)
+    uc.windowed_size = (800, 600)
 
     uc.gpus     =      True if uc.gui else False
     uc.see_userfonts = True if uc.gui else False
