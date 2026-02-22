@@ -539,6 +539,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     print(f"cgroup：{CG_SBX}")
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX) ) # 顶层父进程注册清理函数
+    for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
+        signal.signal(sig, signals_handler)
+
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     os.chdir(outest_sbxdir)
@@ -636,12 +639,13 @@ class pipe_outest_exit_layer1:
         fcntl.fcntl(cls._read_fd, fcntl.F_SETFD, fcntl.fcntl(cls._read_fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC)
     @classmethod
     def set_should_exit(cls):
+        if cls._write_fd is None: return False
         try:
             os.write(cls._write_fd, b'x')
         except OSError as err:
             if err.errno != errno.EPIPE:  raise # 忽略 Broken pipe（layer1 已退出）
     @classmethod
-    def is_should_exit_set(cls):
+    def is_should_exit_set(cls): # 无法区分outest是没发还是退出了，如果不是有了 pdeathsig 则需要改用心跳包
         try:
             data = os.read(cls._read_fd, 1) # 尝试读一个字节
             return len(data) > 0
@@ -673,7 +677,7 @@ def main():
         thislyr_cfg.sbxdir_path0 = padir(lyrcfg_file)
         si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/sbxinfo.json').read()))
 
-    set_loghead (f'{thislyr_cfg.layer_name}: ')
+    set_loghead (f'{thislyr_cfg.layer_name}: ' if not is_outest else 'outest: ')
 
     # 预先算好变根后的 sbxdir_path1
     if not thislyr_cfg.newrootfs:
@@ -721,11 +725,15 @@ def main():
         if is_outest: pipe_outest_exit_layer1.init()
         pid = os.fork()
         if pid == 0: # 子进程
-            if is_outest: pipe_outest_exit_layer1.i_am_layer1()
-
-            # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
             if is_outest:
-                set_pdeathsig()
+                atexit._clear()
+
+                set_loghead (f'{thislyr_cfg.layer_name}: ')
+
+                pipe_outest_exit_layer1.i_am_layer1()
+
+            if is_outest:
+                set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
             else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
                 while os.getppid() not in [0, 1] : time.sleep(0.03)
 
@@ -736,21 +744,41 @@ def main():
 
             if not is_outest:
                 sys.exit()
+            else:
+                daemon(True, pid)
 
-            si.layer1_pid = pid
-            Path(f'{si.outest_sbxdir}/proc.layer1.{pid}.pid').write_text(str(pid))
-            symlink(f'proc.layer1.{pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
+def daemon(is_outest, layer1_pid=None):
+    if is_outest:
+        si.layer1_pid = layer1_pid
+        Path(f'{si.outest_sbxdir}/proc.layer1.{layer1_pid}.pid').write_text(str(layer1_pid))
+        symlink(f'proc.layer1.{layer1_pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
 
-            layer_set_status('PaAfterFork')
+        layer_set_status('outestDaemoning')
 
-            _, status = os.waitpid(pid, 0)
-            if os.WIFEXITED(status):
-                exit_code = os.WEXITSTATUS(status)
-                log(f"沙箱内部首层领头进程已退出( {exit_code} )")
-            elif os.WIFSIGNALED(status):
-                signal_num = os.WTERMSIG(status)
-                log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
+    if not is_outest:
+        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
 
+    async def loop():
+        nn = 0
+        while True:
+            nn += 1
+            await asyncio.sleep(0.2)
+
+            if should_exit:
+                if should_exit_signum is not None: log(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
+                sys.exit()
+
+            if is_outest and nn >=5:
+                nn=0; update_proclist()
+
+            if not is_outest and thislyr_cfg.depth == 1 :
+                if pipe_outest_exit_layer1.is_should_exit_set() : sys.exit()
+
+            if not exist_childtree():
+                log("子进程树已空，退出")
+                sys.exit()
+
+    asyncio.run(loop())
 
 def main2():
     # 写uid_map 等 。一般来说配合 unshare_user
@@ -853,23 +881,11 @@ def main2():
     # 如果unshare_pid,则我是init进程(pid=1)
     #   如果有子进程，则等待，否则就退出
     if thislyr_cfg.unshare_pid:
-        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-        # TODO 改用poll
-        async def loop():
-            while True:
-                if thislyr_cfg.depth == 1 and pipe_outest_exit_layer1.is_should_exit_set() : sys.exit()
-                if not exist_childtree():
-                    log("子进程树已空，退出")
-                    sys.exit()
-                if should_exit:
-                    log(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
-                    sys.exit()
-                await asyncio.sleep(0.3)
-        asyncio.run(loop())
+        daemon(False)
     # 如果不是 unshare_pid 的 ,这里直接结束退出
 
 safe_mntns_fd = None
-def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None):
+def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None): # TODO pty或setsid
     global safe_mntns_fd
     # 使用 socketpair 替代两个 pipe
     child_sock, parent_sock = socket.socketpair()
@@ -954,6 +970,8 @@ def cleanup_pidnsleader():
                 break
             os.kill(-1, signal.SIGTERM)
             time.sleep(0.1)
+        else:
+            os.kill(-1, signal.SIGKILL)
 
 
 # NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 不一定要退出，由用户配置决定是否
@@ -961,7 +979,7 @@ EXIT_SIGNALS = [ signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, s
 should_exit = False
 should_exit_signum = None
 def signals_handler(signum, frame):
-    # NOTE 不能print 不能sleep 不能sys.exit 只能 os._exit
+    # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
     global should_exit, should_exit_signum
     if signum in EXIT_SIGNALS:
         should_exit = True ; should_exit_signum = signum
@@ -973,8 +991,7 @@ def signals_handler(signum, frame):
                 if pid == 0:
                     break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                should_exit = True ; should_exit_signum = signal.SIGCHLD
-                os._exit(0)
+                should_exit = True
                 break
 
 
@@ -1073,6 +1090,7 @@ def commit_fsPlans(fsPlans):
                 mkdirp(real_dest)
                 mount(src, real_dest, None, mntflag_binddir, None)
                 if RO : z(d(dirpath=real_dest, flag=mntflag_binddir ))
+            #注意 Path.is_file() 在目标对象是symlink而指向文件时会返回真
             elif (Path(src).is_file() \
                 or Path(src).is_char_device() \
                 or Path(src).is_block_device() ) :
@@ -1313,7 +1331,9 @@ def safe_copy_script(copy_target_path):
 
 
 def cleanup_outest(outest_sbxdir, cg_dir):
-    print(f"{scriptname} 正在执行清理...")
+    # if si and si.layer1_pid: try_pass(lambda: os.setpgid(si.layer1_pid, 0) )
+    pipe_outest_exit_layer1.set_should_exit()
+    log(f"正在执行清理...")
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
         # new.*.rootfs/
@@ -1327,7 +1347,7 @@ def cleanup_outest(outest_sbxdir, cg_dir):
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
-            if f.is_file() :
+            if f.is_file() or f.is_symlink() :
                 try_pass(lambda: f.unlink() )
         try_pass(lambda: os.rmdir(dirpath) )
 
