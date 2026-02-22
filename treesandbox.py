@@ -386,9 +386,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
 
-def call_recursive_lyrs_jobs(si, cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
-    recursive_lyrs_jobs(si, cfg, None, []) # 要调用两次
-    recursive_lyrs_jobs(si, cfg, None, []) # 要调用两次
+def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
+    recursive_lyrs_jobs(si, layer1_cfg, None, []) # 要调用两次
+    recursive_lyrs_jobs(si, layer1_cfg, None, []) # 要调用两次
 
 
 resv_words = ['sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
@@ -517,8 +517,13 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
     n = 0
-    while os.path.lexists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
-        n+=1
+    while True:
+        instance_name = f'{sandbox_name}_{starttime_str}-{n}'
+        if os.path.lexists( (outest_sbxdir := f'{PTMP}/{instance_name}') ) :
+            n+=1
+        else :
+            break
+
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir) ) # 顶层父进程注册清理函数
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
@@ -536,11 +541,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     sbxinfo.pythonbin = sys.executable
     sbxinfo.sandbox_name = sandbox_name
+    sbxinfo.instance_name = instance_name
     sbxinfo.outest_sbxdir = outest_sbxdir
 
     dyncfg = gen_dynamic_cfg(sbxinfo, uc)
     layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
-    call_recursive_lyrs_jobs(sbxinfo, layer1_cfg)
+    start_lyrs_recursive_jobs(sbxinfo, layer1_cfg)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
