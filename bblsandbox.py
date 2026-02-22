@@ -22,6 +22,9 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.gui="xpra" # 暂未实现
     # uc.gui="isolatedX"; de_start_cmd="plasmashell"  # 暂未实现
 
+    uc.gpus     =      True if uc.gui else False
+    uc.see_userfonts = True if uc.gui else False
+
     # uc.see_real_hw=True # 看见真实/dev和/sys
 
     uc.user_mnts = [
@@ -70,6 +73,8 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                     d(batch_plan='basic-dev'),
                     d(batch_plan='mask-privacy', destbase='/'),
                     d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+
+                    *dyncfg.mnts_gui,
 
                     d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
                     d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
@@ -168,17 +173,7 @@ def gen_layer3(si, uc, dyncfg):
 
             d(plan='robind', src='/sbxdir/temp/X10', dest='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
 
-            *([
-            d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1),
-            d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1),
-            d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1),
-            d(plan='rosame', src='/dev/dri', SDS=1),
-            d(plan='rosame', src='/sys/class/drm', SDS=1),
-            *[ d(plan='rosame', src=p, SDS=1)        for p in glob.glob('/sys/dev/char/226:*') ],
-            *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob.glob('/sys/devices/*/*/drm') ],
-            *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob.glob('/sys/devices/*/*/drm') ],
-            ] if uc.gui else [] ),
-            # TODO layer2里也加 GPU / 字体
+            *dyncfg.mnts_gui,
 
             d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
             *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
@@ -235,6 +230,21 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = []
     paths_to_mask = []
 
+    mnts_gui = [
+        *([
+        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1),
+        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1),
+        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1),
+        ] if uc.see_userfonts else [] ),
+        *([
+        d(plan='rosame', src='/dev/dri', SDS=1),
+        d(plan='rosame', src='/sys/class/drm', SDS=1),
+        *[ d(plan='rosame', src=p, SDS=1)        for p in glob.glob('/sys/dev/char/226:*') ],
+        *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob.glob('/sys/devices/*/*/drm') ],
+        *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob.glob('/sys/devices/*/*/drm') ],
+        ] if uc.gpus else [] ),
+    ]
+
     for um in (uc.user_mnts or [] ):
         if um.mttype == 'appimage':
             fs_user_mounts += [d(plan='appimg-mount', src=um.src, dest=f'/sbxdir/apps/{um.appname}')]
@@ -272,7 +282,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     fs_user_mounts += [d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)]
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in {'fs_user_mounts', 'paths_to_mask', 'machineid'}})
+            if k in ['fs_user_mounts', 'paths_to_mask', 'machineid', 'mnts_gui']})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===

@@ -35,7 +35,7 @@ Here's an example, the sandbox container tree might look like:
       |         [keyring daemon]          Internal Keyring Service
       |         [icewm]            Lightweight Window Manager, usually paired with Xephyr
       |         
-      |-[Sub-container : Semi-trusted zone : Companion Processes (Group 11)]
+      |-[Sub-container : Semi-trusted zone : Companion Processes (Group 1)]
                 [Xephyr]           Isolated X11 Server + Client
                 [Xpra client]      Seamless Isolated X11 Client
                 [dbus-proxy]  <B>  Filters and forwards dbus, relaying between A and C
