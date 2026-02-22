@@ -489,7 +489,7 @@ def gen_layer4(si, uc, dyncfg):
     )
 
 
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
     scriptfilepath = os.path.abspath(__file__)
@@ -742,9 +742,6 @@ def recursive_valid_lyrs(si, layer1_cfg):
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
-        if cfg.subprocs or cfg.is_mainlyr:
-            used_proc_names.append(cfg.layer_name+'_userns')
-            cfg.need_unpri_userns = True
         if cfg.is_mainlyr:
             CHK(not si.specialLyrs.mainLyr, '有重复的mainLyr')
             si.specialLyrs.mainLyr = cfg.layer_name
@@ -766,7 +763,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
             _recr(sublyr_cfg)
     _recr(layer1_cfg)
     wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
-    si.expected_alive_procs = wdg_target_procs
+    si.expected_alive_procs = wdg_target_procs + ['userns_unpri']
     si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
     CHK(si.specialLyrs.mainLyr, '未找到mainLyr')
 
@@ -1109,6 +1106,9 @@ def main2(skp_lyfk):
     # 关闭临时socket
     skp_lyfk.close()# NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
 
+    if tlcfg.depth == 1:
+        OG.userns_unpri = create_userns_unpri() # NOTE  要在layer_booted之前
+
     # 非unshare_pid 层 则要等待fork前父进程退出
     if not tlcfg.unshare_pid:
         while os.getppid() not in [0, 1] : time.sleep(0.03)
@@ -1146,22 +1146,18 @@ def main2(skp_lyfk):
     # 以subp启动普通辅助app
     set_3ge_fds_cloexec() # 沙箱启动时设置过，保险再来一次
 
-    if tlcfg.need_unpri_userns:
-        LG.userns_unpri = layer_create_unpri_userns() # NOTE  要在layer_booted之前
-
     for subpItem in (tlcfg.subprocs or [] ) :
         pid, skp_spfk = layer_run_subp (**subpItem)
         inprepare_children.append((pid, skp_spfk))
 
     #-------------------------------------------
 
-    # 向最外层发送“本层已boot”， ( NOTE 要在 layer_create_unpri_userns 之后)
+    # 向最外层发送“本层已boot”，
     wlog('layer_booted', me_proc_info=True,
          ready_proc_name=tlcfg.layer_name,
          pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
          **(d(is_mainlyr=True) if tlcfg.is_mainlyr else {}),
          **(d(is_semitruCmpannLyr=True) if tlcfg.is_semitruCmpannLyr else {}),
-         **(d(userns_unpri=LG.userns_unpri) if LG.userns_unpri else {}),
     )
 
     if not tlcfg.unshare_pid:
@@ -1257,8 +1253,8 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
         if not subLayer:
             if not keep_caps:
-                close_3ge_fds(keep_fds=[LG.userns_unpri.usernsfd]) # 已经给它们cloexec=True， 这些再关闭一次更保险
-                os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+                close_3ge_fds(keep_fds=[OG.userns_unpri.usernsfd]) # 已经给它们cloexec=True， 这些再关闭一次更保险
+                os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
                 drop_caps()
 
             os.execvp(cmdvec[0], cmdvec)
@@ -1280,7 +1276,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
-def layer_create_unpri_userns():
+def create_userns_unpri():
     CHK(os.getpid()==1, '只有pid=1才应该调用这个')
     pid, skp = fork(create_socketpair=True, loghead=f'{loghead} userns', proc_dispname='unpri pidfd')
     if pid == 0: # 子进程
@@ -1289,8 +1285,8 @@ def layer_create_unpri_userns():
         skp.chd_recv(1, 2, BS.SetYouUidUserDone)
         skp.close()
         drop_caps()
-        wlog('layer_userns', me_proc_info=True,
-             ready_proc_name=f'{tlcfg.layer_name}_userns',
+        wlog('subp_start', me_proc_info=True,
+             ready_proc_name='userns_unpri',
              pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
         )
         os.execvp('sleep', ['sleep', 'infinity'])
@@ -1312,6 +1308,16 @@ def layer_create_unpri_userns():
 
         skp.pa_send(BS.SetYouUidUserDone)
         return result
+def get_userns_unpri():
+    CHK( OutestProcsMonitor.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+    pid = OutestProcsMonitor.procs_histseen['userns_unpri'].NSpid[0]
+    result = d()
+    result.pid = pid
+    result.pidfd = os.pidfd_open(pid)
+    result.usernsfd = os.open(f'/proc/{pid}/ns/user', os.O_RDONLY)
+    result.usernsino = os.stat(f'/proc/{pid}/ns/user').st_ino
+    return result
+
 
 def wait_for_startAfters(arr_startAfter):
     if not arr_startAfter: return
@@ -1781,8 +1787,8 @@ class OutestProcsMonitor:
     def i_am_outest(cls):
         cls.I_AM_OUTEST=True
         cls.procs_alive = []
-        cls.procs_wdgsee = d()
-        cls.procs_histseen = d()
+        cls.procs_wdgsee = D()
+        cls.procs_histseen = D()
         cls.logs_should_match_soon = []
         cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
         cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
@@ -1889,6 +1895,8 @@ class OutestProcsMonitor:
     @classmethod
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        if proc_name == 'userns_unpri':
+            OG.userns_unpri = get_userns_unpri()
         if proc_name in ['xephyr', 'xwayland', 'xpraserver']:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
@@ -1904,23 +1912,19 @@ class OutestProcsMonitor:
         seefrom = bItem.real_seefrom
         seeto   = bItem.real_seeto
         bridge_name = bItem.bridge_name
-        condition = [seefrom, seeto, seefrom+'_userns']
+        condition = ['userns_unpri',  seefrom, seeto]
         if proc_name in condition:
             if set(condition).issubset(set(dict.keys( cls.procs_histseen ))):
                 log(f'创建桥 {bridge_name}')
                 seefrom_pid         = cls.procs_histseen[seefrom].NSpid[0]
-                seefrom_userns_pid  = cls.procs_histseen[seefrom+'_userns'].NSpid[0]
                 seeto_pid   = cls.procs_histseen[seeto].NSpid[0]
                 pidfd_seefrom        = os.pidfd_open(seefrom_pid)
-                pidfd_seefrom_userns = os.pidfd_open(seefrom_userns_pid)
-                usernsfd = os.open(f'/proc/{seefrom_userns_pid}/ns/user', os.O_RDONLY)
                 pidfd_seeto   = os.pidfd_open(seeto_pid)
                 ns_seefrom        = get_nstypes(f'/proc/{seefrom_pid}/ns')
-                ns_seefrom_userns = get_nstypes(f'/proc/{seefrom_userns_pid}/ns')
                 ns_seeto   = get_nstypes(f'/proc/{seeto_pid}/ns')
                 PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name,
                                close_fds=True,
-                               close_keep_fds=[si.file_fds.layerslog_a, pidfd_seefrom, pidfd_seefrom_userns, pidfd_seeto, usernsfd],
+                               close_keep_fds=[si.file_fds.layerslog_a, pidfd_seefrom,  pidfd_seeto, OG.userns_unpri.usernsfd],
                                set_fds_CLOEXEC=True )
                 if PID1 == 0: # 第一个子进程.因为之前创建layer1时unshare过，这里已经是与layer1同pidns
                     # TODO 判断其他ns种类，如果不同，也要setns过去
@@ -1943,15 +1947,15 @@ class OutestProcsMonitor:
                         ns.mnt = ns_seeto.mnt
                         os.setns(pidfd_seeto, unshrflg(d(mnt=1))) # 在这之后就不可以获得自己的ns或start_tick信息
 
-                        ns.user = ns_seefrom_userns.user
+                        ns.user = OG.userns_unpri.usernsino
                         wlog('subp_start',
                              ready_proc_name=bridge_name ,
                              self_see_pid=mypid,
                              start_tick=start_tick,
                              ns=ns,
                         )
-                        close_3ge_fds(keep_fds=[usernsfd])
-                        os.setns(usernsfd, unshrflg(d(user=1))) # 在这之后无法setns NOTE 在这之前应该关闭重要fd
+                        close_3ge_fds(keep_fds=[OG.userns_unpri.usernsfd])
+                        os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1))) # 在这之后无法setns NOTE 在这之前应该关闭重要fd
 
 
                         drop_caps(no_textcheck_after_dropcap=True)
@@ -1966,8 +1970,6 @@ class OutestProcsMonitor:
                 # 原最外层进程
                 # log('最外层完成桥的创建')
                 os.close(pidfd_seefrom)
-                os.close(pidfd_seefrom_userns)
-                os.close(usernsfd)
                 os.close(pidfd_seeto)
 
     @classmethod
@@ -2068,9 +2070,9 @@ def daemon_pidnsleader():
     PidnsleaderListener.i_am_pidnsleader()
     PERIOD = 0.2
     def subptree_is_empty():
-        if not tlcfg.need_unpri_userns:
+        if not tlcfg.depth == 1: # 有个userns_unpri的sleep进程
             return (not exist_childtree() )
-        else: # tlcfg.need_unpri_userns 为真
+        else:
             return (not exist_subprocs_or_mainapps() )
     while True:
         if sig_say_exit: sys.exit()
@@ -2085,7 +2087,6 @@ def daemon_pidnsleader():
                     PidnsleaderListener.MainApp_Ever_Started = True
 
         if tlcfg.is_mainlyr and PidnsleaderListener.MainApp_Ever_Started :
-            CHK(tlcfg.need_unpri_userns, '主层无need_unpri_userns，某个地方设置有问题')
             if not si.idleKeepSbxTime:
                 if subptree_is_empty(): sys.exit()
             else: # si.idleKeepSbxTime > 0:
@@ -2138,10 +2139,10 @@ class ClipboardSyncer():
             log(f'主机有新连接来要往沙箱写剪贴板')
             pid , _ = fork(loghead=f'{loghead} 主机要写沙箱剪贴板', proc_dispname='clipbd write',
                            close_fds=True, cut_stdin=True,
-                           close_keep_fds=[cls.socket_fromHostLsn.fileno(), LG.userns_unpri.usernsfd],
+                           close_keep_fds=[cls.socket_fromHostLsn.fileno(), OG.userns_unpri.usernsfd],
                            )
             if pid == 0: # 子进程：处理客户端
-                os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+                os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
                 try: cls.handle_client_clipbdFromHostSocket()
                 except Exception as err: log_warn(err)
                 finally: log_warn('handle_client_clipbdFromHostSocket本应结束所属进程但没有'); os._exit(1) #若到这,说明上面未成功退出
@@ -2152,10 +2153,10 @@ class ClipboardSyncer():
             return
         pid , _ = fork(loghead=f'{loghead} 探测沙箱剪贴板有无新', proc_dispname='clipbd read',
                     close_fds=True, cut_stdin=True,
-                    close_keep_fds=[LG.userns_unpri.usernsfd ],
+                    close_keep_fds=[OG.userns_unpri.usernsfd ],
                     )
         if pid == 0 : # 子进程：循环从管道读xsel的输出
-            os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+            os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
             try: cls.sync_from_sandbox_to_host()
             except Exception as err: log_warn(err)
             finally: log_warn('sync_from_sandbox_to_host 本应结束所属进程但没有') ; os._exit(1) #若到这,说明上面未成功退出
@@ -2432,11 +2433,11 @@ def exist_childtree(): # 不需要自己pid=1也可以用
     except ChildProcessError:
         return False
 def exist_subprocs_or_mainapps(): # 排除掉userns_pid之后，仍然存在
-    CHK(os.getpid()==1 and tlcfg.need_unpri_userns, '只有pid=1且 need_unpri_userns 才可调用此函数')
+    CHK(os.getpid()==1 and tlcfg.depth==1, '只有pid=1且 depth=1 才可调用此函数')
     if not exist_childtree(): return 0
     allpids = [int(x) for x in os.listdir("/proc") if x.isdigit()]
     allpids.remove(os.getpid())
-    allpids.remove(LG.userns_unpri.pid)
+    allpids.remove(OG.userns_unpri.pid)
     return bool(allpids)
 
 
@@ -3078,7 +3079,6 @@ if __name__ == "__main__":
     lyrcfg_to_use = 'notready'
     while lyrcfg_to_use:
         tlcfg = None
-        OG = None
         LG = d()
         if isinstance(lyrcfg_to_use, dict):
             log(f'子层 {lyrcfg_to_use.layer_name}')
