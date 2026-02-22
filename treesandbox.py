@@ -253,6 +253,7 @@ def gen_layer4c(si, uc, dyncfg):
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
+        isMainLyr=True,  # 我是主app所在层
         unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
@@ -329,7 +330,7 @@ def recr_rm_empty_lyr(si, cfg):
         for sublyr_cfg in (cfg.sublayers or [] ):
             if _recr(si, sublyr_cfg):
                 have_rmed = True
-        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell ):
+        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell or cfg.isMainLyr):
             # print('设置' , cfg.layer_name, '为disable')
             cfg.disabled = True
             have_rmed = True
@@ -338,29 +339,32 @@ def recr_rm_empty_lyr(si, cfg):
     while _recr(si, cfg): pass
 
 def recursive_valid_lyrs(si, layer1_cfg):
-    used_names = []
+    used_proc_names = []
     si.all_layers = []
     def _recr(cfg):
-        nonlocal used_names
-        CHK( cfg.layer_name not in used_names, f"名称 {cfg.layer_name} 有重复")
+        nonlocal used_proc_names
+        CHK( cfg.layer_name not in used_proc_names, f"名称 {cfg.layer_name} 有重复")
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
-            used_names.append(cfg.layer_name)
+            used_proc_names.append(cfg.layer_name)
+        if cfg.isMainLyr:
+            si.mainlyr = cfg.layer_name
         for subpItem in (cfg.subprocs or [] ):
             CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
             CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
             CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
-            CHK( subpItem.subp_name not in used_names, f"名称 {subpItem.subp_name} 有重复")
+            CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
             CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
-            used_names.append(subpItem.subp_name)
+            used_proc_names.append(subpItem.subp_name)
 
-        if cfg.user_shell: used_names.append('user_shell')
-        if cfg.dev_shell: used_names.append('dev_shell')
+        if cfg.user_shell: used_proc_names.append('user_shell')
+        if cfg.dev_shell: used_proc_names.append('dev_shell')
         for sublyr_cfg in (cfg.sublayers or [] ):
             _recr(sublyr_cfg)
     _recr(layer1_cfg)
-    wdg_target_procs = [x for x in used_names if x != 'mainApp'] # 不看主app, 只看它所属层
+    wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
     si.expected_alive_procs = wdg_target_procs
+    si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
 
 def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处理的层， parent_cfg : 其父层
     # 计算本层深度
@@ -401,6 +405,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
     if bool(cfg.fs) != bool(cfg.newrootfs):
         raise_exit(f"层{cfg.layer_name}: fs和newrootfs若有则应该两个都有")
+    if cfg.isMainLyr :
+        CHK( cfg.unshare_pid , f'主层 {cfg.layer_name} 要求启用unshare_pid=True')
 
     # 检查fs条目
     for fsItem in (cfg.fs or []):
@@ -568,7 +574,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     global OG
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
 
-    sbxinfo = d()
+    si = d()
 
     # 从外部(linux host)启动沙箱的原本用户信息
     uid = os.getuid()
@@ -578,13 +584,13 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     HOME = f'/home/{username}' if uid>0 else '/root'
     outest_pid = os.getpid()
 
-    sbxinfo.update( { k: v for k, v in locals().items() if k in
+    si.update( { k: v for k, v in locals().items() if k in
         ['uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid', ]
     } )
-    sbxinfo.startscript_on_host = scriptfilepath
-    sbxinfo.startdir_on_host = scriptdirpath
+    si.startscript_on_host = scriptfilepath
+    si.startdir_on_host = scriptdirpath
 
-    uc = userconfig(sbxinfo)
+    uc = userconfig(si)
 
     # 沙箱名。不是子容器层名
     CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
@@ -595,12 +601,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     if (sharedir_prefix := uc.sharedir_prefix):
         CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
         sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
-        sbxinfo.sharedir_onhost = sharedir_onhost
+        si.sharedir_onhost = sharedir_onhost
     else:
         sharedir_onhost = None
 
 
-    dyncfg = gen_dynamic_cfg(sbxinfo, uc)
+    dyncfg = gen_dynamic_cfg(si, uc)
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
@@ -617,19 +623,19 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CG_SBX = f'{CG_TSBXS}/{instance_name}'
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
-    sbxinfo.update( { k: v for k, v in locals().items() if k in
+    si.update( { k: v for k, v in locals().items() if k in
         ['sandbox_name', 'instance_name', 'outest_sbxdir',
          'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
     } )
-    sbxinfo.pythonbin = sys.executable
+    si.pythonbin = sys.executable
 
-    layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
-    start_lyrs_recursive_jobs(sbxinfo, layer1_cfg)
+    layer1_cfg = gen_layer1(si, uc, dyncfg)
+    start_lyrs_recursive_jobs(si, layer1_cfg)
 
     print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     print(f"cgroup：{CG_SBX}")
-    print(f"沙箱看门狗要轮询的进程：{sbxinfo.expected_alive_procs}")
+    print(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
 
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX, sharedir_onhost) ) # 顶层父进程注册清理函数
@@ -651,35 +657,47 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
 
-    sbxinfo.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+    si.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
 
-    def create_file_for_sbx_fd(filepath, open_flag, filemode):
+    def make_file_get_fd(filepath, open_flag, filemode):
         fd = os.open(filepath, open_flag, filemode)
-        new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
-        fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
+        set_fd_keep_on_exec(fd, True)
         return fd
 
-    sbxinfo.fd = d()
-    sbxinfo.fd.update( d(
+    si.file_fds = d()
+    si.file_fds.update( d(
         # 沙箱内只fd写，最外层用路径来读
-        layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
+        layerslog_a = make_file_get_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
 
         # RDONLY是因为沙箱内只fd读，仅最外层用路径写
-        procs_alive = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        procs_histseen = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        procs_wdgsee = create_file_for_sbx_fd(f'{outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_alive = make_file_get_fd(f'{outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_histseen = make_file_get_fd(f'{outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        procs_wdgsee = make_file_get_fd(f'{outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
     ) )
 
-    sbxinfo.logs_fd = d()
-    for pn in sbxinfo.expected_alive_procs:
+    si.subp_log_fds = d()
+    for pn in si.expected_alive_procs:
         if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
-            sbxinfo.logs_fd[pn] = create_file_for_sbx_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+            si.subp_log_fds[pn] = make_file_get_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
-    make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
+    def create_socketpair_fds():
+        a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        fd_chd = a.detach() ; set_fd_keep_on_exec(fd_chd, True)
+        fd_pa  = b.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
+        return d(pa=fd_pa, chd=fd_chd)
+    si.oSkt_fds = d()
+    for lyr in si.expected_alive_layers:
+        si.oSkt_fds [lyr] = create_socketpair_fds()
+
+    make_mnt_fill_sbxdir(si, layer1_cfg, call_at_begin=True)
 
     OG = d(dyncfg=dyncfg, uc=uc)
-    return sbxinfo, layer1_cfg
+    return si, layer1_cfg
 
+def set_fd_keep_on_exec(fd:int, keep:bool):
+    if keep: new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
+    else:    new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC
+    fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
 
 
 class OutestProcsMonitor:
@@ -821,11 +839,11 @@ def read_all_from_fd_then_jsonloads(fd) -> list|dict :
 
 def read_proclist() -> list:
     if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
-    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_alive)
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_alive)
 
 def read_recogprocs() -> dict:
     if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
-    else:   return read_all_from_fd_then_jsonloads(si.fd.procs_wdgsee)
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
 
 
 def get_nstypes(nsdir_path):
@@ -841,13 +859,14 @@ class pipe_outest_exit_layer1:
     def init(cls):
         cls._read_fd, cls._write_fd = os.pipe()
         fcntl.fcntl(cls._read_fd, fcntl.F_SETFL, fcntl.fcntl(cls._read_fd, fcntl.F_GETFL) | os.O_NONBLOCK) # 设置读为非阻塞
+        set_fd_keep_on_exec(cls._read_fd, False) # exec都不保留（但fork会保留)
+        set_fd_keep_on_exec(cls._write_fd, False)
     @classmethod
     def i_am_outest(cls):
         os.close(cls._read_fd); cls._read_fd = None
     @classmethod
     def i_am_layer1(cls):
         os.close(cls._write_fd); cls._write_fd = None
-        fcntl.fcntl(cls._read_fd, fcntl.F_SETFD, fcntl.fcntl(cls._read_fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC)
     @classmethod
     def set_should_exit(cls):
         if cls._write_fd is None: return False
@@ -888,6 +907,10 @@ def main():
         tlcfg.sbxdir_path0 = padir(lyrcfg_file)
         si = d(json.loads(open(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read()))
 
+    if is_outest:
+        OG.user_cli_argv = sys.argv[1:]
+        if OG.user_cli_argv: log(f'启动新沙箱，要传给app的参数: {OG.user_cli_argv}')
+
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
     set_ps1('notready')
 
@@ -917,19 +940,17 @@ def main():
             log('更新环境变量' , envg)
             os.environ.update(envg)
 
-    for wait_task in (tlcfg.start_after or [] ):
-        if wait_task.waittype == 'socket-listened':
-            while not is_unix_socket_listened(wait_task.path):
-                time.sleep(0.1)
-                pass
-
-    set_ps1('beforeUnshare')
-
     if is_outest:
         mkdirp(si.CG_SBX)
         Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
     if is_outest:
         Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
+
+    for wait_task in (tlcfg.start_after or [] ):
+        if wait_task.waittype == 'socket-listened':
+            while not is_unix_socket_listened(wait_task.path):
+                time.sleep(0.1)
+                pass
 
     # log(f"执行unshare")
     # TODO 用个数组储存 pid time 是fork前做，其他main2做
@@ -979,6 +1000,8 @@ def main():
 class TmpSocketPair:
     def __init__(self):
         self._skt_chd, self._skt_pa = socket.socketpair()
+        set_fd_keep_on_exec(self._skt_chd.fileno(), False)
+        set_fd_keep_on_exec(self._skt_pa.fileno(), False)
         self.I_AM_PA = False ; self.I_AM_CHD = False
     def i_am_pa(self):
         CHK(not self.I_AM_CHD, "已设置为是fork的子进程端")
@@ -1100,6 +1123,9 @@ def main2(skp_lyfk):
         skp_lyfk.chd_recv(1, 2, BS.SetYouUidUserDone.value)
         log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
+    # 关闭临时socket
+    skp_lyfk.close()# NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
+
     # 清理函数、信号处理注册
     if tlcfg.unshare_pid:
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
@@ -1109,22 +1135,11 @@ def main2(skp_lyfk):
     set_ps1('ready')
 
     #--- 创建 subp -----------------------------------
+    # NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
+
     inprepare_children = []
 
-    # 以subp启动user_shell / dev_shell
-    if tlcfg.user_shell or tlcfg.dev_shell:
-        pid, pipe = layer_run_subp( ['/bin/bash'] ,
-                        **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
-                        **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
-        )
-        inprepare_children.append((pid, pipe))
-
-    # 以subp启动普通辅助app，(但不放行)
-    for subpItem in (tlcfg.subprocs or [] ) :
-        pid, pipe = layer_run_subp (**subpItem)
-        inprepare_children.append((pid, pipe))
-
-    # 以subp启动子层（直接放行）
+    # 以subp启动子层
     for sublyr_cfg in (tlcfg.sublayers or []):
         pid, pipe = layer_run_subp([
                         si.pythonbin ,
@@ -1137,13 +1152,28 @@ def main2(skp_lyfk):
         )
         inprepare_children.append((pid, pipe))
 
+    # 以subp启动user_shell / dev_shell
+    if tlcfg.user_shell or tlcfg.dev_shell:
+        if tlcfg.user_shell: set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
+        pid, pipe = layer_run_subp( ['/bin/bash'] ,
+                        **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
+                        **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
+        )
+        inprepare_children.append((pid, pipe))
+
+    # 以subp启动普通辅助app
+    set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
+    for subpItem in (tlcfg.subprocs or [] ) :
+        pid, pipe = layer_run_subp (**subpItem)
+        inprepare_children.append((pid, pipe))
+
     #-------------------------------------------
 
     # 向最外层发送“本层已boot”，
-    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree)
-    skp_lyfk.close()
+    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree, **(d(isMainLyr=True) if tlcfg.isMainLyr else {}) )
 
-    # 关闭重要fd
+
+    # 关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd)
     if not tlcfg.unshare_pid:
         close_important_fds()
 
@@ -1211,15 +1241,15 @@ def layer_run_subp(cmdvec, subp_name=None,
 
         # === 去掉 stdin/out/err 中不需要的 # NOTE 下面无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
-        if subp_name in dict.keys(si.logs_fd):
+        if subp_name in dict.keys(si.subp_log_fds):
             os.dup2(devnull, 0)
-            os.dup2(si.logs_fd[subp_name], 1)
-            os.dup2(si.logs_fd[subp_name], 2)
+            os.dup2(si.subp_log_fds[subp_name], 1)
+            os.dup2(si.subp_log_fds[subp_name], 2)
         os.close(devnull)
         # NOTE 无法再 log 或 print NOTE
 
         # === 去掉沙箱级别的fd  # NOTE 下面无法再 wlog
-        if not subLayer:
+        if not (subLayer or dev_shell):
             close_important_fds()
         # NOTE 无法再 wlog NOTE
 
@@ -1238,13 +1268,28 @@ def layer_run_subp(cmdvec, subp_name=None,
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
-def close_important_fds():
+def get_important_fds():
+    return list(si.file_fds.values()) \
+            + list(si.subp_log_fds.values()) \
+            + [fd for fd_pair in dict.values(si.oSkt_fds) for fd in dict.values(fd_pair)]
+
+def set_important_fds_cloexec():
+    fds_to_cloexec = get_important_fds()
     for fd in os.listdir('/proc/self/fd') :
-        if int(fd) in list(si.fd.values()) + list(si.logs_fd.values()):
+        if int(fd) in fds_to_cloexec: set_fd_keep_on_exec(int(fd), False)
+
+
+def close_important_fds():
+    fds_to_close = get_important_fds()
+    # log(f'要关闭fd： {fds_to_close}')
+    for fd in os.listdir('/proc/self/fd') :
+        if int(fd) in fds_to_close:
             try:
                 os.close(int(fd))
             except OSError as e:
-                if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
+                # 本可忽略 9 错误（ EBADF 错误表示可能已关闭 （Bad file descriptor），但现在不忽略
+                if e.errno != 9:  raise_exit(f'{fd=}已经被提前关闭过，与整体设计不符')
+                else: raise
 
 
 
@@ -1327,11 +1372,11 @@ def set_ps1(status):
     os.environ['PS1'] = ps1
 
 def wlog(event, me_proc_info=False, **kw_args) :
-    if not (si and si.fd.layerslog_a): return False
+    if not (si and si.file_fds.layerslog_a): return False
     kw_args = d(kw_args)
     if kw_args.errmsg: event = 'error' ; kw_args.errmsg=str(kw_args.errmsg)
     logObj = d(
-        logger = tlcfg.layer_name if tlcfg else '',
+        logger = loghead or tlcfg.layer_name if tlcfg else '',
         event = event,
         **kw_args
     )
@@ -1341,12 +1386,12 @@ def wlog(event, me_proc_info=False, **kw_args) :
         logObj.start_tick=get_start_tick('/proc/self/stat')
         logObj.ns = get_nstypes(f'/proc/self/ns')
     try:
-        fcntl.flock(si.fd.layerslog_a, fcntl.LOCK_EX)
-        os.write(si.fd.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
+        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_EX)
+        os.write(si.file_fds.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
     except Exception as err:
         traceback.print_exc(file=sys.stderr)
     finally:
-        fcntl.flock(si.fd.layerslog_a, fcntl.LOCK_UN)
+        fcntl.flock(si.file_fds.layerslog_a, fcntl.LOCK_UN)
 
 
 def build_fs():
