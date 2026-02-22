@@ -103,6 +103,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     xephyr_extra_args = []
     weston_extra_args = []
     xwayland_extra_args = []
+    bridges = []
 
     mnts_gui = [
         *([
@@ -120,16 +121,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     ]
 
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
-        def is_XId_available(newXId):
-            if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
-            and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
-            and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
-            and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
-            and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
-                return True
-            else: return False
+
         if uc.newXId:
-            CHK( is_XId_available(uc.newXId), f"指定的显示编号 {uc.newXId=} 被占用")
             newXId = uc.newXId
         else:
             while (newXId := str(random.randrange(230, 980)) ) :
@@ -197,9 +190,17 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.machineid == 'zero':
         machineid = '00000000000000000000000000000000'
 
-    dyncfg = d({k: v for k, v in locals().items()
-            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'sharedir_onhost',
-                     'dbusproxy_argv' , 'mnts_dns']})
+    # bridge seefrom是从哪层可看见这个桥进程 seeto是通过这个桥进程看到哪个层的fs
+    if uc.gui in ['weston', 'xephyr']:
+        bItem = d(seefrom='semitruCmpannLyr', seeto='mainLyr')
+        bItem.create_links = []
+        bItem.create_links.append(f'/tmp/.X11-unix/X{newXId}') if uc.gui in ['weston','xephyr'] else None
+        bridges.append(bItem)
+
+    dyncfg = d({k: v for k, v in locals().items() if k in [
+        'paths_to_mask', 'machineid', 'sharedir_onhost', 'dbusproxy_argv' , 'mnts_dns', 'bridges',
+        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args',
+    ]})
     return dyncfg
 
 # layer1 产生。 所有的layer_cfg都在 layer1 下
@@ -261,6 +262,7 @@ def gen_layer2c(si, uc, dyncfg):
             d(many_op='dup-rootfs', destbase='/'),
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
+        is_semitruCmpannLyr=True, # 设layer2c（而非2）为semitruCmpannLyr,因为2c才有unshare_pid
         subprocs=[
             d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac",  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
             d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
@@ -397,7 +399,7 @@ def gen_layer4c(si, uc, dyncfg):
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
-        isMainLyr=True,  # 我是主app所在层
+        is_mainlyr=True,  # 我是主app所在层
         unshare_pid=True, unshare_mnt=True,
 
         # uid 变回 1000
@@ -414,7 +416,7 @@ def gen_layer4(si, uc, dyncfg):
     )
 
 
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
     scriptfilepath = os.path.abspath(__file__)
@@ -502,7 +504,21 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     layer1_cfg = gen_layer1(si, uc, dyncfg)
     start_lyrs_recursive_jobs(si, layer1_cfg)
 
-
+    bridges = []
+    for bItem in (dyncfg.bridges or []):
+        def get_real_layername(name_in):
+            if name_in.startswith('layer'): return name_in
+            else:
+                if si.specialLyrs[name_in]: return si.specialLyrs[name_in]
+        real_seefrom = get_real_layername(bItem.seefrom)
+        real_seeto   = get_real_layername(bItem.seeto)
+        if not (real_seefrom and real_seeto):
+            log_warn(f'根据bridge条目，未找到 {bItem} 所指示的层，忽略条目')
+            continue
+        dcp_bItem = copy.deepcopy(bItem)
+        dcp_bItem.update( d(seefrom=real_seefrom , seeto=real_seeto) )
+        bridges.append(dcp_bItem)
+    si.bridges = bridges
 
 
     OG = d(dyncfg=dyncfg, uc=uc)
@@ -556,8 +572,11 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
     if bool(cfg.fs) != bool(cfg.newrootfs):
         raise_exit(f"层{cfg.layer_name}: fs和newrootfs若有则应该两个都有")
-    if cfg.isMainLyr :
+    if cfg.is_mainlyr :
         CHK( cfg.unshare_pid , f'主层 {cfg.layer_name} 要求启用unshare_pid=True')
+    if cfg.is_semitruCmpannLyr :
+        CHK( cfg.unshare_pid , f'半信任辅助进程层 {cfg.layer_name} 要求启用unshare_pid=True')
+
 
     # 检查fs条目
     for fsItem in (cfg.fs or []):
@@ -626,14 +645,19 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 def recursive_valid_lyrs(si, layer1_cfg):
     used_proc_names = []
     si.all_layers = []
+    si.specialLyrs = d()
     def _recr(cfg):
         nonlocal used_proc_names
         CHK( cfg.layer_name not in used_proc_names, f"名称 {cfg.layer_name} 有重复")
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
-        if cfg.isMainLyr:
-            si.mainLyr = cfg.layer_name
+        if cfg.is_mainlyr:
+            CHK(not si.specialLyrs.mainLyr, '有重复的mainLyr')
+            si.specialLyrs.mainLyr = cfg.layer_name
+        if cfg.is_semitruCmpannLyr:
+            CHK(not si.specialLyrs.semitruCmpannLyr, '有重复的semitruCmpannLyr')
+            si.specialLyrs.semitruCmpannLyr = cfg.layer_name
         for subpItem in (cfg.subprocs or [] ):
             CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
             CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
@@ -650,6 +674,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
     wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
     si.expected_alive_procs = wdg_target_procs
     si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
+    CHK(si.specialLyrs.mainLyr, '未找到mainLyr')
 
 def recr_rm_empty_lyr(si, cfg):
     def _recr(si, cfg):
@@ -671,7 +696,7 @@ def recr_rm_empty_lyr(si, cfg):
         for sublyr_cfg in (cfg.sublayers or [] ):
             if _recr(si, sublyr_cfg):
                 have_rmed = True
-        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell or cfg.isMainLyr):
+        if not (cfg.sublayers or cfg.subprocs or cfg.daemon_tasks or cfg.user_shell or cfg.dev_shell or cfg.is_mainlyr):
             # print('设置' , cfg.layer_name, '为disable')
             cfg.disabled = True
             have_rmed = True
@@ -873,6 +898,7 @@ def main(lyrcfg_in):
             except Exception as err:
                 log(f"查找运行中的实例的过程中出错，认为没有正在运行的实例 （ {err} ）")
         log('---------------------')
+        CHK( is_XId_available(si.newXId), f"准备要用的显示编号 {si.newXId=} 被占用")
         log(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
         log(f"cgroup：{si.CG_SBX}")
         log(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
@@ -1031,7 +1057,10 @@ def main2(skp_lyfk):
     #-------------------------------------------
 
     # 向最外层发送“本层已boot”，
-    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree, **(d(isMainLyr=True) if tlcfg.isMainLyr else {}) )
+    wlog('layer_booted', ready_proc_name=tlcfg.layer_name, cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') , pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
+         **(d(is_mainlyr=True) if tlcfg.is_mainlyr else {}),
+         **(d(is_semitruCmpannLyr=True) if tlcfg.is_semitruCmpannLyr else {}),
+    )
 
 
     # 关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd)
@@ -1571,7 +1600,7 @@ class OutsideServ():
                 cls.response_close(connItem, message=errmsg)
                 return False
         if msgObj.run_in_mainLyr_cmdvec:
-            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
+            OutestProcsMonitor.tell_lyr_runsubp(si.specialLyrs.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
             cls.response_close(connItem, reuseSucceeded=True, message=f'mainApp_{connItem.index}')
             return True
     @classmethod
@@ -1611,7 +1640,7 @@ class OutestProcsMonitor:
         cls.oPaSkts = d()
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
-        cls.tell_lyr_runsubp(si.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        cls.tell_lyr_runsubp(si.specialLyrs.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
         OutsideServ.init()
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
@@ -1716,6 +1745,54 @@ class OutestProcsMonitor:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
             cls.symlink_into_sbxdir(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
             cleanup_symlinks_to_rm.append(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+        for bItem in (si.bridges or []):
+            cls.check_bridges_condition_and_do(proc_name, bItem)
+    @classmethod
+    def check_bridges_condition_and_do(cls, proc_name, bItem):
+        seefrom = bItem.seefrom
+        seeto   = bItem.seeto
+        condition = [seefrom, seeto]
+        if proc_name in condition:
+            if set(condition).issubset(set(dict.keys( cls.procs_histseen ))):
+                log(f'创建桥 {bItem}')
+                seefrom_pid = cls.procs_histseen[seefrom].NSpid[0]
+                seeto_pid   = cls.procs_histseen[seeto].NSpid[0]
+                pidfd_seefrom = os.pidfd_open(seefrom_pid)
+                pidfd_seeto   = os.pidfd_open(seeto_pid)
+                bridge_name = f'bridge_<{seefrom.removeprefix("layer")}>_to_<{seeto.removeprefix("layer")}>'
+                PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name )
+                if PID1 == 0: # 第一个子进程
+                    set_important_fds_cloexec()
+                    # TODO 判断其他ns种类，如果不同，也要setns过去
+                    os.setns(pidfd_seefrom, unshrflg(d(pid=1)))
+
+                    PID2, _ = fork(loghead=f'{loghead} F')
+                    if PID2 == 0 : # 第二个子进程（孙进程)
+                        mypid = os.getpid()
+
+                        wlog('subp_start', ready_proc_name=bridge_name ,  self_see_pid=mypid, cmdvec=['sleep', 'infinity'], pidns_depth=2, pidns_tree=['layer1','layer2c']) # TODO 有些参数现在是硬编码的,如果改了其他地方，这里会不准
+
+                        os.setns(pidfd_seefrom, unshrflg(d(mnt=1))) # 先改一次mnt ns ， 等下还要改
+                        for lkItem in (bItem.create_links or []) :
+                            path = napath(lkItem)
+                            symlink(f'/proc/{mypid}/root/{path.lstrip('/')}', path)
+
+                        os.setns(pidfd_seeto, unshrflg(d(mnt=1)))
+                        os.setns(pidfd_seefrom, unshrflg(d(user=1)))
+
+                        drop_caps(no_check_after_dropcap=True)
+                        log('execvp sleep infinity')
+                        os.execvp('sleep', ['sleep', 'infinity'])
+                        log_warn('exec sleep 未成功')
+                        os._exit(1)
+                    # 第一个子进程
+                    # log('第一个子进程退出')
+                    os._exit(0)
+                # 原最外层进程
+                # log('最外层完成桥的创建')
+                os.close(pidfd_seefrom)
+                os.close(pidfd_seeto)
+
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
@@ -1821,10 +1898,10 @@ def daemon_pidnsleader():
             elif msg_from_outest.action == 'run_subp':
                 layer_run_subp(no_wait=True,  **msg_from_outest.subpItem )
 
-                if tlcfg.isMainLyr: # 默认认为收到过的第一个run_subp指令就是mainApp
+                if tlcfg.is_mainlyr: # 默认认为收到过的第一个run_subp指令就是mainApp
                     PidnsleaderListener.MainApp_Ever_Started = True
 
-        if tlcfg.isMainLyr and PidnsleaderListener.MainApp_Ever_Started :
+        if tlcfg.is_mainlyr and PidnsleaderListener.MainApp_Ever_Started :
             if not si.idleKeepSbxTime:
                 if not exist_childtree(): sys.exit()
             else: # si.idleKeepSbxTime > 0:
@@ -1979,7 +2056,7 @@ def _signals_handler(signum, is_outest=False):
                 pid, status = os.waitpid(-1, os.WNOHANG)
                 if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                if not tlcfg.isMainLyr or not si.idleKeepSbxTime: sig_say_exit = True ;
+                if not tlcfg.is_mainlyr or not si.idleKeepSbxTime: sig_say_exit = True ;
                 break
 
 
@@ -2391,6 +2468,16 @@ def is_socket(path):
     return not Path(path).is_symlink() and Path(path).is_socket()
 def is_ro(path):
     return os.statvfs(path).f_flag & MS.RDONLY
+
+def is_XId_available(newXId):
+    if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
+    and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
+    and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
+    and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
+    and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
+        return True
+    else: return False
+
 
 def is_unix_socket_listened(sock_path):
     if not os.path.exists(sock_path):
