@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno
 from pathlib import Path
 from glob import glob
 
@@ -520,14 +520,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         else :
             break
 
-    CG_ROOT = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
-    CG_BASE = f'{CG_ROOT}/tsbxs.slice'
-    CG_DIR = f'{CG_BASE}/{instance_name}'
-    CHK( os.access(CG_ROOT, os.W_OK), f"将 {CG_ROOT} 作为cgroup根 失败，目录 不存在 或 不可写")
+    CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
+    CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
+    CG_SBX = f'{CG_TSBXS}/{instance_name}'
+    CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
     sbxinfo.update( { k: v for k, v in locals().items() if k in
         ['sandbox_name', 'instance_name', 'outest_sbxdir',
-         'CG_ROOT', 'CG_BASE', 'CG_DIR']
+         'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
     } )
     sbxinfo.pythonbin = sys.executable
 
@@ -536,13 +536,13 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
-    print(f"cgroup：{CG_DIR}")
+    print(f"cgroup：{CG_SBX}")
 
-    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_DIR) ) # 顶层父进程注册清理函数
+    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX) ) # 顶层父进程注册清理函数
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     os.chdir(outest_sbxdir)
-    mkdirp(CG_BASE)
+    mkdirp(CG_TSBXS)
 
     with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
         f.write(str(outest_pid))
