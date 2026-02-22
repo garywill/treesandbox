@@ -1497,7 +1497,7 @@ def set_ps1(status):
     os.environ['PS1'] = ps1
 
 def wlog(event, me_proc_info=False, **kw_args) :
-    if not (si and si.file_fds.layerslog_a): return False
+    if not (si and si.file_fds and si.file_fds.layerslog_a): return False
     kw_args = d(kw_args)
     if kw_args.errmsg: event = 'error' ; kw_args.errmsg=str(kw_args.errmsg)
     logObj = d(
