@@ -35,9 +35,22 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.see_real_hw=True # 看见真实/dev和/sys
 
     uc.user_mnts = [
+        # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
         # d(batch_plan='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
-        # d(plan='robind', src=f'{si.startdir_on_host}', SDS=1),
+
+        # 用当前目录下的 fakehome 目录，作为沙箱内 HOME 的永久储存（否则tmpfs作HOME）
         # d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME),
+
+        # HOME/bin
+        d(plan='robind', src=f'{si.HOME}/bin', SDS=1),
+
+        # HOME/.local/{bin,lib}
+        d(plan='robind', src=f'{si.HOME}/.local/bin', SDS=1),
+        d(plan='robind', src=f'{si.HOME}/.local/lib', SDS=1),
+
+        # /home/linuxbrew
+        d(plan='robind', src='/home/linuxbrew', SDS=1),
+
     ]
 
     # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
@@ -54,6 +67,7 @@ def userconfig(si): # 这个只在顶层解析一次
     )
 
     # uc.pulseaudio=True,
+    # uc.cups=True, # CUPS打印服务 NOTE 注意 CUPS-PDF 沙箱内的输出位置是否已暴露给主机
 
     # uc.allow_opt=True # 允许访问真实/opt
     uc.mask_xdg_opens=True # 容器内部不能使用xdg-open, firefox, chromium 等
@@ -177,6 +191,7 @@ def gen_layer3(si, uc, dyncfg):
             d(batch_plan='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
 
             d(plan='robind', src=f'/run/user/{si.uid}/pulse/native', SDS=1) if uc.pulseaudio else None,
+            d(plan='robind', src=rslvy('/var/run/cups/cups.sock'), SDS=1) if uc.cups else None,
 
             *([
             d(plan='robind', dest='/dev', src='/dev'),
@@ -1679,7 +1694,10 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
             # 需要 tmpfs 的可写路径（容器内部用）
             paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
                 '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
-                '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ]
+                '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ,
+                f'{si.HOME}/.local/share/RecentDocuments',
+                f'{si.HOME}/.local/share/recently-used.xbel',
+                f'{si.HOME}/.local/share/Trash', ]
             for p in paths_to_tmpfs:
                 a( d( plan='tmpfs', dest=p ) )
             a( d( plan='symlink', dest='/var/run', linkto='/run' ) )
