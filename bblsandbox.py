@@ -88,7 +88,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                         unshare_chdir=True, # chdir()不影响其他
 
                         # uid 变回 1000
-                        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+                        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
                         newrootfs=True,
                         fs=[
@@ -207,7 +207,7 @@ def gen_layer3(si, uc, dyncfg):
                 unshare_chdir=True, # chdir()不影响其他
 
                 # uid 变回 1000
-                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
             ),
             d( # 主 用户app 在这里跑
                 layer_name='layer4', # 默认模板的 layer_name 不要修改
@@ -215,7 +215,7 @@ def gen_layer3(si, uc, dyncfg):
                 unshare_chdir=True, # chdir()不影响其他
 
                 # uid 变回 1000
-                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n', drop_caps=True,
+                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
                 user_shell=True,
             ),
@@ -314,9 +314,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         if fsItem.destbase:
             fsItem.destbase = napath(fsItem.destbase)
 
-    if len(cfg.dropcap_then_cmds or [])>0 and not cfg.drop_caps:
-        raise_exit(f"层{cfg.layer_name}设置了dropcap_then_cmds但没有启用drop_caps")
-
     if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
         if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 batch_plan = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
@@ -346,7 +343,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
     if cfg.layer_name in ['layer2a', 'layer4a', 'layer4']:
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
-        CHK( cfg.drop_caps, f"{cfg.layer_name}未启用drop_caps=True（要求启用）")
 
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
@@ -644,11 +640,6 @@ def main2(si, thislyr_cfg):
 
     set_ps1(si, thislyr_cfg, 'afterChroot')
 
-    if thislyr_cfg.drop_caps:
-        drop_caps()
-
-    set_ps1(si, thislyr_cfg, 'afterDropCaps')
-
     # 如果unshare_pid,则我是init进程(pid=1)
     #   处理各种SIGNAL
     if thislyr_cfg.unshare_pid:
@@ -657,42 +648,37 @@ def main2(si, thislyr_cfg):
         for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
             signal.signal(sig, signals_handler)
 
-    if thislyr_cfg.user_shell:
-        prc = subprocess.run(['/bin/bash', '--norc' ],
-                        stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr
-                        )
-        sys.exit(prc.returncode)
-        # os.execv('/bin/bash', ['/bin/bash', '--norc'])
-    # os.exec*成功后不回来，替换了进程
-        # l/v： 可变参 或 数组 来指定参数
-        # p : 指定path
-        # e : 指定环境变量，不继承父的环境。必须完整路径
+    set_ps1(si, thislyr_cfg, 'afterRegSigs')
 
-    direct_child_procs = [] # 记录下直接创建的子进程，但可能用不上
+    direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
+
+    if thislyr_cfg.user_shell:
+        pid = layer_run_subp ( thislyr_cfg, ['/bin/bash', '--norc' ] )
+        direct_child_pids.append(pid)
 
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
-        prc = subprocess.Popen(cmdItem.cmdlist ,
-            stdin =sys.stdin  if cmdItem.stdin  else subprocess.DEVNULL,
-            stdout=sys.stdout if cmdItem.stdout else subprocess.DEVNULL,
-            stderr=sys.stderr if cmdItem.stderr else subprocess.DEVNULL,
-        )
-        direct_child_procs.append(prc)
+        pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdlist ,
+                stdin =cmdItem.stdin , stdout=cmdItem.stdout, stderr=cmdItem.stderr,
+                child_no_caps=True,
+            )
+        direct_child_pids.append(pid)
 
     sublayers = thislyr_cfg.sublayers or []
     log(f"本层将生成 {len(sublayers)} 个子层")
     for sublyr_cfg in (sublayers or []):
         log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
-        prc = subprocess.Popen([
+        pid = layer_run_subp(thislyr_cfg, [
                 si.pythonbin ,
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                 # 因此用本层的path1
                 f'{thislyr_cfg.sbxdir_path1}/cfg/bootsbx.py',
                 '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/cfg/lyr_cfg.{sublyr_cfg.layer_name}.json',
             ],
-            stdin=sys.stdin,
-            stdout=sys.stdout, stderr=sys.stderr
+            stdin=True, stdout=True, stderr=True,
+            child_no_caps = False,
         )
-        direct_child_procs.append(prc)
+        direct_child_pids.append(pid)
+
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   如果有子进程，则等待，否则就退出
@@ -709,6 +695,42 @@ def main2(si, thislyr_cfg):
                     sys.exit()
                 await asyncio.sleep(0.3)
         asyncio.run(loop())
+    # 如果不是 unshare_pid 的 ,这里直接结束退出
+
+def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, keepfds=False):
+    pid = os.fork()
+    if pid == 0:
+        if not stdin:
+            devnull = os.open('/dev/null', os.O_RDONLY)
+            os.dup2(devnull, 0) # 将 stdin (fd 0) 重定向到 /dev/null
+            os.close(devnull)
+        # TODO NOTE stdout stderr = false 未实现
+        # TODO NOTE keepfds=False 未实现
+        if thislyr_cfg.unshare_pid:
+            os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS=unshare_mnt
+            def maskpath(path):
+                if not Path(path).is_mount():
+                    optn='mode=0000'
+                    mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc, optn)
+                    mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc|MS.REMOUNT, optn)
+            maskpath('/proc/1/fd')
+            # TODO 若unshare_pid 则 landlock 禁 /proc/1/fd /proc/1/mem /proc/1/environ /proc/1/maps  /proc/1/smaps /proc/1/task/ /proc/1/wchan, /proc/1/stack
+            # /proc/1/attr/ /proc/1/autogroup /proc/1/oom_score_adj /proc/1/cwd, /proc/1/root
+
+        if child_no_caps:
+            drop_caps()
+        log('准备启动（不降权）:' if not child_no_caps else '准备降权启动:' , cmdvec)
+        os.execvp(cmdvec[0], cmdvec)
+        sys.exit(20) # 正常不会到这里
+    return pid
+        # sys.exit(0)
+        # os.execv('/bin/bash', ['/bin/bash', '--norc'])
+    # os.exec*成功后不回来，替换了进程
+        # l/v： 可变参 或 数组 来指定参数
+        # p : 指定path
+        # e : 指定环境变量，不继承父的环境。必须完整路径
+
+
 
 def cleanup_pidnsleader():
     if os.getpid() == 1:
@@ -1197,7 +1219,7 @@ def drop_caps():
     BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
 
     show_clear_result = False
-    log('降权前', get_caps_dict())
+    log('降权前', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
     log('清除中', get_caps_dict()) if show_clear_result else None
     amb_clear(doprint=show_clear_result)
@@ -1207,7 +1229,7 @@ def drop_caps():
     bnd_clear(BND_MAX,  doprint=show_clear_result)
     log('清除中', get_caps_dict()) if show_clear_result else None
     capset_clear(eff=True, prm=True, inh=True,  doprint=show_clear_result)
-    log('降权后', get_caps_dict())
+    log('降权后', get_caps_dict()) if show_clear_result else None
 
     # ------验证------------
 
