@@ -768,7 +768,13 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         child_sock.send(b'x') # 给父进程发送信号
         CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
         child_sock.recv(1) ; child_sock.close()
-        wlog('subp_starting', logNs=True, kvpairs=d(self_see_pid=os.getpid(), subp_cmdvec=cmdvec) )
+        wlog('subp_starting', logNs=True,
+            kvpairs=d(
+                self_see_pid=os.getpid(),
+                start_tick=open('/proc/self/stat','r').read().split(') ')[-1].split(' ')[22-1-2],  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
+                subp_cmdvec=cmdvec,
+            )
+        )
         # 关闭3以上的fd
         if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
             for fd in os.listdir('/proc/self/fd') :
