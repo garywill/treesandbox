@@ -302,24 +302,26 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
 def recr_rm_empty_lyr(si, cfg):
     def _recr(si, cfg):
+        # print(cfg.layer_name)
         have_rmed = False
-        cnt_cmds = 0
-        cnt_sl = 0
-        if cfg.subprocs :
-            cnt_cmds = len(cfg.subprocs)
-            cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
-            if cnt_cmds != len(cfg.subprocs) :
+
+        cnt_cmds_0 = len(cfg.subprocs or [] )
+        cnt_sl_0 = len(cfg.sublayers or [] )
+        if cfg.subprocs : cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
+        if cfg.sublayers : cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
+        cnt_cmds_1 = len(cfg.subprocs or [] )
+        cnt_sl_1 = len(cfg.sublayers or [] )
+
+        if cnt_cmds_0 != cnt_cmds_1 or cnt_sl_0 != cnt_sl_1:
+            have_rmed = True
+        for sublyr_cfg in (cfg.sublayers or [] ):
+            if _recr(si, sublyr_cfg):
                 have_rmed = True
-        if cfg.sublayers :
-            cnt_sl = len(cfg.sublayers)
-            cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
-            if cnt_sl != len(cfg.sublayers):
-                have_rmed = True
-            for sublyr_cfg in cfg.sublayers:
-                r = _recr(si, sublyr_cfg)
-                if r: have_rmed = True
         if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell ):
+            # print('设置' , cfg.layer_name, '为disable')
             cfg.disabled = True
+            have_rmed = True
+        # print(have_rmed)
         return have_rmed
     while _recr(si, cfg): pass
 
