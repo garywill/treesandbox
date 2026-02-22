@@ -1059,7 +1059,6 @@ def main2(skp_lyfk):
     # 向最外层发送“本层已boot”， ( NOTE 要在 layer_create_unpri_userns 之后)
     wlog('layer_booted', me_proc_info=True,
          ready_proc_name=tlcfg.layer_name,
-         cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') ,
          pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
          **(d(is_mainlyr=True) if tlcfg.is_mainlyr else {}),
          **(d(is_semitruCmpannLyr=True) if tlcfg.is_semitruCmpannLyr else {}),
@@ -1120,7 +1119,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         wait_for_startAfters(start_after)
 
         wlog('subp_start', me_proc_info=True,
-                cmdvec=cmdvec,
+                **( d(cmdvec=cmdvec) if cmdvec else {} ),
                 **( d(
                     ready_proc_name=subp_name,
                     pidns_depth=tlcfg.pidns_depth,
@@ -2026,6 +2025,7 @@ def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=N
     CHK(pid >= 0, 'fork失败')
     if pid == 0 : # 子进程
         unreg_cleanup_func()
+        unregister_sig_handlers()
         if close_fds: close_3ge_fds(keep_fds=close_keep_fds)
         if set_fds_CLOEXEC: set_3ge_fds_cloexec(keep_fds=CLOEXEC_keep_fds)
         if cut_stdin:
@@ -2118,6 +2118,11 @@ def cleanup_pidnsleader():
     else:
         os.kill(-1, signal.SIGKILL)
 
+
+def unregister_sig_handlers():
+    for signum in signal.valid_signals():
+        if signum not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(signum, signal.SIG_DFL)
 
 # NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
 SIGS_TO_IGN = []
@@ -2384,14 +2389,19 @@ def close_3ge_fds(keep_fds=[] ):
 
 def run_a_cmd(cmdv, print_output=False):
     prc = subprocess.Popen(cmdv,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, bufsize=1, universal_newlines=True
-                         )
+            preexec_fn=subprocess_preexec, close_fds=True, restore_signals=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            text=True, bufsize=1, universal_newlines=True,
+        )
     stdout_data, _ = prc.communicate()
     # prc.wait()
     if print_output: log(stdout_data)
     if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
 
+def subprocess_preexec():
+    unreg_cleanup_func()
+    unregister_sig_handlers()
+    set_pdeathsig(signal.SIGKILL)
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
@@ -2729,7 +2739,7 @@ def try_showerr(func):
 def raise_exit(err_msg, no_cleanup=False):
     print_stack()
     print(loghead + err_msg, file=sys.stderr)
-    wlog('error', errmsg=err_msg)
+    try_pass(lambda: wlog('error', errmsg=err_msg) )
     if not no_cleanup:
         sys.exit(1)
     else: os._exit(1)
