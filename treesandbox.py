@@ -581,7 +581,7 @@ def main():
     set_ps1( thislyr_cfg, 'beforeUnshare')
 
     # log(f"执行unshare")
-    unshare_flag = gen_unshareflag_by_lyrcfg(thislyr_cfg)
+    unshare_flag = gen_unshareflag(thislyr_cfg)
     os.unshare(unshare_flag)
 
     set_ps1( thislyr_cfg, 'afterUnshare')
@@ -1096,18 +1096,18 @@ def commit_remounts(remntPlans):
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
 
-def gen_unshareflag_by_lyrcfg(ly_cfg):
+def gen_unshareflag(cfg):
     unshare_flag = 0
-    unshare_flag |= os.CLONE_NEWPID if ly_cfg.unshare_pid else 0
-    unshare_flag |= os.CLONE_NEWNS if ly_cfg.unshare_mnt else 0
-    unshare_flag |= os.CLONE_NEWUSER if ly_cfg.unshare_user else 0
-    unshare_flag |= os.CLONE_FS if ly_cfg.unshare_chdir else 0
-    unshare_flag |= os.CLONE_FILES if ly_cfg.unshare_fd else 0
-    unshare_flag |= os.CLONE_NEWCGROUP if ly_cfg.unshare_cg else 0
-    unshare_flag |= os.CLONE_NEWIPC if ly_cfg.unshare_ipc else 0
-    unshare_flag |= os.CLONE_NEWTIME if ly_cfg.unshare_time else 0
-    unshare_flag |= os.CLONE_NEWUTS if ly_cfg.unshare_uts else 0
-    unshare_flag |= os.CLONE_NEWNET if ly_cfg.unshare_net else 0
+    unshare_flag |= os.CLONE_NEWPID if cfg.unshare_pid else 0
+    unshare_flag |= os.CLONE_NEWNS if cfg.unshare_mnt else 0
+    unshare_flag |= os.CLONE_NEWUSER if cfg.unshare_user else 0
+    unshare_flag |= os.CLONE_FS if cfg.unshare_chdir else 0
+    unshare_flag |= os.CLONE_FILES if cfg.unshare_fd else 0
+    unshare_flag |= os.CLONE_NEWCGROUP if cfg.unshare_cg else 0
+    unshare_flag |= os.CLONE_NEWIPC if cfg.unshare_ipc else 0
+    unshare_flag |= os.CLONE_NEWTIME if cfg.unshare_time else 0
+    unshare_flag |= os.CLONE_NEWUTS if cfg.unshare_uts else 0
+    unshare_flag |= os.CLONE_NEWNET if cfg.unshare_net else 0
     return unshare_flag
 
 def safe_copy_script(copy_target_path):
