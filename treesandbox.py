@@ -346,7 +346,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr is not None]
     if cfg.subprocs :
         cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
-        CHK( cfg.unshare_pid, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid")
+        CHK( cfg.unshare_pid and cfg.unshare_mnt, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid+unshare_mnt")
+    if cfg.subprocs and cfg.sublayers:
+        raise_exit("不能同时有 subprocs 和 sublayers")
     if cfg.envs_unset:
         cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
     if cfg.envset_grps:
@@ -848,8 +850,8 @@ def main2():
     if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
     if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
-    layer_set_status('forkedBeforeFs')
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
+    layer_set_status('forkedBeforeFs')
 
     # 如果设置了将要变根，现在先提前确定新根的位置
     if thislyr_cfg.newrootfs:
@@ -929,7 +931,6 @@ def main2():
     sublyrItem = thislyr_cfg.sublayers or []
     # log(f"本层将生成 {len(sublyrItem)} 个子层")
     for sublyr_cfg in (sublyrItem or []):
-        log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
         pid, pipe = layer_run_subp([
                         si.pythonbin ,
                         # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
@@ -937,7 +938,7 @@ def main2():
                         f'{thislyr_cfg.sbxdir_path1}/bootsbx.py',
                         '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
                     ],
-                    subLayer=True
+                    subLayer=sublyr_cfg.layer_name
         )
         inprepare_children.append((pid, pipe))
 
@@ -954,7 +955,6 @@ def main2():
             pipe.send(b'x') ; pipe.close() # 回信给子进程
         sys.exit()
 
-safe_mntns_fd = None
 def layer_run_subp(cmdvec,
 
                    mainApp=False, # mainApp==False则视为辅助进程
@@ -966,13 +966,16 @@ def layer_run_subp(cmdvec,
                    stdin=None, stdout=None, stderr=None,
                    workdir=None,  # None则使用本层设置的workdir
                    ): # TODO pty或setsid
-    global safe_mntns_fd
+    if not (subLayer or dev_shell or user_shell):
+        CHK( os.statvfs('/proc').f_flag&MS.RDONLY , "/proc 非只读, 请检查分层模板配置")
 
     if workdir is None and thislyr_cfg.workdir: workdir = thislyr_cfg.workdir
 
+    if dev_shell:
+        keep_caps=True
+
     if user_shell or dev_shell:
         stdin=True; stdout=True; stderr=True
-        if dev_shell: keep_caps=True
     else:
         if not workdir: workdir = si.HOME
         if mainApp is False:
@@ -996,42 +999,45 @@ def layer_run_subp(cmdvec,
         set_loghead(f"{loghead}subp: ")
         parent_sock.close() # 关闭不需要的 socket 端
 
-        if not subLayer:
-            if safe_mntns_fd is None :
-                makesure_proc_safe('/proc', allow_newmntns=True)
-            else:
-                log('加入已有的安全mnt ns为新进程的运行做准备')
-                os.setns(safe_mntns_fd, gen_unshareflag(d(unshare_mnt=True)))
-
         if not keep_caps:
             drop_caps()
 
         child_sock.send(b'x') # 给父进程发送信号
         CHK( select.select([child_sock], [], [], 5.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
-        child_sock.recv(1) ; child_sock.close()
+        CHK( child_sock.recv(1) == b'x', "收到的来自原进程的信号不符合预期")
+        child_sock.close()
 
         wlog('subp_start', me_proc_info=True , extra_kvs=d(subp_cmdvec=cmdvec) )
 
+        # === 去掉沙箱级别的fd  # NOTE 下面无法再 wlog
         if not (dev_shell or subLayer):
-            close_important_fds() # 关闭3以上的fd
+            close_important_fds()
+        # NOTE 无法再 wlog NOTE
 
-        log('准备带权启动:' if keep_caps or dev_shell else '准备启动（降权）:' , cmdvec)
+        if subLayer:    startTip = f'启动子层 {subLayer}'
+        elif dev_shell: startTip = '启动 dev_shell'
+        elif user_shell:startTip = '启动 user_shell'
+        elif keep_caps: startTip = '启动子进程（带权限）'
+        else:           startTip = '启动子进程'
+        log(f'{startTip} : ', cmdvec)
+
         if workdir: os.chdir(workdir)
+
         # === 去掉 stdin/out/err 中不需要的 # NOTE 下面无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
         if not stdin:  os.dup2(devnull, 0)
         if not stdout: os.dup2(devnull, 1)
         if not stderr: os.dup2(devnull, 2)
         os.close(devnull)
-        # NOTE 无法再 log 或 print
+        # NOTE 无法再 log 或 print NOTE
+
         os.execvp(cmdvec[0], cmdvec)
         raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
     else: # 原进程
         child_sock.close() # 关闭不需要的 socket 端
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
         CHK( parent_sock.recv(1) == b'x', "收到的子进程信号不符合预期")
-        if safe_mntns_fd is None: safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
-        # parent_sock.send(b'x') ; parent_sock.close() # 回信给子进程
+        # parent_sock.send(b'x') ; parent_sock.close() # 不在这里回信给子进程，后面统一回
         return pid, parent_sock
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
