@@ -1079,11 +1079,15 @@ def main2(skp_lyfk):
          **(d(userns_unpri=LG.userns_unpri) if LG.userns_unpri else {}),
     )
 
-    # NOTE 本来这里应该关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd), 但因为userns隔离 (所有层进程都是uid=0, 且有hidepid=1） ，所以不需要
+    if not tlcfg.unshare_pid:
+        fds_to_keep = [skp._skt_pa.fileno() for _,skp in inprepare_children]
+        close_3ge_fds(keep_fds=fds_to_keep)
 
     # 放行那些等待住的subp (为了等 重要fd 关闭. pidns层则不怕subp访问/proc/1/fd 因为无法访问 )
     for pid, skp_spfk in inprepare_children:
-        skp_spfk.pa_send(BS.YouChdGo); skp_spfk.close()
+        skp_spfk.pa_send(BS.YouChdGo)
+    for pid, skp_spfk in inprepare_children:
+        skp_spfk.close()
 
     # TODO 让最外层把每一层的pidfd和各类ns保活， 再继续
     if tlcfg.unshare_pid:
@@ -1128,6 +1132,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
         skp_spfk.chd_send(BS.IChdBorn)
         skp_spfk.chd_recv(1, 5, BS.YouChdGo)
+        skp_spfk.chd_recv(1, 2, b'')
         skp_spfk.close()
 
         wait_for_startAfters(start_after)
