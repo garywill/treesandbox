@@ -376,7 +376,7 @@ def gen_layer2c(si, uc, dyncfg):
         ],
         is_semitruCmpannLyr=True, # 设layer2c（而非2）为semitruCmpannLyr,因为2c才有unshare_pid
         subprocs=[
-            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac",  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
             d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
 
             d(
@@ -537,6 +537,7 @@ def gen_layer4(si, uc, dyncfg):
     )
 
 
+resv_name_prefix = ['bridge_', 'layer', 'shareshell_', 'mainApp']
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
@@ -660,7 +661,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         bridges.append(dcp_bItem)
         si.expected_alive_procs.append(bridge_name)
     si.bridges = bridges
-
 
     OG = d(dyncfg=dyncfg, uc=uc)
     return si, layer1_cfg, OG
@@ -806,8 +806,8 @@ def recursive_valid_lyrs(si, layer1_cfg):
             CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
             CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
             CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
-            CHK( not subpItem.subp_name.startswith('layer'), f"子进程名称 {subpItem.subp_name} 以'layer'开头不合法 {subpItem}")
-            CHK( not subpItem.subp_name.startswith('bridge_'), f"子进程名称 {subpItem.subp_name} 以'bridge_'开头不合法 {subpItem}")
+            for x in resv_name_prefix:
+                CHK( not subpItem.subp_name.startswith(x), f"子进程名称 {subpItem.subp_name} 以'{x}'开头不合法 {subpItem}")
             used_proc_names.append(subpItem.subp_name)
 
         if cfg.user_shell: used_proc_names.append('user_shell')
@@ -876,12 +876,29 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
     # else:
     #     creating_new_sbxdir=True
 
+    def make_file_get_fd(filename, open_flag, filemode):
+        fd = os.open(f'{target_sbxdir_path}/{filename}', open_flag, filemode)
+        set_fd_keep_on_exec(fd, False)
+        return fd
+    def create_socket_file_fd(socket_file_name):
+        skt = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        skt.setblocking(False)
+        skt.bind(f'{target_sbxdir_path}/{socket_file_name}')
+        fd = skt.detach() ; set_fd_keep_on_exec(fd, False)
+        return fd
+    def create_socketpair_fds():
+        skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, False)
+        fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, False) # 为了不让fd号码乱，pa也保留
+        return d(pa=fd_pa, chd=fd_chd)
 
+    # sbxdir 本身目录创建
     mkdirp(target_sbxdir_path)
     new_tmpfs_for_sbxdir = True if call_at_buildfs else False
     if new_tmpfs_for_sbxdir:
         mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, 'mode=700')
 
+    # dirmaker.layerX.name
     if not os.path.lexists(f'{target_sbxdir_path}/dirmaker.layer.name'):
         with open(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name', 'w') as f:
             f.write(lyrcfg.layer_name)
@@ -890,12 +907,14 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
 
     if call_at_begin:
+        # sbx.xxxx.pid
         with open(f'{si.outest_sbxdir}/sbx.{si.outest_pid}.pid', 'w') as f:
             f.write(str(si.outest_pid))
             os.chmod(f.name, 0o444)
 
         symlink(f'sbx.{si.outest_pid}.pid', f'{si.outest_sbxdir}/sbx.pid')
 
+        # userconfig.json , dyncfg.json
         with open(f'{si.outest_sbxdir}/userconfig.json', 'w') as f:
             f.write(json.dumps(OG.uc, indent=2, ensure_ascii=False))
             os.chmod(f.name, 0o444)
@@ -904,22 +923,17 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
             os.chmod(f.name, 0o444)
 
 
-
-        def make_file_get_fd(filepath, open_flag, filemode):
-            fd = os.open(filepath, open_flag, filemode)
-            set_fd_keep_on_exec(fd, False)
-            return fd
-
-        si.file_fds = d()
+        # fd (procs, subp 文件)
+        si.file_fds = D()
         si.file_fds.update( d(
             # 沙箱内只fd写，最外层用路径来读
-            layerslog_a = make_file_get_fd(f'{si.outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
+            layerslog_a = make_file_get_fd('events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
 
             # RDONLY是因为沙箱内只fd读，仅最外层用路径写
-            procs_alive = make_file_get_fd(f'{si.outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
-            procs_histseen = make_file_get_fd(f'{si.outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
-            procs_histheared = make_file_get_fd(f'{si.outest_sbxdir}/procs.histheared.json', os.O_RDONLY|os.O_CREAT, 0o644),
-            procs_wdgsee = make_file_get_fd(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_alive = make_file_get_fd('procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_histseen = make_file_get_fd('procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_histheared = make_file_get_fd('procs.histheared.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_wdgsee = make_file_get_fd('procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
         ) )
 
         Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
@@ -927,32 +941,29 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
         Path(f'{si.outest_sbxdir}/procs.histheared.json').write_text("{}")
         Path(f'{si.outest_sbxdir}/procs.wdgsee.json').write_text("{}")
 
-        si.subp_log_fds = d()
+        si.subp_log_fds = D()
         for pn in si.expected_alive_procs:
             if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
-                si.subp_log_fds[pn] = make_file_get_fd(f'{si.outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+                si.subp_log_fds[pn] = make_file_get_fd(f'subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
-        def create_socketpair_fds():
-            skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-            fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, False)
-            fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, False) # 为了不让fd号码乱，pa也保留
-            return d(pa=fd_pa, chd=fd_chd)
-        si.oSkt_fds = d()
+
+        si.oSkt_fds = D()
         for lyr in si.expected_alive_layers:
             si.oSkt_fds [lyr] = create_socketpair_fds()
 
+
+
+    # 主机写的剪贴板socket
     if si.newXId:
         if call_at_begin:
-            clipbdWriterFromHostSocket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            clipbdWriterFromHostSocket.setblocking(False)
-            clipbdWriterFromHostSocket.bind(f'{target_sbxdir_path}/clipbdWriterFromHost.socket')
-            si.fd_clipbdWriterFromHostLsn = clipbdWriterFromHostSocket.detach()
+            si.fd_clipbdWriterFromHostLsn = create_socket_file_fd('clipbdWriterFromHost.socket')
 
 
-
+    # empty
     Path(f'{target_sbxdir_path}/empty').touch()
     os.chmod(f'{target_sbxdir_path}/empty', 0)
 
+    # apps目录
     mkdirp(f'{target_sbxdir_path}/apps')
     if old_sbxdir_path :
         if not Path(f'{old_sbxdir_path}/apps').is_mount():
@@ -962,13 +973,13 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
             # 把上一层的apps bind过来. 不是最后一层就应该要保留rw
             mount(f'{old_sbxdir_path}/apps', f'{target_sbxdir_path}/apps', None, MS.BIND|mntflag_apps, None)
 
-
+    # temp目录
     mkdirp(f'{target_sbxdir_path}/temp')
     if call_at_buildfs:
         mount('tmpfs', f'{target_sbxdir_path}/temp', 'tmpfs', mntflag_sbxtemp, 'mode=755')
 
 
-
+    # sbxinfo.json
     if call_at_begin:
         with open(f'{target_sbxdir_path}/sbxinfo.json', 'w') as f:
             f.write(json.dumps(si, indent=2, ensure_ascii=False))
@@ -978,7 +989,8 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
             os.chmod(f.name, 0o444)
         symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/sbx.name')
 
-    # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
+
+    # 递归 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
     def create_lyrs_files_recr(lyr_cfg):
         if call_at_begin:
             with open(f'{target_sbxdir_path}/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
@@ -994,6 +1006,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
     for sublyr_cfg in arr_recr_create_conf :
         create_lyrs_files_recr(sublyr_cfg)
 
+    # 重新挂载为ro
     if new_tmpfs_for_sbxdir:
         os.chmod(target_sbxdir_path, 0o555)
         mount(None, target_sbxdir_path, None, MS.REMOUNT|MS.RDONLY|mntflag_newsbxdir, None)
@@ -1314,7 +1327,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         os.close(devnull)
         # NOTE 无法再 log 或 print NOTE
 
-        set_3ge_fds_cloexec() # 启动时已做过，再做一次保险
+        set_3ge_fds_cloexec() if not dev_shell else set_3ge_fds_cloexec(action='keepall')
 
         if not subLayer:
             if not keep_caps:
@@ -1670,7 +1683,8 @@ def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
                 a( d( op='rosame', dest=p, src=p ) )
             # 需要 tmpfs 的可写路径（容器内部用）
             paths_to_tmpfs = [ '/run', '/tmp', '/root', '/mnt',
-                '/var', '/var/lib', '/var/cache', f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
+                '/var', '/var/lib', '/var/lib/empty', '/var/cache',
+                f'/run/user/{si.uid}', '/run/user/0', '/run/lock',
                 '/run/tmux' , f'{si.HOME}' , f'{si.HOME}/.cache' ,
                 f'{si.HOME}/.local/share/RecentDocuments',
                 f'{si.HOME}/.local/share/recently-used.xbel',
@@ -1979,15 +1993,11 @@ class OutestProcsMonitor:
         procsalive_arr = cls.get_procsalive_arr_from_cg()
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
         cls.procs_alive = procsalive_arr # 写cls内部
-        try: # 写文件
-            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
-            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_EX)
-            os.ftruncate(cls.fd_wr_alive, 0)
-            os.pwrite(cls.fd_wr_alive, json_str.encode(), 0)
-        finally:
-            fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
+        json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
+        write_to_fd_override(cls.fd_wr_alive, json_str)
     @classmethod
     def aliveproc_and_elproc_equal(cls, plv, pel): #plv="proc alive" | pel="proc from event log"
+        if not plv.ns or not plv.ns.pid or not pel.ns or not pel.ns.pid : return False
         if plv.NSpid[-1] == pel.self_see_pid \
         and plv.start_tick == pel.start_tick \
         and plv.ns.pid == pel.ns.pid:
@@ -2163,21 +2173,16 @@ class OutestProcsMonitor:
 
             if logItem.ready_proc_name :
                 cls.got_a_ready_proc_log(logItem)
-        cls.write_procs_seen_to_fd(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
-        cls.write_procs_seen_to_fd(cls.procs_histheared, cls.fd_wr_heared) #写文件procs.histseen.json
-        cls.write_procs_seen_to_fd(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
+        cls.write_dict_to_fd_myformat(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
+        cls.write_dict_to_fd_myformat(cls.procs_histheared, cls.fd_wr_heared) #写文件procs.histheared.json
+        cls.write_dict_to_fd_myformat(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
     @classmethod
-    def write_procs_seen_to_fd(cls, procs_seen_obj, fd):
+    def write_dict_to_fd_myformat(cls, procs_seen_obj, fd):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        try:
-            json_str = '\n'.join(['{',
-                '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
-                '}'])
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            os.ftruncate(fd, 0)
-            os.pwrite(fd, json_str.encode(), 0)
-        finally:
-            fcntl.flock(fd,  fcntl.LOCK_UN)
+        json_str = '\n'.join(['{',
+            '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
+            '}'])
+        write_to_fd_override(fd, json_str)
     @classmethod
     def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
@@ -2690,7 +2695,9 @@ def set_ps1(status):
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
         ,
         f'{si.sandbox_name} {tlcfg.layer_name} {status}',
-        r''' | \w > \[\e[0m\]'''
+        r''' | \w ''',
+        r'''$(if [[ "$(id -u)" == "0" ]];then echo -n '#' ; else echo -n '>'; fi )''',
+        r'''\[\e[0m\] '''
     ])
     os.environ['PS1'] = ps1
 
@@ -2774,6 +2781,14 @@ def read_alltext_from_fd(fd:int) -> str:
 def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
+def write_to_fd_override(fd:int, text:str):
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, text.encode(), 0)
+    finally:
+        fcntl.flock(fd,  fcntl.LOCK_UN)
+
 def get_all_3ge_fds() -> list:
     CHK( os.fstat(si.fdnull).st_ino == os.stat('/dev/null').st_ino, 'si.fdnull的st_ino与/dev/null不符合')
     CHK( os.fstat(si.fdnull).st_dev == os.stat('/dev/null').st_dev, 'si.fdnull的st_dev与/dev/null不符合')
@@ -2787,12 +2802,14 @@ def get_all_3ge_fds() -> list:
             if e.errno != errno.EBADF: raise
     return result
 
-def set_3ge_fds_cloexec(keep_fds=[] ):
+def set_3ge_fds_cloexec(keep_fds=[] , action='default'):
+    if action == 'default': KEEP=False
+    elif action == 'keepall' : KEEP=True
     for fd in get_all_3ge_fds() :
         if fd in keep_fds:
             continue
         # log(f'设置{fd=}为CLOEXEC')
-        try: set_fd_keep_on_exec(fd, False)
+        try: set_fd_keep_on_exec(fd, KEEP)
         except OSError as e:
             # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
             if e.errno == 9: pass; #  log_warn(f'尝试设置{fd=}为CLOEXEC但发现刚刚已被关闭')
@@ -2804,7 +2821,9 @@ def close_3ge_fds(keep_fds=[] ):
         if fd in keep_fds:
             continue
         # log(f'关闭{fd=}')
-        try: os.dup2(si.fdnull, fd) # 不用os.close
+        try:
+            os.dup2(si.fdnull, fd) # 不用os.close
+            set_fd_keep_on_exec(fd, False)
         except OSError as e:
             # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
             if e.errno == 9: pass; # log_warn(f'尝试关闭{fd=}但发现刚刚已被关闭')
@@ -3078,66 +3097,66 @@ class EnhancedFalse:
 FALSE = EnhancedFalse()
 
 
-class EnhancedDict(dict):
+class EnhancedDictTempl(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for key, value in self.items():
-            if isinstance(value, dict) and not isinstance(value, EnhancedDict):
-                self[key] = EnhancedDict(value)
+            if isinstance(value, dict) and not isinstance(value, type(self)):
+                self[key] = type(self)(value)
             elif isinstance(value, list):
                 self[key] = self._convert_list(value)
     def _convert_list(self, lst):
         new_list = []
         for item in lst:
-            if isinstance(item, dict) and not isinstance(item, EnhancedDict):
-                new_list.append(EnhancedDict(item))
+            if isinstance(item, dict) and not isinstance(item, type(self)):
+                new_list.append(type(self)(item))
             elif isinstance(item, list):
                 new_list.append(self._convert_list(item))
-            else:
-                new_list.append(item)
+            else: new_list.append(item)
         return new_list
-    def __getattr__(self, name):
-        if name.startswith("__") and name.endswith("__"):
-            raise AttributeError(name)
-        try:
-            return self[name]
-        except KeyError:
-            return FALSE
     def __setattr__(self, name, value):
         self[name] = value
     def __delattr__(self, name):
-        try:
-            del self[name]
-        except KeyError:
-            pass
+        try: del self[name]
+        except KeyError: pass
     def __setitem__(self, key, value):
         processed_value = value
-        if isinstance(value, dict) and not isinstance(value, EnhancedDict):
-            processed_value = EnhancedDict(value)
+        if isinstance(value, dict) and not isinstance(value, type(self)):
+            processed_value = type(self)(value)
         elif isinstance(value, list):
              processed_value = self._convert_list(value)
         super().__setitem__(key, processed_value)
-class DotDict(EnhancedDict):
+class Dict(EnhancedDictTempl):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
-        try:
-            return self[name]
+        try: return self[name]
         except :
             raise
-class EnhancedDictNone(EnhancedDict):
+class DictFALSE(EnhancedDictTempl):
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"): raise AttributeError(name)
+        try: return self[name]
+        except KeyError:
+            return FALSE
+    def __getitem__(self, key):
+        try: return super().__getitem__(key)
+        except KeyError:
+            return FALSE
+class DictNone(EnhancedDictTempl):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
             raise AttributeError(name)
-        try:
-            return self[name]
+        try: return self[name]
         except :
             return None
-
-
-d = EnhancedDict # 试图访问不存在的键时，会返回EnhancedFalse
-dn = EnhancedDictNone #试图访问不存在的键时， 返回None
-D = DotDict # 试图访问不存在的键时, 报错
+    def __getitem__(self, key):
+        try: return super().__getitem__(key)
+        except KeyError:
+            return None
+D = Dict # 试图访问不存在的键时, 报错
+d = DictFALSE # 试图访问不存在的键时，会返回EnhancedFalse
+dn = DictNone #试图访问不存在的键时， 返回None
 
 
 def eq_ignore_order(v1, v2):
