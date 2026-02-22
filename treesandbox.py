@@ -649,7 +649,9 @@ def recursive_valid_lyrs(si, layer1_cfg):
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
-            if cfg.subprocs or cfg.is_mainlyr: used_proc_names.append(cfg.layer_name+'_userns')
+        if cfg.subprocs or cfg.is_mainlyr:
+            used_proc_names.append(cfg.layer_name+'_userns')
+            cfg.need_unpri_userns = True
         if cfg.is_mainlyr:
             CHK(not si.specialLyrs.mainLyr, '有重复的mainLyr')
             si.specialLyrs.mainLyr = cfg.layer_name
@@ -966,7 +968,7 @@ def main(lyrcfg_in):
         set_loghead (f'{tlcfg.layer_name} F: ')
         skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
-            set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
+            set_pdeathsig(signal.SIGTERM) # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
         return main2(skp_lyfk)
     else: # 父进程
         skp_lyfk.i_am_pa()
@@ -1045,7 +1047,7 @@ def main2(skp_lyfk):
     # 以subp启动普通辅助app
     set_3ge_fds_cloexec() # 沙箱启动时设置过，保险再来一次
 
-    if tlcfg.subprocs or tlcfg.is_mainlyr:
+    if tlcfg.need_unpri_userns:
         LG.userns_unpri = layer_create_unpri_userns() # NOTE  要在layer_booted之前
 
     for subpItem in (tlcfg.subprocs or [] ) :
@@ -1958,6 +1960,11 @@ def daemon_pidnsleader():
     CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     PidnsleaderListener.i_am_pidnsleader()
     PERIOD = 0.2
+    def subptree_is_empty():
+        if not tlcfg.need_unpri_userns:
+            return (not exist_childtree() )
+        else: # tlcfg.need_unpri_userns 为真
+            return (not exist_subprocs_or_mainapps() )
     while True:
         if sig_say_exit: sys.exit()
 
@@ -1971,10 +1978,11 @@ def daemon_pidnsleader():
                     PidnsleaderListener.MainApp_Ever_Started = True
 
         if tlcfg.is_mainlyr and PidnsleaderListener.MainApp_Ever_Started :
+            CHK(tlcfg.need_unpri_userns, '主层无need_unpri_userns，某个地方设置有问题')
             if not si.idleKeepSbxTime:
-                if not exist_childtree(): sys.exit()
+                if subptree_is_empty(): sys.exit()
             else: # si.idleKeepSbxTime > 0:
-                if exist_childtree() :
+                if not subptree_is_empty() :
                     lasttick_havechd = time.monotonic()
                 else:
                     tick_diff = time.monotonic() - lasttick_havechd
@@ -2145,12 +2153,20 @@ def _signals_handler(signum, is_outest=False):
                 break
 
 
-def exist_childtree():
+def exist_childtree(): # 不需要自己pid=1也可以用
     try:
         pid, status = os.waitpid(-1, os.WNOHANG)
         return True
     except ChildProcessError:
         return False
+def exist_subprocs_or_mainapps(): # 排除掉userns_pid之后，仍然存在
+    CHK(os.getpid()==1 and tlcfg.need_unpri_userns, '只有pid=1且 need_unpri_userns 才可调用此函数')
+    if not exist_childtree(): return 0
+    allpids = [int(x) for x in os.listdir("/proc") if x.isdigit()]
+    allpids.remove(os.getpid())
+    allpids.remove(LG.userns_unpri.pid)
+    return bool(allpids)
+
 
 # os.waitpid(-1, os.WNOHANG) 的结果说明：
 #     (child_pid, exit_status)	成功回收一个僵尸进程
@@ -2515,9 +2531,9 @@ mntflag_binddir = MS.BIND|MS.REC|MS.NOSUID
 mntflag_tmpfs = MS.NOSUID|MS.NODEV # 这里设置nodev也会让/dev有nodev,但因为每个具体的设备是bind进去的，所以好像没问题
 
 
-def set_pdeathsig(): # 由layer1的fork出来的子进程调用, 让真实父进程退出后沙箱内能够收到TERM信号
+def set_pdeathsig(sig): # 由layer1的fork出来的子进程调用, 让真实父进程退出后沙箱内能够收到TERM信号
     PR_SET_PDEATHSIG = 1
-    libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+    libc.prctl(PR_SET_PDEATHSIG, sig)
 
 def set_proc_dispname(dispname):
     PR_SET_NAME = 15
