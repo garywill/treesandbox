@@ -389,7 +389,7 @@ def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把l
     recursive_lyrs_jobs(si, layer1_cfg, None, []) # 要调用两次
 
 
-resv_words = ['sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # sbxinfo.json
@@ -426,6 +426,10 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
     new_tmpfs_for_sbxdir = True if call_at_buildfs else False
     if new_tmpfs_for_sbxdir:
         mount('tmpfs', target_sbxdir_path, 'tmpfs', mntflag_newsbxdir, None)
+
+    if not os.path.lexists(f'{target_sbxdir_path}/dirmaker.layer.name'):
+        Path(f'{target_sbxdir_path}/dirmaker.layer.{lyrcfg.layer_name}.name').write_text(lyrcfg.layer_name)
+        symlink(f'dirmaker.layer.{lyrcfg.layer_name}.name', f'{target_sbxdir_path}/dirmaker.layer.name')
 
     Path(f'{target_sbxdir_path}/empty').touch()
     os.chmod(f'{target_sbxdir_path}/empty', 0)
@@ -522,8 +526,13 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         else :
             break
 
+    CG_ROOT = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
+    CG_BASE = f'{CG_ROOT}/tsbxs.slice'
+    CG_DIR = f'{CG_BASE}/{instance_name}'
+    CHK( os.access(CG_ROOT, os.W_OK), f"将 {CG_ROOT} 作为cgroup根 失败，目录 不存在 或 不可写")
 
-    atexit.register(lambda: cleanup_outest(outest_sbxdir) ) # 顶层父进程注册清理函数
+    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_DIR) ) # 顶层父进程注册清理函数
+
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     os.chdir(outest_sbxdir)
@@ -537,12 +546,21 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         os.chmod(f.name, 0o444)
     os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
 
+    mkdirp(CG_BASE)
+
     sbxinfo.pythonbin = sys.executable
     sbxinfo.sandbox_name = sandbox_name
     sbxinfo.instance_name = instance_name
     sbxinfo.outest_sbxdir = outest_sbxdir
+    sbxinfo.CG_ROOT = CG_ROOT
+    sbxinfo.CG_BASE = CG_BASE
+    sbxinfo.CG_DIR = CG_DIR
 
     dyncfg = gen_dynamic_cfg(sbxinfo, uc)
+    with open(f'{outest_sbxdir}/dyncfg.json', 'w') as f:
+        f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
+        os.chmod(f.name, 0o444)
+
     layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
     start_lyrs_recursive_jobs(sbxinfo, layer1_cfg)
 
@@ -628,6 +646,9 @@ def main():
         else: # 父进程
             if not is_outest:
                 sys.exit()
+            si.layer1_pid = pid
+            Path(f'{si.outest_sbxdir}/proc.layer1.{pid}.pid').write_text(str(pid))
+            symlink(f'proc.layer1.{pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
 
             layer_set_status('PaAfterFork')
 
@@ -1201,7 +1222,7 @@ def safe_copy_script(copy_target_path):
 
 
 
-def cleanup_outest(outest_sbxdir):
+def cleanup_outest(outest_sbxdir, cg_dir):
     print(f"{scriptname} 正在执行清理...")
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
@@ -1212,6 +1233,7 @@ def cleanup_outest(outest_sbxdir):
         *glob(f'{outest_sbxdir}/apps'),
         *glob(f'{outest_sbxdir}/new.*.rootfs'),
         *glob(f'{outest_sbxdir}'),
+        *glob(f'{cg_dir}'),
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
