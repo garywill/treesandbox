@@ -2,9 +2,32 @@ English | [中文](README_zh.md)
 
 # Tree Sandbox
 
-A Linux sandbox tool that allows unlimited nesting. 
+A Linux sandbox tool that allows unlimited nesting. (Comes with a default nesting template designed for regular users.)
 
-> Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English.
+Kind of an alternative to Firejail, Flatpak, and Bubblewrap.
+
+> Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English. English comming soon...
+
+## Dependencies
+
+Required:
+
+- Linux Kernel >= 6.3 
+    - user namespace
+    - cgroup v2
+- glibc
+- Python >= 3.12
+- bash
+
+(Although Python script it is, it directly talks to Linux kernel via libc, without any third-party Python libraries.)
+
+Optional:
+
+- xdg-dbus-proxy
+- Xephyr + icewm (for isolated X11)
+- squashfuse (for mounting AppImage internally)
+
+
 
 ## Overview
 
@@ -83,22 +106,6 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - [ ] In-container shell socket exposed to host 
 - Single-file script. Copy as you like, edit options at file head and run. No install. Minimal dependencies.
     
-
-## Dependencies
-
-Required:
-
-- Linux kernel >= 6.3 (with unprivileged user namespace support)
-- glibc
-- Python >= 3.12
-- bash
-
-(Python script although it is, no dependencies on third-party libraries. It uses libc to talk to Linux kernel)
-
-Optional (for extra features):
-
-- squashfuse (mount AppImage internally)
-- Xephyr + icewm (isolated X11)
 
 ## Simple usage examples
 
