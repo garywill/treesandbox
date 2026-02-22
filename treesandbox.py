@@ -529,7 +529,10 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     # 还要加将给app的cli参数
     return sbxinfo, layer1_cfg
 
+si = None # sbxinfo , sandbox info
+thislyr_cfg = None
 def main():
+    global si, thislyr_cfg
     # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
     if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
         # 是顶层
@@ -575,13 +578,13 @@ def main():
                 time.sleep(0.1)
                 pass
 
-    set_ps1(si, thislyr_cfg, 'beforeUnshare')
+    set_ps1( thislyr_cfg, 'beforeUnshare')
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag_by_lyrcfg(thislyr_cfg)
     os.unshare(unshare_flag)
 
-    set_ps1(si, thislyr_cfg, 'afterUnshare')
+    set_ps1( thislyr_cfg, 'afterUnshare')
 
     # log(f"即将fork")
     pid = os.fork()
@@ -592,16 +595,16 @@ def main():
         else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
             while os.getppid() not in [0, 1] : time.sleep(0.03)
 
-        main2(si, thislyr_cfg)
+        main2( thislyr_cfg)
         # log(f"fork后的子进程即将退出")
         sys.exit()
     else: # 父进程
         if not is_outest:
             sys.exit()
 
-        atexit.register(lambda: cleanup_outest(si) ) # 顶层父进程注册清理函数
+        atexit.register(lambda: cleanup_outest() ) # 顶层父进程注册清理函数
 
-        set_ps1(si, thislyr_cfg, 'PaAfterFork')
+        set_ps1( thislyr_cfg, 'PaAfterFork')
 
         _, status = os.waitpid(pid, 0)
         if os.WIFEXITED(status):
@@ -612,13 +615,13 @@ def main():
             log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
 
 
-def main2(si, thislyr_cfg):
+def main2( thislyr_cfg):
     # 写uid_map 等 。一般来说配合 unshare_user
     if thislyr_cfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
     if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
     if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
-    set_ps1(si, thislyr_cfg, 'forkedBeforeFs')
+    set_ps1( thislyr_cfg, 'forkedBeforeFs')
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 如果设置了将要变根，现在先提前确定新根的位置
@@ -629,7 +632,7 @@ def main2(si, thislyr_cfg):
     mkdirp(thislyr_cfg.newrootfs_path)
 
     if thislyr_cfg.fs:
-        build_thislyr_fs(si, thislyr_cfg) # 无论本层是否设置了变根，都调用这个函数
+        build_thislyr_fs( thislyr_cfg) # 无论本层是否设置了变根，都调用这个函数
 
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
     new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
@@ -642,7 +645,7 @@ def main2(si, thislyr_cfg):
         makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
     if not thislyr_cfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
         make_proc_ro( new_proc_path , allow_newmntns=False )
-    set_ps1(si, thislyr_cfg, 'afterFs')
+    set_ps1( thislyr_cfg, 'afterFs')
 
     # 执行变根 (chroot)
     if thislyr_cfg.newrootfs:
@@ -663,7 +666,7 @@ def main2(si, thislyr_cfg):
     if thislyr_cfg.sbxdir_path1:
         os.chdir(thislyr_cfg.sbxdir_path1)
 
-    set_ps1(si, thislyr_cfg, 'afterChroot')
+    set_ps1( thislyr_cfg, 'afterChroot')
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   处理各种SIGNAL
@@ -673,7 +676,7 @@ def main2(si, thislyr_cfg):
         for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
             signal.signal(sig, signals_handler)
 
-    set_ps1(si, thislyr_cfg, 'afterRegSigs')
+    set_ps1( thislyr_cfg, 'afterRegSigs')
 
     direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
 
@@ -850,7 +853,7 @@ def exist_childtree():
 
 
 ps1 = ">"
-def set_ps1(si, thislyr_cfg, status):
+def set_ps1( thislyr_cfg, status):
     global ps1
     ps1 = ''.join( [
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
@@ -867,15 +870,15 @@ def set_ps1(si, thislyr_cfg, status):
     )
     os.write(si.fd_layerslog_a, ''.join([json.dumps(logobj), '\n']).encode())
 
-def build_thislyr_fs(si, thislyr_cfg):
+def build_thislyr_fs( thislyr_cfg):
     # 无论本层是否设置了变根，都调用这个函数
     # 操作目标的基 可能是 '/' （不变根的话） ,  也可能是新根路径 （变根的话）
-    fsPlans = gen_fsPlans_by_lyrcfg(si, thislyr_cfg)
-    remountPlans = commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans)
+    fsPlans = gen_fsPlans_by_lyrcfg( thislyr_cfg)
+    remountPlans = commit_thislyr_fsPlans( thislyr_cfg, fsPlans)
     commit_remounts(remountPlans)
 
 
-def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
+def commit_thislyr_fsPlans( thislyr_cfg, fsPlans): # 这个函数是本层为本层调用的
     target_fs_path = thislyr_cfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
@@ -977,7 +980,7 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
 
     return remountPlans
 
-def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,并去重、排序
+def gen_fsPlans_by_lyrcfg( lyr_cfg): # 把fs里面的batch_plan都转成plan,并去重、排序
     fsPlans = []
     def a(stepobj):
         fsPlans.append(stepobj)
@@ -1145,7 +1148,7 @@ def safe_copy_script(copy_target_path):
 
 
 
-def cleanup_outest(si):
+def cleanup_outest():
     print(f"{scriptname} 正在执行清理...")
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
