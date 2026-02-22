@@ -284,6 +284,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
     CHK( cfg.layer_name, "存在某层没有设置layer_name")
     CHK( re.match(r'^[a-zA-Z0-9_-]+$', cfg.layer_name), f"layer_name只能有字母、数字、杠、下划线。此名称不合法： {cfg.layer_name}" )
+    CHK( cfg.layer_name not in resv_words, f"层名{cfg.layer_name}与保留字段{resv_words}重复")
 
     CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
     used_layer_names.append(cfg.layer_name)
@@ -349,7 +350,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
 
 
-
+resv_words = ['sbx', 'sbxs', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # cfg/ :
@@ -358,7 +359,7 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
             # sbx.xxx.name
             # sbx.name -> sbx.xxx.name
             # lyr_cfg.xxx.json (多) 包括本层和所有递归子层
-            # evts.xxx.log (暂未实现） (需要build_fs处理 一路通挂载)
+            # events.layers.log (暂未实现） (需要build_fs处理 一路通挂载)
             # tmux.xxx.socket (暂未实现) (需要build_fs处理 一路通挂载)
         # new.xxx.rootfs (多)所有有 newrootfs 的本层和递归子层
         # temp  挂载为rw tmpfs
@@ -468,6 +469,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
+    CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
     print(f"沙箱名：{sandbox_name}")
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
@@ -717,8 +719,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
             drop_caps()
         child_sock.send(b'x') # 给父进程发送信号
         CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
-        child_sock.recv(1)
-        child_sock.close()
+        child_sock.recv(1) ; child_sock.close()
 
         # 关闭3以上的fd
         if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
@@ -745,8 +746,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
         parent_sock.recv(1) # 读取子进程的信号 (虽然值不重要，但为了同步)
         if safe_mntns_fd is None: safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
-        parent_sock.send(b'x') # 回信给子进程
-        parent_sock.close()
+        parent_sock.send(b'x') ; parent_sock.close() # 回信给子进程
 
         if not blocking: # 非阻塞
             return pid
@@ -789,8 +789,7 @@ def signals_handler(signum, frame):
     # NOTE 不能print 不能sleep 不能sys.exit 只能 os._exit
     global should_exit, should_exit_signum
     if signum in EXIT_SIGNALS:
-        should_exit = True
-        should_exit_signum = signum
+        should_exit = True ; should_exit_signum = signum
     elif signum == signal.SIGCHLD:
         while True:
             try:
@@ -799,8 +798,7 @@ def signals_handler(signum, frame):
                 if pid == 0:
                     break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                should_exit = True
-                should_exit_signum = signal.SIGCHLD
+                should_exit = True ; should_exit_signum = signal.SIGCHLD
                 os._exit(0)
                 break
 
