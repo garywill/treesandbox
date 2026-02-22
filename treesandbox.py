@@ -113,7 +113,7 @@ def gen_layer2(si, uc, dyncfg):
 
             *dyncfg.mnts_gui,
 
-            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").removeprefix(":")}', SDS=1),
+            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
             d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
 
             d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
@@ -202,7 +202,7 @@ def gen_layer3(si, uc, dyncfg):
             # TODO 1. 改用dyncfg  2. layer2里也加
 
             *([
-            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").removeprefix(":")}', SDS=1),
+            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
             d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
@@ -938,11 +938,15 @@ def read_alltext_from_fd(fd:int) -> str:
 def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
-def read_proclist() -> list:
+def get_alive() -> list:
     if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
     else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_alive)
 
-def read_recogprocs() -> dict:
+def get_histseen() -> dict:
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_histseen
+    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_histseen)
+
+def get_wdgsee() -> dict:
     if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
     else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
 
@@ -1790,9 +1794,10 @@ def commit_remounts(remntPlans):
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
 def lyrcfg_to_unshrcfg(lyrcfg):
-    return d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
+    unshr_cfg = d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
+    for x in dict.keys(unshr_cfg): CHK(x in ['pid','mnt','user','cgroup','ipc','time','uts','net'], f'{x}这个unshare flag目前不允许使用')
+    return unshr_cfg
 def unshrflg(unshr_cfg):
-    [CHK(x in ['pid','mnt','user','cgroup','ipc','time','uts','net'], f'{x}这个unshare flag目前不允许使用') for x in dict.keys(unshr_cfg)]
     unshr_flg = 0
     unshr_flg |= os.CLONE_NEWPID if unshr_cfg.pid else 0
     unshr_flg |= os.CLONE_NEWNS if unshr_cfg.mnt else 0
