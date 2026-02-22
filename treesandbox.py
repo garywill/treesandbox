@@ -497,24 +497,22 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     groupname = grp.getgrgid(gid).gr_name
     HOME = f'/home/{username}' if uid>0 else '/root'
     outest_pid = os.getpid()
-    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
 
-    sbxinfo.uid = uid
-    sbxinfo.gid = gid
-    sbxinfo.username = username
-    sbxinfo.groupname = groupname
-    sbxinfo.HOME = HOME
-    sbxinfo.outest_pid = outest_pid
+    sbxinfo.update( { k: v for k, v in locals().items() if k in
+        ['uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid', ]
+    } )
     sbxinfo.startscript_on_host = scriptfilepath
     sbxinfo.startdir_on_host = scriptdirpath
 
-    uc = userconfig(sbxinfo) # 用户配置别名
+    uc = userconfig(sbxinfo)
 
     # 沙箱名。不是子容器层名
     CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
+
+    dyncfg = gen_dynamic_cfg(sbxinfo, uc)
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
@@ -531,38 +529,37 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CG_DIR = f'{CG_BASE}/{instance_name}'
     CHK( os.access(CG_ROOT, os.W_OK), f"将 {CG_ROOT} 作为cgroup根 失败，目录 不存在 或 不可写")
 
+    sbxinfo.update( { k: v for k, v in locals().items() if k in
+        ['sandbox_name', 'instance_name', 'outest_sbxdir',
+         'CG_ROOT', 'CG_BASE', 'CG_DIR']
+    } )
+    sbxinfo.pythonbin = sys.executable
+
+    layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
+    start_lyrs_recursive_jobs(sbxinfo, layer1_cfg)
+
+    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
+    print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
+    print(f"cgroup：{CG_DIR}")
+
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_DIR) ) # 顶层父进程注册清理函数
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
-    print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     os.chdir(outest_sbxdir)
+    mkdirp(CG_BASE)
 
+    with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
+        f.write(str(outest_pid))
+        os.chmod(f.name, 0o444)
+
+    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
 
     with open(f'{outest_sbxdir}/userconfig.json', 'w') as f:
         f.write(json.dumps(uc, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
-    with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
-        f.write(str(outest_pid))
-        os.chmod(f.name, 0o444)
-    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
-
-    mkdirp(CG_BASE)
-
-    sbxinfo.pythonbin = sys.executable
-    sbxinfo.sandbox_name = sandbox_name
-    sbxinfo.instance_name = instance_name
-    sbxinfo.outest_sbxdir = outest_sbxdir
-    sbxinfo.CG_ROOT = CG_ROOT
-    sbxinfo.CG_BASE = CG_BASE
-    sbxinfo.CG_DIR = CG_DIR
-
-    dyncfg = gen_dynamic_cfg(sbxinfo, uc)
     with open(f'{outest_sbxdir}/dyncfg.json', 'w') as f:
         f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
-
-    layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
-    start_lyrs_recursive_jobs(sbxinfo, layer1_cfg)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
