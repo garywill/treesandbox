@@ -19,10 +19,8 @@ def userconfig(si): # 这个只在顶层解析一次
     # 若不设置gui则内部无任何X11
     uc.gui="realX" # 使用真实的 X11
     # uc.gui="xephyr"
-    # uc.gui="xpra" # 暂未实现
-    # uc.gui="isolatedX"; de_start_cmd="plasmashell"  # 暂未实现
 
-    # uc.XId=50 # 使用内部隔离X11时，X11的显示编号，如果不指定，则随机
+    # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
     uc.icewm = True if uc.gui == 'xephyr' else False
 
@@ -53,21 +51,21 @@ def userconfig(si): # 这个只在顶层解析一次
         d(plan='robind', src=f'{si.HOME}/.local/lib', SDS=1),
 
         # /home/linuxbrew
-        d(plan='robind', src='/home/linuxbrew', SDS=1),
+        # d(plan='robind', src='/home/linuxbrew', SDS=1),
 
     ]
 
 
     # 输入法等通信需要dbus
     # uc.dbus_session="allow"
-    uc.dbus_session="filter" # 默认允许输入法和通知。还可以自己在 uc.dbusproxy_extra 中加
+    # uc.dbus_session="filter" # 默认过滤规则:允许输入法和通知。还可以自己在 uc.dbusproxy_extra 中加
+    if uc.gui: uc.dbus_session="filter"
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (flatpak) 的额外参数
 
     uc.net=d(
         iface='real', # 使用真实的网络介面
-        dns='real', #真实的/etc/resolv.conf所指向的目录
-        # dns=['127.0.0.1'], # 自定义dns
+        # custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
     )
 
     # uc.pulseaudio=True,
@@ -145,7 +143,7 @@ def gen_layer2c(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
         subprocs=[
-            d( cmdvec=["Xephyr",  f":{si.XId}",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  f":{si.newXId}",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
     )
@@ -155,14 +153,14 @@ def gen_layer2z(si, uc, dyncfg):
         layer_name='layer2z',  unshare_mnt=True,
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
         ],
         newrootfs=True,
         fs=[
             d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
-            d(plan='robind', src=f'/tmp/.X11-unix/X{si.XId}', dest=f'/sbxdir/temp/X{si.XId}') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
             d(plan='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -206,7 +204,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
-            d(plan='robind', src=f'/sbxdir/temp/X{si.XId}', dest=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
 
             *dyncfg.mnts_gui,
 
@@ -222,11 +220,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
             d(plan='rofile', dest='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
-            *([
-            d(plan='robind', dest=padir(rslvn('/etc/resolv.conf')), SDS=1) if Path('/etc/resolv.conf').is_symlink() else None,
-            # nscd ...
-            ] if uc.net.dns == 'real' else [] ),
-            d(plan='rofile', dest=rslvn('/etc/resolv.conf'), content=''.join([f'nameserver {ip}\n' for ip in uc.net.dns]) ) if isinstance(uc.net.dns, list) else None,
+            *dyncfg.mnts_dns,
 
             *([
             d(plan='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
@@ -248,7 +242,7 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DISPLAY=f':{si.XId}') if uc.gui=='xephyr' else None,
+            d(DISPLAY=f':{si.newXId}') if uc.gui=='xephyr' else None,
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
         sublayers=[
@@ -288,12 +282,13 @@ def gen_layer4(si, uc, dyncfg):
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = []
     paths_to_mask = []
+    mnts_dns = []
 
     mnts_gui = [
         *([
-        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1),
-        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1),
-        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1),
+        d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
+        d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
+        d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
         ] if uc.see_userfonts else [] ),
         *([
         d(plan='rosame', src='/dev/dri', SDS=1),
@@ -305,21 +300,18 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     ]
 
     if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
-        def is_XId_available(XId):
-            if not os.path.lexists(f'/tmp/.X11-unix/X{XId}')  \
-            and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
+        def is_XId_available(newXId):
+            if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
+            and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
+            and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
                 return True
             else: return False
-        if uc.XId:
-            CHK( str(uc.XId) != '0' , '沙箱内的虚拟X11的显示编号暂时不支持用0')
-            CHK( is_XId_available(uc.XId), f"指定的 {uc.XId=} 被占用")
-            XId = uc.XId
-            log(f'沙箱内隔离的X11的显示编号使用指定的 DISPLAY=:{XId}')
+        if uc.newXId:
+            CHK( is_XId_available(uc.newXId), f"指定的 {uc.newXId=} 被占用")
+            newXId = uc.newXId
         else:
-            while (XId := random.randrange(230, 980) ) :
-                if is_XId_available(XId):
-                    log(f'沙箱内隔离的X11的显示编号使用生成的随机号码 DISPLAY=:{XId}')
-                    break
+            while (newXId := str(random.randrange(230, 980)) ) :
+                if is_XId_available(newXId): break
 
     if uc.dbus_session == 'filter':
         dbusproxy_argv = [
@@ -331,6 +323,32 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             '--talk=org.freedesktop.portal.IBus',
             '--talk=org.freedesktop.portal.Fcitx',
             *(uc.dbusproxy_extra or [])]
+
+    # 处理 /etc/resolv.conf
+    CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "此Linux上，/var/run不是指向/run, 与现代发行版的习惯不同，暂时无法处理这种情况")
+    RSLVCF_is_link = True if Path('/etc/resolv.conf').is_symlink() else False
+    RSLVCF_is_file = is_file('/etc/resolv.conf')
+    CHK(RSLVCF_is_link or RSLVCF_is_file, f'/etc/resolv.conf非链接非文件，暂时无法处理这种情况')
+    dns_use_custom = isinstance(uc.net.custom_dns, list)
+    if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.net.custom_dns])
+    iface_use_real = uc.net.iface=='real'
+
+    # link/file | custom/notcustom | ifacereal 共8种情况
+    # TODO nscd
+    if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
+        if dns_use_custom:
+            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
+        else:
+            if iface_use_real: mnts_dns = [] # 原本的/etc/resolv.conf文件保持
+            else             : mnts_dns = [d(plan='empty-if-exist', dest='/etc/resolv.conf')] # 清空
+    else: # /etc/resolv.conf是链接
+        RSLVCF_target_dir = padir(rslvn('/etc/resolv.conf'))
+        CHK(RSLVCF_target_dir.startswith('/run/'), f'/etc/resolv.conf的指向{rslvn('/etc/resolv.conf')}不是在/run/xxx/内，暂时无法处理这种情况（现代发行版一般/etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx）')
+        if dns_use_custom:
+            mnts_dns = [d(plan='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
+        else:
+            if iface_use_real: mnts_dns = [d(plan='robind', src=RSLVCF_target_dir, SDS=1)]
+            else             : pass # 让/run/xxxxx/resolv.conf继续不存在
 
     if uc.mask_xdg_opens:
         cmds_to_mask += [
@@ -351,8 +369,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['XId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost',
-                     'dbusproxy_argv' ]})
+            if k in ['newXId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost',
+                     'dbusproxy_argv' , 'mnts_dns']})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
@@ -664,7 +682,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         else :
             break
 
-    if 'XId' in dict.keys(dyncfg): XId = dyncfg.XId
+    if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
 
     CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
     CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
@@ -672,7 +690,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'XId', 'apps',
+        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'newXId', 'apps',
          'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
     } )
     si.pythonbin = sys.executable
@@ -859,9 +877,9 @@ class OutestProcsMonitor:
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.XId}')
-            cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.XId}', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.XId}')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}')
+            cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
+            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
