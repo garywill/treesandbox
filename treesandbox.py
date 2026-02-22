@@ -1063,11 +1063,11 @@ def main():
         skp_lyfk.i_am_pa()
 
         if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 为了改写子进程uid_map, 此时我看到的proc必须rw
-            skp_lyfk.pa_recv(1, 5, BS.SetMeUidUser.value)
+            skp_lyfk.pa_recv(1, 5, BS.SetMeUidUser)
             Path(f'/proc/{pid}/setgroups').write_text('deny\n')
             Path(f'/proc/{pid}/uid_map').write_text(f'{si.uid} 0 1\n')
             Path(f'/proc/{pid}/gid_map').write_text(f'{si.gid} 0 1\n')
-            skp_lyfk.pa_send(BS.SetYouUidUserDone.value)
+            skp_lyfk.pa_send(BS.SetYouUidUserDone)
         skp_lyfk.close()
 
         if is_outest:
@@ -1091,18 +1091,24 @@ class TmpSocketPair:
         CHK(not self.I_AM_PA, "已设置为是fork的父进程端")
         self._skt_pa.close() ; self.I_AM_CHD = True
     def pa_send(self, data):
-        CHK(self.I_AM_PA, "非fork的父进程调用了此函数"); self._skt_pa.send(data)
+        CHK(self.I_AM_PA, "非fork的父进程调用了此函数")
+        if isinstance(data, BS): data = data.value
+        self._skt_pa.send(data)
     def chd_send(self, data):
-        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数"); self._skt_chd.send(data)
+        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数")
+        if isinstance(data, BS): data = data.value
+        self._skt_chd.send(data)
     def pa_recv(self, byte_cnt, timeout, expect_data=None):
         CHK(select.select([self._skt_pa], [], [], timeout)[0], "fork的父进程等待子进程的信号超时了")
+        if isinstance(expect_data, BS): expect_data = expect_data.value
         data = self._skt_pa.recv(byte_cnt)
-        if expect_data: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        if expect_data is not None: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
         return data
-    def chd_recv(self, byte_cnt, timeout, expect_data):
+    def chd_recv(self, byte_cnt, timeout, expect_data=None):
         CHK(select.select([self._skt_chd], [], [], timeout)[0], "fork的子进程等待父进程的信号超时了")
+        if isinstance(expect_data, BS): expect_data = expect_data.value
         data = self._skt_chd.recv(byte_cnt)
-        if expect_data: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        if expect_data is not None: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
         return data
     def close(self):
         if self.I_AM_PA  and self._skt_pa:  self._skt_pa.close() ;  self._skt_pa = None
@@ -1118,6 +1124,8 @@ class BS(enum.Enum): # fork前后父子进程之间通信用的，以及 最外�
     SetYouUidRootDone = enum.auto()
     SetMeUidUser = enum.auto()
     SetYouUidUserDone = enum.auto()
+    IChdBorn = enum.auto()
+    YouChdGo = enum.auto()
 
 
 class WlogReader():
@@ -1213,8 +1221,8 @@ def main2(skp_lyfk):
         os.unshare(unshrflg(d(user=True)))
     # 变内部uid=1000 (user)
     if tlcfg.uid_map_as_user: # NOTE 此时父进程看到的 proc 必须为 rw
-        skp_lyfk.chd_send(BS.SetMeUidUser.value)
-        skp_lyfk.chd_recv(1, 2, BS.SetYouUidUserDone.value)
+        skp_lyfk.chd_send(BS.SetMeUidUser)
+        skp_lyfk.chd_recv(1, 2, BS.SetYouUidUserDone)
         log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     # 关闭临时socket
@@ -1240,7 +1248,7 @@ def main2(skp_lyfk):
 
     # 以subp启动子层
     for sublyr_cfg in (tlcfg.sublayers or []):
-        pid, pipe = layer_run_subp([
+        pid, skp_spfk = layer_run_subp([
                         si.pythonbin ,
                         # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                         # 因此用本层的path1
@@ -1249,22 +1257,22 @@ def main2(skp_lyfk):
                     ],
                     subp_name=sublyr_cfg.layer_name
         )
-        inprepare_children.append((pid, pipe))
+        inprepare_children.append((pid, skp_spfk))
 
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
         if tlcfg.user_shell: set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
-        pid, pipe = layer_run_subp( ['/bin/bash'] ,
+        pid, skp_spfk = layer_run_subp( ['/bin/bash'] ,
                         **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
                         **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
         )
-        inprepare_children.append((pid, pipe))
+        inprepare_children.append((pid, skp_spfk))
 
     # 以subp启动普通辅助app
     set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
     for subpItem in (tlcfg.subprocs or [] ) :
-        pid, pipe = layer_run_subp (**subpItem)
-        inprepare_children.append((pid, pipe))
+        pid, skp_spfk = layer_run_subp (**subpItem)
+        inprepare_children.append((pid, skp_spfk))
 
     #-------------------------------------------
 
@@ -1277,8 +1285,8 @@ def main2(skp_lyfk):
         close_important_fds()
 
     # 放行那些等待住的subp (为了等 重要fd 关闭. pidns层则不怕subp访问/proc/1/fd 因为无法访问 )
-    for pid, pipe in inprepare_children:
-        pipe.send(b'x') ; pipe.close() # 回信给子进程
+    for pid, skp_spfk in inprepare_children:
+        skp_spfk.pa_send(BS.YouChdGo); skp_spfk.close()
 
     if tlcfg.unshare_pid:
         daemon_pidnsleader()
@@ -1310,21 +1318,20 @@ def layer_run_subp(cmdvec=None, subp_name=None,
     if subLayer:
         keep_caps=True
 
-    child_sock, parent_sock = socket.socketpair()
+    skp_spfk = TmpSocketPair()
 
     pid = os.fork()
     if pid == 0: # 子进程
         atexit._clear()
         set_loghead(f"{loghead}subp: ")
-        parent_sock.close() # 关闭不需要的 socket 端
+        skp_spfk.i_am_chd()
 
         if not keep_caps:
             drop_caps()
 
-        child_sock.send(b'x') # 给父进程发送信号
-        CHK( select.select([child_sock], [], [], 5.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
-        CHK( child_sock.recv(1) == b'x', "收到的来自原进程的信号不符合预期")
-        child_sock.close()
+        skp_spfk.chd_send(BS.IChdBorn)
+        skp_spfk.chd_recv(1, 5, BS.YouChdGo)
+        skp_spfk.close()
 
         wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name, pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree) if not subLayer else {}) )
 
@@ -1357,12 +1364,11 @@ def layer_run_subp(cmdvec=None, subp_name=None,
         os.execvp(cmdvec[0], cmdvec)
         raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
     else: # 原进程
-        child_sock.close() # 关闭不需要的 socket 端
-        CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
-        CHK( parent_sock.recv(1) == b'x', "收到的子进程信号不符合预期")
+        skp_spfk.i_am_pa()
+        skp_spfk.pa_recv(1, 2, BS.IChdBorn)
         if no_wait:
-            parent_sock.send(b'x') ; parent_sock.close() ; parent_sock = None
-        return pid, parent_sock
+            skp_spfk.pa_send(BS.YouChdGo); skp_spfk.close() ; skp_spfk = None
+        return pid, skp_spfk
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
     # os.exec*成功后不回来，替换了进程
