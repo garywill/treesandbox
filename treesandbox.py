@@ -32,8 +32,8 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.see_real_hw=True # 看见真实/dev和/sys
 
     uc.user_mnts = [
-        # d(mttype='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
-        # d(mttype='robind', src=f'{si.startdir_on_host}', SDS=1),
+        # d(batch_plan='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
+        # d(plan='robind', src=f'{si.startdir_on_host}', SDS=1),
     ]
 
     # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
@@ -154,7 +154,7 @@ def gen_layer3(si, uc, dyncfg):
             d(batch_plan='container-rootfs'),  # 不包括 dev 。不包括 proc
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
             d(plan='empty-if-exist', dest=si.startscript_on_host),
-            *dyncfg.fs_user_mounts,
+
             # ---- 以上是不变条目 ----
 
             d(plan='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
@@ -201,6 +201,9 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
             d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if uc.icewm else [] ),
+
+            *uc.user_mnts, # NOTE 用户挂载要放最后
+            d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
         envs_unset=[
             "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
@@ -242,8 +245,6 @@ def gen_layer3(si, uc, dyncfg):
     return layer3
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
-    fs_user_mounts = []
-
     cmds_to_mask = []
     paths_to_mask = []
 
@@ -261,21 +262,6 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob('/sys/devices/*/*/drm') ],
         ] if uc.gpus else [] ),
     ]
-
-    for um in (uc.user_mnts or [] ):
-        if um.mttype == 'appimage':
-            fs_user_mounts += [d(plan='appimg-mount', src=um.src, dest=f'/sbxdir/apps/{um.appname}')]
-            start_sh_content = f'''#!/bin/bash
-                script=$(readlink -f "$0")
-                scriptpath=$(dirname "$script")
-                env APPDIR="$scriptpath/{um.appname}" "$scriptpath"/{um.appname}/AppRun "$@"
-            '''
-            fs_user_mounts += [d(plan='rofile', dest=f'/sbxdir/apps/run_{um.appname}', destmode=0o555, content=start_sh_content)]
-        elif um.mttype in ['bind', 'robind', 'same', 'rosame']:
-            planItem = copy.deepcopy(um)
-            del planItem.mttype
-            planItem.plan = um.mttype
-            fs_user_mounts += [planItem]
 
 
     if uc.mask_xdg_opens:
@@ -296,10 +282,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.machineid == 'zero':
         machineid = '00000000000000000000000000000000'
 
-    fs_user_mounts += [d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)]
-
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['fs_user_mounts', 'paths_to_mask', 'machineid', 'mnts_gui']})
+            if k in ['paths_to_mask', 'machineid', 'mnts_gui']})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
@@ -1047,6 +1031,14 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
                 path = napath(path)
                 if os.path.lexists(path):
                     a( d( plan='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
+        elif batch_plan == 'appimage':
+            a( d(plan='appimg-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.appname}') )
+            start_sh_content = f'''#!/bin/bash
+                script=$(readlink -f "$0")
+                scriptpath=$(dirname "$script")
+                env APPDIR="$scriptpath/{pItem.appname}" "$scriptpath"/{pItem.appname}/AppRun "$@"
+            '''
+            a( d(plan='rofile', dest=f'/sbxdir/apps/run_{pItem.appname}', destmode=0o555, content=start_sh_content) )
 
         # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
         elif plan:

@@ -119,8 +119,8 @@ Edit `.py` file and edit `userconfig` part like this:
 ```python
 uc.sandbox_name='freecad'
 uc.user_mnts = [
-    d(mttype='appimage', appname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
-    d(mttype='bind', src='/anyhdd2/projects_save/', SDS=1),
+    d(batch_plan='appimage', appname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(plan='bind', src='/anyhdd2/projects_save/', SDS=1),
 ]
 uc.gui="realX"
 ```
@@ -143,7 +143,7 @@ Configure:
 ```python
 uc.sandbox_name='firefox' # sandbox name
 uc.user_mnts = [
-    d(mttype='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
+    d(plan='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
 ]
 uc.gui="realX"
@@ -170,7 +170,7 @@ The `fakehome` directory will be mounted into the sandbox at the user’s home p
 
 ```python
 uc.user_mnts = [
-    d(mttype='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
+    d(plan='robind', src=f'{si.HOME}/.vimrc', SDS=1), 
 ]
 ```
 ## Sandbox layering model
