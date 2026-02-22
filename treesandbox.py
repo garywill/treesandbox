@@ -2194,9 +2194,10 @@ def raise_exit(err_msg, no_cleanup=False):
     if not no_cleanup: sys.exit(1)
     else: os._exit(1)
 
-def CHK( condition, errmsg='某项检查失败'):
+def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
     if not condition:
-        raise_exit(errmsg)
+        if action == 'raise_exit': raise_exit(errmsg)
+        elif action == 'warn': log(f"警告: {errmsg}", file=sys.stderr)
 
 ASK_OPEN='''\
 #!/bin/bash
