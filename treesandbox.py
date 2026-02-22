@@ -541,7 +541,7 @@ def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把l
 
 
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
-def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
+def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, OG=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # dirmaker.xxx.name
         # dirmaker.name -> dirmaker.xxx.name
@@ -579,6 +579,61 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
             f.write(lyrcfg.layer_name)
             os.chmod(f.name, 0o444)
         symlink(f'dirmaker.layer.{lyrcfg.layer_name}.name', f'{target_sbxdir_path}/dirmaker.layer.name')
+
+
+    if call_at_begin:
+        with open(f'{si.outest_sbxdir}/sbx.{si.outest_pid}.pid', 'w') as f:
+            f.write(str(si.outest_pid))
+            os.chmod(f.name, 0o444)
+
+        symlink(f'sbx.{si.outest_pid}.pid', f'{si.outest_sbxdir}/sbx.pid')
+
+        with open(f'{si.outest_sbxdir}/userconfig.json', 'w') as f:
+            f.write(json.dumps(OG.uc, indent=2, ensure_ascii=False))
+            os.chmod(f.name, 0o444)
+        with open(f'{si.outest_sbxdir}/dyncfg.json', 'w') as f:
+            f.write(json.dumps(OG.dyncfg, indent=2, ensure_ascii=False))
+            os.chmod(f.name, 0o444)
+
+
+
+        def make_file_get_fd(filepath, open_flag, filemode):
+            fd = os.open(filepath, open_flag, filemode)
+            set_fd_keep_on_exec(fd, True)
+            return fd
+
+        si.file_fds = d()
+        si.file_fds.update( d(
+            # 沙箱内只fd写，最外层用路径来读
+            layerslog_a = make_file_get_fd(f'{si.outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
+
+            # RDONLY是因为沙箱内只fd读，仅最外层用路径写
+            procs_alive = make_file_get_fd(f'{si.outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_histseen = make_file_get_fd(f'{si.outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_wdgsee = make_file_get_fd(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        ) )
+
+        Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
+        Path(f'{si.outest_sbxdir}/procs.histseen.json').write_text("{}")
+        Path(f'{si.outest_sbxdir}/procs.wdgsee.json').write_text("{}")
+
+        si.subp_log_fds = d()
+        for pn in si.expected_alive_procs:
+            if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
+                si.subp_log_fds[pn] = make_file_get_fd(f'{si.outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+
+        def create_socketpair_fds():
+            skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, True)
+            fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
+            return d(pa=fd_pa, chd=fd_chd)
+        si.oSkt_fds = d()
+        for lyr in si.expected_alive_layers:
+            si.oSkt_fds [lyr] = create_socketpair_fds()
+
+
+
+
 
     Path(f'{target_sbxdir_path}/empty').touch()
     os.chmod(f'{target_sbxdir_path}/empty', 0)
@@ -631,9 +686,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): 
    # build_fs 时原有：
             # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
-OG = None
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
-    global OG
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录
 
     si = d()
@@ -645,14 +698,16 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     groupname = grp.getgrgid(gid).gr_name
     HOME = f'/home/{username}' if uid>0 else '/root'
     outest_pid = os.getpid()
+    log(f'PID = {outest_pid}')
+    startscript_on_host = scriptfilepath
+    startdir_on_host = scriptdirpath
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid', ]
+        ['uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
+         'startscript_on_host', 'startdir_on_host']
     } )
-    si.startscript_on_host = scriptfilepath
-    si.startdir_on_host = scriptdirpath
 
-    uc = userconfig(si)
+    uc = userconfig(si) # NOTE
 
     # 沙箱名。不是子容器层名
     CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"容器名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
@@ -670,7 +725,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         sharedir_onhost = None
 
 
-    dyncfg = gen_dynamic_cfg(si, uc)
+    dyncfg = gen_dynamic_cfg(si, uc) # NOTE
 
     starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
 
@@ -679,8 +734,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         instance_name = f'{sandbox_name}_{starttime_str}-{n}'
         if os.path.lexists( (outest_sbxdir := f'{PTMP}/{instance_name}') ) :
             n+=1
-        else :
-            break
+        else : break
 
     if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
 
@@ -689,76 +743,22 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CG_SBX = f'{CG_TSBXS}/{instance_name}'
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
+    BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
+    pythonbin = sys.executable
+
     si.update( { k: v for k, v in locals().items() if k in
         ['sandbox_name', 'instance_name', 'outest_sbxdir', 'newXId', 'apps',
-         'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
+         'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
     } )
-    si.pythonbin = sys.executable
 
     layer1_cfg = gen_layer1(si, uc, dyncfg)
     start_lyrs_recursive_jobs(si, layer1_cfg)
 
-    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
-    print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
-    print(f"cgroup：{CG_SBX}")
-    print(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
 
 
-    atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX, sharedir_onhost) ) # 顶层父进程注册清理函数
-
-    mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
-    os.chdir(outest_sbxdir)
-    mkdirp(CG_TSBXS)
-
-    with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
-        f.write(str(outest_pid))
-        os.chmod(f.name, 0o444)
-
-    symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
-
-    with open(f'{outest_sbxdir}/userconfig.json', 'w') as f:
-        f.write(json.dumps(uc, indent=2, ensure_ascii=False))
-        os.chmod(f.name, 0o444)
-    with open(f'{outest_sbxdir}/dyncfg.json', 'w') as f:
-        f.write(json.dumps(dyncfg, indent=2, ensure_ascii=False))
-        os.chmod(f.name, 0o444)
-
-    si.BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
-
-    def make_file_get_fd(filepath, open_flag, filemode):
-        fd = os.open(filepath, open_flag, filemode)
-        set_fd_keep_on_exec(fd, True)
-        return fd
-
-    si.file_fds = d()
-    si.file_fds.update( d(
-        # 沙箱内只fd写，最外层用路径来读
-        layerslog_a = make_file_get_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
-
-        # RDONLY是因为沙箱内只fd读，仅最外层用路径写
-        procs_alive = make_file_get_fd(f'{outest_sbxdir}/procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        procs_histseen = make_file_get_fd(f'{outest_sbxdir}/procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
-        procs_wdgsee = make_file_get_fd(f'{outest_sbxdir}/procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
-    ) )
-
-    si.subp_log_fds = d()
-    for pn in si.expected_alive_procs:
-        if not (pn in ['user_shell','dev_shell','mainApp'] or pn.startswith('layer') ):
-            si.subp_log_fds[pn] = make_file_get_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
-
-    def create_socketpair_fds():
-        skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, True)
-        fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
-        return d(pa=fd_pa, chd=fd_chd)
-    si.oSkt_fds = d()
-    for lyr in si.expected_alive_layers:
-        si.oSkt_fds [lyr] = create_socketpair_fds()
-
-    make_mnt_fill_sbxdir(si, layer1_cfg, call_at_begin=True)
 
     OG = d(dyncfg=dyncfg, uc=uc)
-    return si, layer1_cfg
+    return si, layer1_cfg, OG
 
 def set_fd_keep_on_exec(fd:int, keep:bool):
     if keep: new_fdflag = fcntl.fcntl(fd, fcntl.F_GETFD) & (~fcntl.FD_CLOEXEC)
@@ -982,42 +982,66 @@ def get_nstypes(nsdir_path):
 def get_start_tick(statfile_path): # 返回的是字符串，不是数字
     return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
 
+def maybe_sendto_running_instance():
+    return False
 
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
+OG = None # outest global info
 def main():
-    global si, tlcfg
+    global si, tlcfg, OG
 
     arg_parser = argparse.ArgumentParser(add_help=False)
     sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
     sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
-    sbx_arg_grp.add_argument("--lyrcfg", metavar="<lyrcfg_file>")
+    sbx_arg_grp.add_argument("--lyrcfg", metavar="<cli_lyrcfg_file>")
 
     sbx_args, user_cli_argv = arg_parser.parse_known_args()
 
-    appname = sbx_args.app
-    lyrcfg_file = sbx_args.lyrcfg
+    user_cli_appname = sbx_args.app
+    cli_lyrcfg_file = sbx_args.lyrcfg
 
-    if appname or not lyrcfg_file: is_outest = True # 是顶层
+    if user_cli_appname or not cli_lyrcfg_file: is_outest = True # 是顶层
     else: is_outest = False # 是子层
 
     if is_outest: # 是顶层
-        si, layer1_cfg = init_sbxinfo() # 只有从最外层启动才运行这个函数
+        si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
         tlcfg = layer1_cfg
 
         tlcfg.sbxdir_path0 = si.outest_sbxdir
-
     else: # 是子层
-        tlcfg = d(json.loads(Path(lyrcfg_file).read_text()))
-        tlcfg.sbxdir_path0 = padir(lyrcfg_file)
+        tlcfg = d(json.loads(Path(cli_lyrcfg_file).read_text()))
+        tlcfg.sbxdir_path0 = padir(cli_lyrcfg_file)
         si = d(json.loads(Path(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read_text()))
 
+
+
+
     if is_outest:
-        if not appname or appname=='default': user_cli_app = si.apps[0]
-        else: user_cli_app = next((app for app in si.apps if app.get('appname') == appname), None)
-        CHK( user_cli_app and user_cli_app.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
-        OG.mainApp_cmdvec = user_cli_app.cmdvec + user_cli_argv
+        print(f"当前PID: {si.outest_pid}  沙箱名：{si.sandbox_name}   启动的用户为：{si.username} {si.groupname}")
+        if not user_cli_appname or user_cli_appname=='default': chosen_appItem = si.apps[0]
+        else: chosen_appItem = next((app for app in si.apps if app.get('appname') == user_cli_appname), None)
+        CHK( chosen_appItem and chosen_appItem.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
+        OG.mainApp_cmdvec = chosen_appItem.cmdvec + user_cli_argv
         log(f'要在沙箱内运行的app的命令: {OG.mainApp_cmdvec}')
+
+        # 判断应该 新实例 还是 发送app命令到 正在运行的实例
+        if maybe_sendto_running_instance():
+            sys.exit(0)
+
+        print(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
+        print(f"cgroup：{si.CG_SBX}")
+        print(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
+        if si.newXId: log(f'沙箱使用的X11编号 DISPLAY=:{si.newXId}')
+
+        atexit.register(cleanup_outest) # 顶层父进程注册清理函数
+
+        mkdirp(si.CG_TSBXS)
+        mkdirp(si.CG_SBX)
+        Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
+
+        make_mnt_fill_sbxdir(si, layer1_cfg, call_at_begin=True, OG=OG)
+
 
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
     set_ps1('notready')
@@ -1047,12 +1071,6 @@ def main():
         if len(dict.keys(envg))>0:
             log('更新环境变量' , envg)
             os.environ.update(envg)
-
-    if is_outest:
-        mkdirp(si.CG_SBX)
-        Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
-    if is_outest:
-        Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
 
     for wait_task in (tlcfg.start_after or [] ):
         if wait_task.waittype == 'socket-listened':
@@ -1833,10 +1851,11 @@ def safe_copy_script(copy_target_path):
 
 
 cleanup_symlinks_to_rm = []
-def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
+def cleanup_outest():
     if os.getpid() == 1: return
+    Path(f'{si.outest_sbxdir}_exit').touch() # 设个正在退出的标记
     # if OG and OG.layer1_pid: try_pass(lambda: os.setpgid(OG.layer1_pid, 0) )
-    OutestProcsMonitor.sbx_exit_broadcast()
+    try_pass(lambda: OutestProcsMonitor.sbx_exit_broadcast())
     log(f"准备退出，等待所有子进程结束后执行清理...")
     while exist_childtree(): time.sleep(0.1)
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
@@ -1844,23 +1863,24 @@ def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
         # new.*.rootfs/
         # apps/*/
     paths_rm_sub_files = [ #准备删这些目录的一级子文件和目录本身
-        *glob(f'{outest_sbxdir}/temp'),
-        *glob(f'{outest_sbxdir}/apps'),
-        *glob(f'{outest_sbxdir}/new.*.rootfs'),
-        *glob(f'{outest_sbxdir}'),
+        *glob(f'{si.outest_sbxdir}/temp'),
+        *glob(f'{si.outest_sbxdir}/apps'),
+        *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
+        *glob(f'{si.outest_sbxdir}'),
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
             if is_file(f) or f.is_symlink() :
                 try_pass(lambda: f.unlink() )
         try_pass(lambda: os.rmdir(dirpath) )
-    for emptydir in [cg_dir, sharedir_onhost]:
+    for emptydir in [si.CG_SBX, si.sharedir_onhost]:
         try_pass(lambda: os.rmdir(emptydir))
     for slkItem in cleanup_symlinks_to_rm:
         if Path(slkItem).is_symlink() :
             linkto = os.readlink(slkItem)
             if linkto == si.outest_sbxdir or linkto.startswith(f'{si.outest_sbxdir}/'):
                 Path(slkItem).unlink()
+    if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
 #==========================================
 #======= libc 工具函数 =========================
