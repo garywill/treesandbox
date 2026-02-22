@@ -782,7 +782,6 @@ class OutestProcsMonitor:
         cls.oPaSkts = d()
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
-            # print(lyrn, cls.oPaSkts[lyrn], fdpair.pa)
         cls.tell_lyr_runsubp(si.mainLyr, OG.mainApp_cmdvec, 'mainApp') # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
@@ -848,13 +847,17 @@ class OutestProcsMonitor:
         )
     @classmethod
     def sbx_exit_broadcast(cls):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sbx_exit_broadcast()", 'warn') # 可能会在初始化之前被调用
         for lyrname in si.expected_alive_layers:
-            cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'))
+            cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'), loose=True)
     @classmethod
-    def sendmsg_to_lyr(cls, lyrname, msgobj):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
+    def sendmsg_to_lyr(cls, lyrname, msgobj, loose=False):
+        CHK( cls.I_AM_OUTEST, "警告：在无I_AM_OUTEST的情况下调用了sendmsg_to_lyr()", 'warn' if loose else 'raise_exit')
+        try:
+            cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
+        except Exception as err:
+            if loose: log(f"警告：发送消息给{lyrname}未成功: {err}", file=sys.stderr)
+            else: raise
     @classmethod
     def tell_lyr_runsubp(cls, lyrname, cmdvec, subp_name=None):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
