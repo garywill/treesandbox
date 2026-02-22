@@ -512,6 +512,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     while os.path.lexists( (outest_sbxdir := f'{PTMP}/{sandbox_name}_{starttime_str}-{n}') ):
         n+=1
 
+    atexit.register(lambda: cleanup_outest(outest_sbxdir) ) # 顶层父进程注册清理函数
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     print(f"沙箱名：{sandbox_name}  沙箱工作目录：{outest_sbxdir}")
     os.chdir(outest_sbxdir)
@@ -610,8 +611,6 @@ def main():
     else: # 父进程
         if not is_outest:
             sys.exit()
-
-        atexit.register(lambda: cleanup_outest() ) # 顶层父进程注册清理函数
 
         layer_set_status('PaAfterFork')
 
@@ -1171,17 +1170,17 @@ def safe_copy_script(copy_target_path):
 
 
 
-def cleanup_outest():
+def cleanup_outest(outest_sbxdir):
     print(f"{scriptname} 正在执行清理...")
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
         # new.*.rootfs/
         # apps/*/
     paths_rm_sub_files = [ #准备删这些目录的一级子文件和目录本身
-        f'{si.outest_sbxdir}/temp',
-        f'{si.outest_sbxdir}/apps',
-        *glob(f'{si.outest_sbxdir}/new.*.rootfs'),
-        f'{si.outest_sbxdir}',
+        *glob(f'{outest_sbxdir}/temp'),
+        *glob(f'{outest_sbxdir}/apps'),
+        *glob(f'{outest_sbxdir}/new.*.rootfs'),
+        *glob(f'{outest_sbxdir}'),
     ]
     for dirpath in paths_rm_sub_files:
         for f in Path(dirpath).iterdir():
