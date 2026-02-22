@@ -1696,12 +1696,14 @@ class OutestProcsMonitor:
     @classmethod
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}')
+        if proc_name in ['xephyr', 'xwayland']:
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
-        # TODO weston
-        # TODO xwayland
+        if proc_name == 'weston':
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+            cls.symlink_into_sbxdir(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
+            cleanup_symlinks_to_rm.append(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
@@ -1861,6 +1863,8 @@ def cleanup_outest():
 
     cleanup_startat = time.monotonic()
     while exist_childtree() and time.monotonic() <= cleanup_startat+5: time.sleep(0.1)
+
+    # return # 如果出错需要查看log ， 就启动这个return
 
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
