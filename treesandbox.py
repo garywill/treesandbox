@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback
 from pathlib import Path
 from glob import glob
 
@@ -150,7 +150,6 @@ def gen_layer3(si, uc, dyncfg):
         unshare_ipc=True,
         unshare_time=True,
         unshare_uts=True,
-        unshare_fd=True,
 
         unshare_net=True if uc.net.iface != 'real' else False,
 
@@ -488,7 +487,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     groupname = grp.getgrgid(gid).gr_name
     HOME = f'/home/{username}' if uid>0 else '/root'
     outest_pid = os.getpid()
-    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  HOME: {HOME}")
+    print(f"沙箱启动PID: {outest_pid}  启动沙箱的用户为：{username} {groupname}  推测HOME: {HOME}")
 
     sbxinfo.uid = uid
     sbxinfo.gid = gid
@@ -759,7 +758,7 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         child_sock.send(b'x') # 给父进程发送信号
         CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
         child_sock.recv(1) ; child_sock.close()
-
+        wlog('subp_starting', logNs=True, kvpairs=d(self_see_pid=os.getpid(), subp_cmdvec=cmdvec) )
         # 关闭3以上的fd
         if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
             for fd in os.listdir('/proc/self/fd') :
@@ -779,7 +778,7 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         os.close(devnull)
 
         os.execvp(cmdvec[0], cmdvec)
-        os._exit(123) # 正常不会到这里 , 不能用sys.exit, 否则会执行原进程的清理
+        raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
     else: # 原进程
         child_sock.close() # 关闭不需要的 socket 端
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
@@ -877,17 +876,22 @@ def layer_set_status(status):
     if status == 'booted':
         wlog('booted')
 
-def wlog(*args, errmsg=None):
+def wlog(*args, kvpairs={},  logNs=False, errmsg=None):
+    if not (si and si.fd_layerslog_a): return False
     event = args[0] if (errmsg is None) else 'error'
-    logObj = d( logger = thislyr_cfg.layer_name, event = event, )
-    if event == 'booted':
-        logObj.ns = d()
-        for nstype in os.listdir('/proc/self/ns'):
-            logObj.ns[nstype] = os.stat('/proc/self/ns/pid').st_ino
+    logObj = d(
+        logger = thislyr_cfg.layer_name if thislyr_cfg else '',
+        event = event, **kvpairs
+    )
     if event == 'error':
         logObj.errmsg = errmsg
+    if event == 'booted': logNs = True
+    if logNs:
+        logObj.ns = d()
+        for nstype in os.listdir('/proc/self/ns'):
+            logObj.ns[nstype] = os.stat(f'/proc/self/ns/{nstype}').st_ino
 
-    os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n']).encode())
+    try_showerr(lambda: os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode()) )
 
 def build_fs():
     # 无论本层是否设置了变根，都调用这个函数
@@ -1477,9 +1481,19 @@ def try_pass(func):
     except:
         pass
 
-def raise_exit(err_msg):
-    raise Exception( loghead + err_msg)
-    sys.exit(1)
+def try_showerr(func):
+    try:
+        return func()
+    except Exception as err:
+        traceback.print_exc(file=sys.stderr)
+
+
+def raise_exit(err_msg, no_cleanup=False):
+    traceback.print_stack(file=sys.stderr)
+    print(loghead + err_msg, file=sys.stderr)
+    wlog(errmsg=err_msg)
+    if not no_cleanup: sys.exit(1)
+    else: os._exit(1)
 
 def CHK( condition, errmsg='某项检查失败'):
     if not condition:
