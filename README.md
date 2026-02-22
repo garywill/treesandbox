@@ -184,17 +184,17 @@ Linux Host
   |
  layer2 (semi-trusted zone: mount ns isolation; user global privacy paths masked)
    |
-   |--layer2a (drop caps; for trusted companion programs, like xpra client / dbus proxy)
+   |--layer2c (drop caps; for trusted companion programs, like xpra client / dbus proxy)
    |
  layer2h (intermediary)
     |
   layer3 (untrusted zone: isolates most namespaces; sees system base paths; only data paths explicitly mounted by user are visible)
     |
     |--layer4 (drop caps; where user apps run)
-    |--layer4a (drop caps; for untrusted companion programs, such as xpra server)
+    |--layer4c (drop caps; for untrusted companion programs, such as xpra server)
 ```
 
-(layer2a and layer4a are both for companion programs. layer2a can access real X11 and real DBus, while layer4a not).
+(layer2c and layer4c are both for companion programs. layer2c can access real X11 and real DBus, while layer4c not).
 
 **Normal users do not need to edit the default template — only tweak the user options section.**
 
@@ -216,14 +216,14 @@ layer1 = d( # layer 1
             newrootfs=True, fs=[ ..... ], ....
             
             sublayers = [
-                d( layer_name='layer2a', .... ),
+                d( layer_name='layer2c', .... ),
                 d( 
                     layer_name='layer2h', 
                     sublayers = [
                         d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
                             sublayers=[ # layer 4
                                 d( layer_name='layer4', .....  , user_shell=True ),
-                                d( layer_name='layer4a', ..... ),
+                                d( layer_name='layer4c', ..... ),
                             ],
                         ),
                     ] 

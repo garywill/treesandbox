@@ -101,15 +101,15 @@ def gen_layer2(si, uc, dyncfg):
         ],
 
         sublayers = [
-            gen_layer2a(si, uc, dyncfg),
+            gen_layer2c(si, uc, dyncfg),
             gen_layer2h(si, uc, dyncfg),
         ],
     )
 
-def gen_layer2a(si, uc, dyncfg):
-    # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
+def gen_layer2c(si, uc, dyncfg):
+    # layer2c实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
     return d(
-        layer_name='layer2a', unshare_pid=True, unshare_mnt=True,
+        layer_name='layer2c', unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
@@ -219,14 +219,14 @@ def gen_layer3(si, uc, dyncfg):
             d(DISPLAY=':10') if uc.gui=='xephyr' else None,
         ],
         sublayers=[
-            gen_layer4a(si, uc, dyncfg),
+            gen_layer4c(si, uc, dyncfg),
             gen_layer4(si, uc, dyncfg),
         ],
     )
 
-def gen_layer4a(si, uc, dyncfg):
+def gen_layer4c(si, uc, dyncfg):
     return d(
-        layer_name='layer4a', # 默认模板的 layer_name 不要修改
+        layer_name='layer4c', # 默认模板的 layer_name 不要修改
         unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
@@ -418,7 +418,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
 
-    if cfg.layer_name in ['layer2a', 'layer4a', 'layer4']:
+    if cfg.layer_name in ['layer2c', 'layer4c', 'layer4']:
         CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
 
     if parent_cfg is None:

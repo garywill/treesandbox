@@ -200,7 +200,7 @@ Linux Host
   |
  layer2 (半信任空间：隔离mount ns；屏蔽用户设置的全局屏蔽路径）
    |
-   |--layer2a (降权；用于运行信任的辅助程序，如 xpra client、dbus-proxy ...）
+   |--layer2c (降权；用于运行信任的辅助程序，如 xpra client、dbus-proxy ...）
    |
  layer2h (过度)
     |
@@ -208,10 +208,10 @@ Linux Host
     |       可见系统基础目录，其余仅用户挂载进去的路径可见）
     |
     |--layer4 (降权；用于运行用户的App)
-    |--layer4a (降权；用于运行不信任的辅助程序，如 xpra server ...)
+    |--layer4c (降权；用于运行不信任的辅助程序，如 xpra server ...)
 ```
 
-（layer2a和layer4a都用于运行辅助程序，区别在于layer2a可以访问真实的X11接口、dbus接口，而layer4a则不需要访问这些）
+（layer2c和layer4c都用于运行辅助程序，区别在于layer2c可以访问真实的X11接口、dbus接口，而layer4c则不需要访问这些）
 
 **以上这个默认的嵌套模板普通用户不需要修改，只需要修改用户选项部分**即可。
 
@@ -233,14 +233,14 @@ layer1 = d( # 第1层
             newrootfs=True, fs=[ ..... ], ....
             
             sublayers = [
-                d( layer_name='layer2a', .... ), 
+                d( layer_name='layer2c', .... ), 
                 d( 
                     layer_name='layer2h', 
                     sublayers = [
                         d( layer_name='layer3', ..... , newrootfs=True, fs=[ ..... ], .....
                             sublayers=[ # 第4层
                                 d( layer_name='layer4', .....  , user_shell=True ),
-                                d( layer_name='layer4a', ..... ),
+                                d( layer_name='layer4c', ..... ),
                             ],
                         ),
                     ] 
