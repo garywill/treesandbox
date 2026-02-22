@@ -273,7 +273,7 @@ def gen_layer2c(si, uc, dyncfg):
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
         daemon_tasks = [
-            d(task='sync_clipbd') ,
+            d(task='sync_clipbd') if si.newXId else None,
         ],
     )
 
@@ -919,7 +919,8 @@ def main(lyrcfg_in):
             except Exception as err:
                 log(f"查找运行中的实例的过程中出错，认为没有正在运行的实例 （ {err} ）")
         log('---------------------')
-        CHK( is_XId_available(si.newXId), f"准备要用的显示编号 {si.newXId=} 被占用")
+        if si.newXId:
+            CHK( is_XId_available(si.newXId), f"准备要用的显示编号 {si.newXId=} 被占用")
         log(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
         log(f"cgroup：{si.CG_SBX}")
         log(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
@@ -1301,7 +1302,7 @@ def commit_fsOpertns(fsOpertns):
         src = opItem.src
         dest = opItem.dest
         real_dest = napath(f'{target_fs_path}/{dest}')
-        if op in ['same', 'rosame', 'bind', 'robind'] :
+        if op in ['same', 'rosame', 'bind', 'robind'] : # TODO bindfs 它才可以设置destmode
             CHK( os.path.lexists(src) , f"来源{src}不存在")
             if op in ['bind', 'robind'] :
                 src = rslvy(src)
@@ -2049,18 +2050,15 @@ class ClipboardSyncer():
         if wrong: log_warn('监听来自主机的写沙箱剪贴板请求时发生未知错误')
         elif ready:
             log(f'主机有新连接来要往沙箱写剪贴板')
-            client_sock, _ = cls.socket_fromHostLsn.accept()
             pid , _ = fork(loghead=f'{loghead} 主机要写沙箱剪贴板', proc_dispname='clipbd write',
                            close_fds=True, cut_stdin=True,
-                           close_keep_fds=[LG.userns_unpri.usernsfd, client_sock.fileno()],
+                           close_keep_fds=[cls.socket_fromHostLsn.fileno(), LG.userns_unpri.usernsfd],
                            )
             if pid == 0: # 子进程：处理客户端
                 os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
-                try: cls.handle_client_clipbdFromHostSocket(client_sock)
+                try: cls.handle_client_clipbdFromHostSocket()
                 except Exception as err: log_warn(err)
                 finally: log_warn('handle_client_clipbdFromHostSocket本应结束所属进程但没有'); os._exit(1) #若到这,说明上面未成功退出
-            else: # 父进程：关闭客户端 socket（子进程已持有副本）
-                client_sock.close()
             return
 
         # 如果上面没有return ， 才执行这里
@@ -2155,13 +2153,14 @@ class ClipboardSyncer():
             log_warn(f'Failed to run xsel - {err}')
             return False
     @classmethod
-    def handle_client_clipbdFromHostSocket(cls, client_sock): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
+    def handle_client_clipbdFromHostSocket(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
         if os.getpid() == 1: log_warn('在pid=1时handle_client_clipbdFromHostSocket()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
             log_warn(f'接收数据的过程中超时放弃')
             os._exit(1) # 强制退出子进程
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
+        client_sock, _ = cls.socket_fromHostLsn.accept()
         data = b''
         try:
             while True:
