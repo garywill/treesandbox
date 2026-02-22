@@ -336,7 +336,7 @@ def gen_layer2(si, uc, dyncfg):
             # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
             d(many_op='container-rootfs'),
             d(many_op='basic-dev'),
-            d(op='same', src='/dev/net/tun', SDS=1) if uc.net.iface=='tun' else None,
+            d(op='rosame', src='/dev/net/tun', SDS=1) if uc.net.iface=='tun' else None,
             d(many_op='mask-privacy', destbase='/'),
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
@@ -492,7 +492,7 @@ def gen_layer3(si, uc, dyncfg):
 
             # NOTE 用户挂载要放最后
             *uc.user_mnts, # NOTE 用户挂载要放最后
-            d(op='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
+            d(op='final-rmt-ro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
         envs_unset=[
             "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
@@ -532,7 +532,10 @@ def gen_layer4(si, uc, dyncfg):
         is_mainlyr=True,  # 我是主app所在层
         unshare_pid=True, unshare_mnt=True,
 
-        envset_grps = [uc.setenvs],
+        envset_grps = [
+            d(PATH=os.getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
+            uc.setenvs,
+        ],
 
         start_after = [
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston','xpra'] else None,
@@ -544,7 +547,7 @@ def gen_layer4(si, uc, dyncfg):
 
 
 resv_name_prefix = ['bridge_', 'layer', 'shareshell_', 'mainApp']
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun', 'bridge', 'shareshell', 'mainApp']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
     scriptfilepath = os.path.abspath(__file__)
@@ -1015,10 +1018,8 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
     # 重新挂载为ro
     if new_tmpfs_for_sbxdir:
         os.chmod(target_sbxdir_path, 0o555)
-        mount(None, target_sbxdir_path, None, MS.REMOUNT|MS.RDONLY|mntflag_newsbxdir, None)
+        rmt_ro(target_sbxdir_path, mntflag_newsbxdir)
 
-   # build_fs 时原有：
-            # mount('tmpfs', f'{real_dest}/overlays', 'tmpfs', flag, None)
 
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
@@ -1031,17 +1032,29 @@ def main(lyrcfg_in):
     else: is_outest = False # 是子层
 
     if is_outest: # 是顶层
-        arg_parser = argparse.ArgumentParser(add_help=False)
+        arg_parser = argparse.ArgumentParser( add_help=True, usage="%(prog)s [options] [<user_cli_argv> ...]",
+            description="Tree Sandbox 沙箱入口。根据 userconfig 函数里的配置 和 本命令CLI参数，进行沙箱操作。可以根据情况启动新沙箱实例，或复用正在运行的同名沙箱的实例"
+        )
+        arg_parser.add_argument("--nocleanup", action='store_true',
+                                help="沙箱退出后，不删除临时记录沙箱信息的目录")
+        arg_parser.add_argument("--reusefg", action='store_true',
+                                help="如果将复用正在运行的实例，则使用远程shell，让新启动的沙箱内app在本终端的前台交互。否则，只发送CLI命令给正在运行的实例，然后此次命令返回（仅在沙箱配置启用了 reuseInstance 时有效）。若将启动新沙箱实例，则本选项被忽略")
+        # arg_parser.add_argument("--enter", action='store_true',
+                                # help="自动找到一个正在运行的同名沙箱实例，获得其shell。若无正在运行的实例，报错退出")
+        # arg_parser.add_argument("--enter-instance", metavar="<chosen_instance_name>",
+                                # help="找到指定的正在运行的具体实例，获得其shell。可以是非同名沙箱，但沙箱版本需要一致")
+        arg_parser.add_argument("--app", metavar="<chosen_appname>", default="default",
+                                help="通过已配置的appname，指定要在沙箱中启动的命令。不指定或使用 '--app default' 效果相同")
 
-        arg_parser.add_argument("--nocleanup", action='store_true')
-
-        sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
-        sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
-
-        sbx_args, user_cli_argv = arg_parser.parse_known_args()
+        (sbx_args, # 上面列出的参数
+         user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
+        ) = arg_parser.parse_known_args()
 
         nocleanup = sbx_args.nocleanup
-        user_cli_appname = sbx_args.app
+        reusefg = sbx_args.reusefg
+        # enter = sbx_args.enter
+        # chosen_instance_name = sbx_args.enter_instance
+        chosen_appname = sbx_args.app
 
     if is_outest:
         si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
@@ -1055,11 +1068,11 @@ def main(lyrcfg_in):
         tlcfg.sbxdir_path0 = '/sbxdir' if is_dir('/sbxdir') else si.outest_sbxdir
         # si =  # 不需要再加载si, 因为是fork来的
 
-
     if is_outest:
+        if reusefg: CHK(si.reuseInstance, '因沙箱配置中reuseInstance未启用，不能使用reusefg')
         log(f"当前PID: {si.outest_pid}  沙箱名：{si.sandbox_name}   启动的用户为：{si.username} {si.groupname}")
-        if not user_cli_appname or user_cli_appname=='default': chosen_appItem = si.apps[0]
-        else: chosen_appItem = next((app for app in si.apps if app.get('appname') == user_cli_appname), None)
+        if not chosen_appname or chosen_appname=='default': chosen_appItem = si.apps[0]
+        else: chosen_appItem = next((app for app in si.apps if app.get('appname') == chosen_appname), None)
         CHK( chosen_appItem and chosen_appItem.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
         OG.chosen_appItem = chosen_appItem
         OG.user_cli_argv = user_cli_argv
@@ -1068,11 +1081,8 @@ def main(lyrcfg_in):
 
         # 判断应该 新实例 还是 发送app命令到 正在运行的实例
         if si.reuseInstance:
-            try:
-                if maybe_sendto_running_instance():
-                    sys.exit(0) # 找到了正在运行的实例（实际上已经发送了命令给那个实例）
-            except Exception as err:
-                log(f"查找运行中的实例的过程中出错，认为没有正在运行的实例 （ {err} ）")
+            question_reuse = maybe_sendto_running_instance(reusefg)
+            CHK( question_reuse=='not_reusing', '这里本应该要么得到 not_reusing 的判断结果，要么判断函数应该结束进程')
         log('---------------------')
         if si.newXId:
             CHK( is_XId_available(si.newXId), f"准备要用的显示编号 {si.newXId=} 被占用")
@@ -1169,7 +1179,7 @@ def main2(skp_lyfk):
 
 
     # 本层文件系统、挂载proc （维持 rw）， 变根
-    build_fs()
+    build_fs(tlcfg)
 
     # Unshare User (非首层)
     if tlcfg.unshare_user and tlcfg.depth > 1 : # 第1层的若要做在之前就做了
@@ -1377,7 +1387,7 @@ def create_netns_tun( pasta_custom_args=[] ):
         if not is_dir_inaccessible('/zrootfs'):
             os.unshare(unshrflg(d(mnt=1)))
             mount('tmpfs', '/zrootfs', 'tmpfs', mntflag_tmpfs, 'mode=000')
-            mount(None   , '/zrootfs', None   , mntflag_tmpfs|MS.REMOUNT|MS.RDONLY, 'mode=000')
+            rmt_ro('/zrootfs', mntflag_tmpfs, 'mode=000')
         os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
         drop_caps()
         # 尽管运行pasta前，上面已经通过userns回到了uid=1000，并降权，
@@ -1400,7 +1410,7 @@ def create_netns_tun( pasta_custom_args=[] ):
             *pasta_custom_args,
             si.pythonbin, '-IBS', '-c', PYCODE
         ] )
-        log_warn("exec成pasta失败") ; os._exit(1)
+        warn_exit("exec成pasta失败")
     else: # 原进程
         fd_fifo = os.open(f'/{tlcfg.sbxdir_path1}/temp/netns_proc_info.fifo', os.O_RDONLY|os.O_NONBLOCK)
         ready, _, wrong = select.select([fd_fifo], [], [fd_fifo], 2)
@@ -1444,7 +1454,7 @@ def create_userns_unpri():
         if not is_dir_inaccessible('/zrootfs'):
             os.unshare(unshrflg(d(mnt=1)))
             mount('tmpfs', '/zrootfs', 'tmpfs', mntflag_tmpfs, 'mode=000')
-            mount(None   , '/zrootfs', None   , mntflag_tmpfs|MS.REMOUNT|MS.RDONLY, 'mode=000')
+            rmt_ro('/zrootfs', mntflag_tmpfs, 'mode=000')
 
         os.unshare(unshrflg(d(user=True)))
         skp.chd_send(BS.SetMeUidUser)
@@ -1499,55 +1509,56 @@ def wait_for_startAfters(arr_startAfter):
 
 
 
-def build_fs():
-    if tlcfg.newrootfs: # 如果设置了将要变根，现在先提前确定新根的位置
-        tlcfg.newrootfs_path = f'{tlcfg.sbxdir_path0}/new.{tlcfg.layer_name}.rootfs'
-    else:
-        tlcfg.newrootfs_path = '/'
-    mkdirp(tlcfg.newrootfs_path)
+def build_fs(cfg):
+    if not cfg.newrootfs_path:
+        if cfg.newrootfs: # 如果设置了将要变根，现在先提前确定新根的位置
+            cfg.newrootfs_path = f'{cfg.sbxdir_path0}/new.{cfg.layer_name}.rootfs'
+        else:
+            cfg.newrootfs_path = '/'
+    mkdirp(cfg.newrootfs_path)
 
-    if tlcfg.fs:
-        fsOpertns = gen_fsOpertns()
-        remountPlans = commit_fsOpertns(fsOpertns)
+    if cfg.fs:
+        fsOpertns = gen_fsOpertns(cfg)
+        remountPlans = commit_fsOpertns(cfg, fsOpertns)
         commit_remounts(remountPlans)
 
     # 在build_fs完了之后挂载/proc, 与fsOpertns那边的代码解耦
-    new_proc_path = napath(tlcfg.newrootfs_path+'/proc')
-    if tlcfg.unshare_pid or tlcfg.newrootfs:
+    if cfg.unshare_pid or cfg.newrootfs:
+        new_proc_path = napath(cfg.newrootfs_path+'/proc')
         # log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, 'hidepid=1')
-        tlcfg.new_proc_dir_mnted = True
+        cfg.new_proc_dir_mnted = True
     set_ps1('afterFs')
 
     # 执行变根 (chroot)
-    if tlcfg.newrootfs:
-        mkdirp(f'{tlcfg.newrootfs_path}/oldroot')
-        # log(f'准备变根到 {tlcfg.newrootfs_path}')
-        pivot_root(tlcfg.newrootfs_path, f'{tlcfg.newrootfs_path}/oldroot')
+    if cfg.newrootfs:
+        mkdirp(f'{cfg.newrootfs_path}/oldroot')
+        # log(f'准备变根到 {cfg.newrootfs_path}')
+        pivot_root(cfg.newrootfs_path, f'{cfg.newrootfs_path}/oldroot')
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
-        mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
+        rmt_ro('/', mntflag_newrootfs)
         # log(f'本层文件系统就绪 {os.listdir('/')}')
-    del tlcfg.newrootfs_path
-    del tlcfg.sbxdir_path0
+    del cfg.newrootfs_path
+    del cfg.sbxdir_path0
 
 
-def commit_fsOpertns(fsOpertns):
-    target_fs_path = tlcfg.newrootfs_path
+def commit_fsOpertns(cfg, fsOpertns):
+    target_fs_path = cfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
     def z(rmtItem):
         remountPlans.append(rmtItem)
 
     if target_fs_path.startswith(si.PTMP):
-        mount(si.PTMP, si.PTMP, None, MS.BIND|MS.REC|MS.RDONLY, None)
-        mount(None, si.PTMP, None, MS.REMOUNT|MS.BIND|MS.REC|MS.RDONLY, None)
+        mount(si.PTMP, si.PTMP, None, mntflag_binddir|MS.RDONLY, None)
+        rmt_ro(si.PTMP, mntflag_binddir)
         CHK( os.statvfs(si.PTMP).f_flag&MS.RDONLY, "si.PTMP未成功转换为ro")
-    if not Path(f'{tlcfg.sbxdir_path0}/temp').is_mount():
-        mount('tmpfs', f'{tlcfg.sbxdir_path0}/temp', 'tmpfs', mntflag_tmpfs, None)
+    if not Path(f'{cfg.sbxdir_path0}/temp').is_mount():
+        mount('tmpfs', f'{cfg.sbxdir_path0}/temp', 'tmpfs', mntflag_tmpfs, None)
 
     mkdirp(target_fs_path)
     if napath(target_fs_path) != '/':
@@ -1574,12 +1585,12 @@ def commit_fsOpertns(fsOpertns):
             elif is_dir(src): # 文件夹
                 mkdirp(real_dest)
                 mount(src, real_dest, None, mntflag_binddir, None)
-                if RO : z(d(dirpath=real_dest, flag=mntflag_binddir ))
+                if RO : rmt_ro(real_dest, mntflag_binddir )
             elif is_file(src) or is_dev(src):
                 # 普通文件可以这这样。猜测 字符设备、块设备 也可以当普通文件一样处理
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND, None)
-                mount(None, real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if RO else None
+                rmt_ro(real_dest, MS.BIND) if RO else None
             elif is_socket(src): # 已知socket不能remount成ro
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
@@ -1600,7 +1611,7 @@ def commit_fsOpertns(fsOpertns):
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
             RO = True if op == 'rofile' else False
-            with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
+            with tempfile.NamedTemporaryFile( dir=f'{cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(opItem.content)
                 mode = None ; optn = None
                 if RO :             mode = '444'
@@ -1608,7 +1619,7 @@ def commit_fsOpertns(fsOpertns):
                 if mode is not None : os.chmod(f.name, int(mode,base=8)) ; optn = f'mode={mode}'
                 make_file_exist(real_dest)
                 mount(f.name, real_dest, None, MS.BIND|(MS.RDONLY if RO else 0), optn)
-                try_pass(lambda: mount(None,real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) if RO else None )
+                try_pass(lambda: rmt_ro(real_dest, mntflag_binddir, optn) if RO else None )
         elif op == 'symlink':
             symlink(opItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
@@ -1621,13 +1632,13 @@ def commit_fsOpertns(fsOpertns):
                 mount('tmpfs', real_dest, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
             elif is_dev(real_dest): # 设备文件
                 mount('/dev/null', real_dest,  None, MS.BIND|MS.RDONLY, optn)
-                try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
+                try_pass(lambda: rmt_ro(real_dest, mntflag_binddir, optn) )
             else: # 普通文件、socket, fifo
-                mount(f'{tlcfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
-                try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
+                mount(f'{cfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
+                try_pass(lambda: rmt_ro(real_dest, mntflag_binddir, optn) )
         elif op == 'sbxdir-in-newrootfs':
             CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
-            make_mnt_fill_sbxdir(si,  tlcfg, call_at_buildfs=True)
+            make_mnt_fill_sbxdir(si,  cfg, call_at_buildfs=True)
         elif op == 'devpts':
             mkdirp(real_dest)
             mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
@@ -1637,19 +1648,21 @@ def commit_fsOpertns(fsOpertns):
             offset = get_appimg_sqoffset(src) if op == 'appimg-mount' else 0
             # TODO 先做symlink链接到真实appimage文件路径，再调用 squashfuse命令
             run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
-        elif op == 'remountro':
+        elif op == 'rmt-ro':
+            rmt_ro(real_dest, opItem.flag or 0)
+        elif op == 'final-rmt-ro':
             z(d(dirpath=real_dest, flag=opItem.flag or 0))
         else:
             raise_exit(f"无法识别的fsOp条目 {opItem}")
 
     return remountPlans
 
-def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
+def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排序
     fsOpertns = []
     def a(stepobj):
         fsOpertns.append(stepobj)
 
-    for opItem in tlcfg.fs:
+    for opItem in cfg.fs:
         # 一个 opItem 里， many_op 和 op 只应该出现其中一种
         many_op = opItem.many_op # 预设的多个op的集合
         op = opItem.op # 一个op
@@ -1672,7 +1685,7 @@ def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
             a( d( op='rotmpfs', dest='/dev' ) )
             basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random',] # 'tty', 'console'
             for dname in basic_devs:
-                a( d( op='same', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
+                a( d( op='rosame', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
             a( d( op='devpts',  dest='/dev/pts') )
             a( d( op='symlink', dest='/dev/ptmx', linkto='pts/ptmx' ) )
             a( d( op='symlink', dest='/dev/fd',     linkto='/proc/self/fd' ) )
@@ -1744,7 +1757,7 @@ def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
         used_dest = set()
         for i in reversed(range(0, len(fsOpertns))):
             opItem = fsOpertns[i]
-            if opItem.op == 'remountro': continue
+            if opItem.op in ['rmt-ro', 'final-rmt-ro']: continue
             if opItem.dest in used_dest:
                 log(f"debug:因dest重复(={opItem.dest})，移除{opItem}")
                 fsOpertns[i] = d(removed=True)
@@ -1765,12 +1778,15 @@ def commit_remounts(remntPlans):
         # log('ro-remounting: ' , rItem) # debug
         dirpath = rItem.dirpath
         flag = rItem.flag or 0
-        flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
-        mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
+        rmt_ro(dirpath, flag)
+
+def rmt_ro(path, flag=0, optn=''):
+    flag |= os.statvfs(path).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
+    mount(None, path, None, MS.REMOUNT|MS.RDONLY|flag, optn)
 
 
-def maybe_sendto_running_instance():
-    log('检查有无正在运行的同种沙箱')
+def maybe_sendto_running_instance(reusefg):
+    log('检查有无正在运行的同名沙箱')
     MATCH_SI_K = ["hash_bootsbx_py", "hostname", "uid", "gid", "username", "groupname", "PTMP", "pythonbin",  ]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
@@ -1780,7 +1796,7 @@ def maybe_sendto_running_instance():
     sock_estb = None
     for dir_in_PTMP in Path(si.PTMP).iterdir():
         dirname = dir_in_PTMP.name
-        # 是否是同种沙箱
+        # 是否是同名沙箱
         if not re.match(rf'^{si.sandbox_name}_\d{{4}}-\d{{4}}-\d+$', dirname) :
             continue
         # 是否无 xxx_exit 退出标记
@@ -1793,7 +1809,7 @@ def maybe_sendto_running_instance():
                 break
             time.sleep(0.1)
         else: # 那个实例2s都没有设置socket文件
-            log(f"忽略一个可能异常的旧实例 {dirname}")
+            log_warn(f"忽略一个可能异常的旧实例 {dirname}")
             continue
 
         # 再检查一次 是否无 xxx_exit 退出标记
@@ -1801,10 +1817,10 @@ def maybe_sendto_running_instance():
             continue
 
         tmp_t = time.monotonic()
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        sock_estb = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         while time.monotonic() <= tmp_t+1 and is_still_alive(dirname): # 允许那个实例1s的时间开始监听那个它自己已经创建的socket
             try:
-                sock.connect(f'{si.PTMP}/{dirname}/OServ.socket')
+                sock_estb.connect(f'{si.PTMP}/{dirname}/OServ.socket')
                 break
             except ConnectionRefusedError:
                 time.sleep(0.05)
@@ -1814,55 +1830,64 @@ def maybe_sendto_running_instance():
 
 
         chosen_instance = dirname
-        sock_estb = sock
         break
-    if chosen_instance and sock_estb:
-        log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
-        msgObj = d()
-        msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
-        msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
 
-        try:
-            sock_estb.send( json.dumps(msgObj).encode() )
-        except Exception as err:
-            log_warn(f'错误：向找到的实例发送消息失败 {err}')
-            sys.exit(1)
+    if not chosen_instance:
+        if sock_estb : sock_estb.close()
+        return "not_reusing"
 
-        ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
-        if wrong:
-            log_warn(f'等待回复时出错，可能超时或未知错误')
-            sys.exit(1)
-        elif ready:
-            try:
-                data = sock_estb.recv(300_000)
-            except Exception as err:
-                log_warn(f'读取socket收到的数据时出错:{err}')
-                sys.exit(1)
-            if data:
-                try:
-                    msgObj = d( json.loads( data.decode() ) )
-                except Exception as err:
-                    log_warn(f'无法正确解析收到的消息:{err}')
-                    sys.exit(1)
-                if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
-                if msgObj.reuseSucceeded:
-                    log('成功发送app命令给该实例')
-                    sys.exit(0)
-                else:
-                    log_warn(f'该正在运行的实例未回复成功')
-                    if msgObj.youStartNewInstance:
-                        log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
-                        return False
-                    sys.exit(1)
+    log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
+    msgObj = d()
+    msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
+    msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
+    if reusefg: msgObj.use_dtach = True
+
+    si.client_pid = si.outest_pid
+    si.reuse_instance = chosen_instance
+    si.reuse_sbxdir = si.outest_sbxdir
+    del si.instance_name ; del si.outest_sbxdir ; del si.CG_SBX; del si.outest_pid
+
+    try:
+        sock_estb.send( json.dumps(msgObj).encode() )
+    except Exception as err:
+        warn_exit(f'错误：向找到的实例发送消息失败 {err}')
+
+    ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
+    if wrong:
+        warn_exit(f'等待回复时出错，可能超时或未知错误')
+    elif not ready:
+        warn_exit(f'未收到正在运行的实例的成功回复')
+    elif ready:
+        try: data = sock_estb.recv(300_000)
+        except Exception as err: warn_exit(f'读取socket收到的数据时出错:{err}')
+        finally: sock_estb.close()
+        if data:
+            try: msgObj = d( json.loads( data.decode() ) )
+            except Exception as err: warn_exit(f'无法正确解析收到的消息:{err}')
+            if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
+            if msgObj.reuseSucceeded:
+                if not reusefg: log('成功发送app命令给该实例')
+                else: # reusefg==True
+                    shareShellSubpName = msgObj.message
+                    if not shareShellSubpName.startswith('shareshell_'):
+                        warn_exit('未收到shareshell_进程名')
+                    linkfile = f'{si.PTMP}/{chosen_instance}/into.{shareShellSubpName}.shellsocket.link'
+                    t0 = time.monotonic()
+                    while time.monotonic() <= t0 + 2:
+                        if os.path.exists(linkfile) : break
+                    else: warn_exit(f'长时间未等到 {linkfile} 目标')
+                    print('...\n' * os.get_terminal_size().lines)
+                    try: os.execvp('dtach', ['dtach', '-a', os.readlink(linkfile) ] ) # NOTE 不能用Path来解析，可能因为跨root
+                    except Exception as err: warn_exit(err)
+                sys.exit(0)
             else:
-                log_warn(f'收到空回复')
+                log_warn(f'该正在运行的实例未回复成功')
+                if msgObj.youStartNewInstance:
+                    log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
+                    return "not_reusing"
                 sys.exit(1)
-
-        else: # 未知
-            log_warn(f'未收到正在运行的实例的成功回复')
-            sys.exit(1)
-        sys.exit(0)
-
+        else: warn_exit(f'收到空回复')
+    else: raise_exit('未知错误，未预料的逻辑分支')
 
 class OutsideServ():
     conns = []
@@ -1927,8 +1952,20 @@ class OutsideServ():
                 cls.response_close(connItem, message=errmsg)
                 return False
         if msgObj.run_in_mainLyr_cmdvec:
-            OutestProcsMonitor.tell_lyr_runsubp(si.specialLyrs.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
-            cls.response_close(connItem, reuseSucceeded=True, message=f'mainApp_{connItem.index}')
+            targetLyr = si.specialLyrs.mainLyr
+            if not msgObj.use_dtach:
+                cmdvec = msgObj.run_in_mainLyr_cmdvec
+                subp_name = f'mainApp_{connItem.index}'
+            else : # use_dtach 为真
+            # if True:
+                # shellId =           f'AASSDD-{targetLyr}'
+                randstr = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+                shellId = f'{randstr}-{targetLyr}'
+                cmdvec = ['dtach', '-N', f'/sbxdir/temp/shareshell.{shellId}.socket',  *msgObj.run_in_mainLyr_cmdvec ]
+                subp_name = f'shareshell_{shellId}'
+            OutestProcsMonitor.tell_lyr_runsubp(targetLyr,
+                d(cmdvec=cmdvec, subp_name=subp_name, stdin=False) )
+            cls.response_close(connItem, reuseSucceeded=True, message=subp_name)
             return True
     @classmethod
     def response_close(cls, connItem, reuseSucceeded=None, youStartNewInstance=None, message=None):
@@ -2069,6 +2106,9 @@ class OutestProcsMonitor:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
             cls.symlink_into_sbxdir(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
             cleanup_symlinks_to_rm.append(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+        if proc_name.startswith('shareshell_'):
+            shellId = proc_name.removeprefix('shareshell_')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('shellsocket', proc_name, f'/sbxdir/temp/shareshell.{shellId}.socket')
         for bItem in (si.bridges or []):
             cls.check_bridges_condition_and_do(proc_name, bItem)
     @classmethod
@@ -2219,8 +2259,7 @@ def daemon_outest():
             A = set(dict.keys(OutestProcsMonitor.procs_histheared))
             B = set(si.expected_alive_procs) # TODO 区分expected_heared_procs , 应用 noWdg=1选项给subprocs
             if not B.issubset(A):
-                log_warn(f'长时间未等到{list(B-A)}进程启动消息，认为沙箱启动未完全成功')
-                sys.exit(1)
+                warn_exit(f'长时间未等到{list(B-A)}进程启动消息，认为沙箱启动未完全成功')
 
         if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
 
@@ -2308,7 +2347,7 @@ class ClipboardSyncer():
                 os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
                 try: cls.handle_client_clipbdFromHostSocket()
                 except Exception as err: log_warn(err)
-                finally: log_warn('handle_client_clipbdFromHostSocket本应结束所属进程但没有'); os._exit(1) #若到这,说明上面未成功退出
+                finally: warn_exit('handle_client_clipbdFromHostSocket本应结束所属进程但没有') #若到这,说明上面未成功退出
             return
 
         # 如果上面没有return ， 才执行这里
@@ -2322,13 +2361,12 @@ class ClipboardSyncer():
             os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
             try: cls.sync_from_sandbox_to_host()
             except Exception as err: log_warn(err)
-            finally: log_warn('sync_from_sandbox_to_host 本应结束所属进程但没有') ; os._exit(1) #若到这,说明上面未成功退出
+            finally: warn_exit('sync_from_sandbox_to_host 本应结束所属进程但没有')  #若到这,说明上面未成功退出
     @classmethod
     def sync_from_sandbox_to_host(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
         if os.getpid() == 1: log_warn('在pid=1时 sync_from_sandbox_to_host()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            log_warn(f'探测沙箱剪贴板同步到主机的过程中超时放弃')
-            os._exit(1) # 强制退出子进程
+            warn_exit(f'探测沙箱剪贴板同步到主机的过程中超时放弃')
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
 
@@ -2406,8 +2444,7 @@ class ClipboardSyncer():
     def handle_client_clipbdFromHostSocket(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
         if os.getpid() == 1: log_warn('在pid=1时handle_client_clipbdFromHostSocket()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            log_warn(f'接收数据的过程中超时放弃')
-            os._exit(1) # 强制退出子进程
+            warn_exit(f'接收数据的过程中超时放弃')
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
         client_sock, _ = cls.socket_fromHostLsn.accept()
@@ -2418,11 +2455,8 @@ class ClipboardSyncer():
                 if not chunk: break
                 data += chunk
                 if len(data) > 1_000_000: log_warn('强制截断过长的剪贴板数据'); break # 超过 1MB
-        except Exception as err:
-            log_warn(err)
-            os._exit(1)
-        finally:
-            client_sock.close()
+        except Exception as err: warn_exit(err)
+        finally: client_sock.close()
         if data:
             log(f'将主机发来的剪贴板内容往沙箱同步 {data[:20]}')
             Path(cls.LAST_CONTENT_F).write_bytes(data)
@@ -2814,7 +2848,6 @@ def set_3ge_fds_cloexec(keep_fds=[] , action='default'):
     for fd in get_all_3ge_fds() :
         if fd in keep_fds:
             continue
-        # log(f'设置{fd=}为CLOEXEC')
         try: set_fd_keep_on_exec(fd, KEEP)
         except OSError as e:
             # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
@@ -3186,14 +3219,15 @@ def try_showerr(func):
     except Exception as err:
         print_exc()
 
-
-def raise_exit(err_msg, no_cleanup=False):
-    print_stack()
+def warn_exit(err_msg, no_cleanup=False):
     print(loghead + err_msg, file=sys.stderr)
     try_pass(lambda: wlog('error', errmsg=err_msg) )
     if not no_cleanup:
         sys.exit(1)
     else: os._exit(1)
+def raise_exit(err_msg, no_cleanup=False):
+    print_stack()
+    warn_exit(err_msg, no_cleanup)
 
 def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
     if not condition:
