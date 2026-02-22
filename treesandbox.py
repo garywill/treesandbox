@@ -56,9 +56,10 @@ def userconfig(si): # 这个只在顶层解析一次
 
     return uc
 
-# layer1 产生
-def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
-    layer1 = d( # 第1层不跑任何程序，只用于PID隔离，和退出时的清理工作
+# layer1 产生。 所有的layer_cfg都在 layer1 下
+def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
+    # 第1层不跑任何程序，只用于PID隔离，和退出时的清理工作
+    return d(
         layer_name='layer1', # 默认模板的 layer_name 不要修改
         unshare_pid=True, # 第1层必须
         unshare_mnt=True, # 第1层尝试有unshare mnt但不newrootfs
@@ -68,60 +69,64 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
         # uid 变 0
         unshare_user=True, setgroups_deny=True, uid_map=f'0 {si.uid} 1\n', gid_map=f'0 {si.gid} 1\n',
         # 准备开始第2层。这第1层的 sublayers 数组应该只有一个元素，即，第2层只有一个容器
+        sublayers = [gen_layer2(si, uc, dyncfg)],
+    )
+
+def gen_layer2(si, uc, dyncfg):
+    return d(
+        layer_name='layer2', # 默认模板的 layer_name 不要修改
+        unshare_mnt=True,
+        unshare_chdir=True, # chdir()不影响其他
+        newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
+        fs=[ # fs全称fs_plans_for_new_rootfs 。
+            # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
+            d(batch_plan='container-rootfs'),
+            d(batch_plan='basic-dev'),
+            d(batch_plan='mask-privacy', destbase='/'),
+            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+
+            *dyncfg.mnts_gui,
+
+            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
+
+            d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path='), SDS=1 ),
+
+            d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
+            d(batch_plan='mask-privacy', destbase='/zrootfs'),
+            d(plan='empty-if-exist', dest=f'/zrootfs/{PTMP}'),
+        ],
+        envs_unset=[
+            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
+        ],
+
         sublayers = [
-            d( # 第2层。 只适合跑 信任的 和要以信任身份显示在X11的： xpra client , dbus proxy . squashfs挂载
-                layer_name='layer2', # 默认模板的 layer_name 不要修改
-                unshare_mnt=True,
-                unshare_chdir=True, # chdir()不影响其他
-                newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
-                fs=[ # fs全称fs_plans_for_new_rootfs 。
-                    # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
-                    d(batch_plan='container-rootfs'),
-                    d(batch_plan='basic-dev'),
-                    d(batch_plan='mask-privacy', destbase='/'),
-                    d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
-
-                    *dyncfg.mnts_gui,
-
-                    d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-                    d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
-
-                    d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path='), SDS=1 ),
-
-                    d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
-                    d(batch_plan='mask-privacy', destbase='/zrootfs'),
-                    d(plan='empty-if-exist', dest=f'/zrootfs/{PTMP}'),
-                ],
-                envs_unset=[
-                    "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
-                ],
-
-                sublayers = [
-                    d( # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
-                        layer_name='layer2a', unshare_pid=True, unshare_mnt=True,
-                        unshare_chdir=True, # chdir()不影响其他
-
-                        # uid 变回 1000
-                        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
-
-                        newrootfs=True,
-                        fs=[
-                            d(batch_plan='dup-rootfs', destbase='/'),
-                            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
-                        ],
-                        dropcap_then_cmds=[
-                            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
-                        ],
-                    ),
-                    gen_layer2h(si, uc, dyncfg)
-                ],
-            )
+            gen_layer2a(si, uc, dyncfg),
+            gen_layer2h(si, uc, dyncfg),
         ],
     )
-    return layer1
+
+def gen_layer2a(si, uc, dyncfg):
+    # layer2a实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
+    return d(
+        layer_name='layer2a', unshare_pid=True, unshare_mnt=True,
+        unshare_chdir=True, # chdir()不影响其他
+
+        # uid 变回 1000
+        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+
+        newrootfs=True,
+        fs=[
+            d(batch_plan='dup-rootfs', destbase='/'),
+            d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
+        ],
+        dropcap_then_cmds=[
+            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
+        ],
+    )
 
 def gen_layer2h(si, uc, dyncfg):
-    layer2h = d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
+    return d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
         layer_name='layer2h',  unshare_mnt=True, unshare_chdir=True,
         start_after=[
             d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
@@ -135,10 +140,9 @@ def gen_layer2h(si, uc, dyncfg):
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
-    return layer2h
 
 def gen_layer3(si, uc, dyncfg):
-    layer3 = d(
+    return d(
         layer_name='layer3', # 默认模板的 layer_name 不要修改
         unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
@@ -202,6 +206,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if uc.icewm else [] ),
 
+            # NOTE 用户挂载要放最后
             *uc.user_mnts, # NOTE 用户挂载要放最后
             d(plan='remountro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
@@ -214,35 +219,39 @@ def gen_layer3(si, uc, dyncfg):
             d(DISPLAY=':10') if uc.gui=='xephyr' else None,
         ],
         sublayers=[
-            d(
-                layer_name='layer4a', # 默认模板的 layer_name 不要修改
-                unshare_pid=True, unshare_mnt=True,
-                unshare_chdir=True, # chdir()不影响其他
-
-                # uid 变回 1000
-                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
-
-                dropcap_then_cmds=[
-                    d( cmdvec=["icewm"] ) if uc.icewm else None ,
-                ],
-            ),
-            d( # 主 用户app 在这里跑
-                layer_name='layer4', # 默认模板的 layer_name 不要修改
-                unshare_pid=True, unshare_mnt=True,
-                unshare_chdir=True, # chdir()不影响其他
-
-                # uid 变回 1000
-                unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
-
-                workdir=uc.workdir if uc.workdir else None,
-                dropcap_then_cmds=[
-                    d( cmdvec=uc.default_app , stdin=True, stdout=True, stderr=True),
-                ],
-
-            ),
+            gen_layer4a(si, uc, dyncfg),
+            gen_layer4(si, uc, dyncfg),
         ],
     )
-    return layer3
+
+def gen_layer4a(si, uc, dyncfg):
+    return d(
+        layer_name='layer4a', # 默认模板的 layer_name 不要修改
+        unshare_pid=True, unshare_mnt=True,
+        unshare_chdir=True, # chdir()不影响其他
+
+        # uid 变回 1000
+        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+
+        dropcap_then_cmds=[
+            d( cmdvec=["icewm"] ) if uc.icewm else None ,
+        ],
+    )
+
+def gen_layer4(si, uc, dyncfg):
+    return d( # 主 用户app 在这里跑
+        layer_name='layer4', # 默认模板的 layer_name 不要修改
+        unshare_pid=True, unshare_mnt=True,
+        unshare_chdir=True, # chdir()不影响其他
+
+        # uid 变回 1000
+        unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+
+        workdir=uc.workdir if uc.workdir else None,
+        dropcap_then_cmds=[
+            d( cmdvec=uc.default_app , stdin=True, stdout=True, stderr=True),
+        ],
+    )
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     cmds_to_mask = []
@@ -512,7 +521,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     sbxinfo.outest_sbxdir = outest_sbxdir
 
     dyncfg = gen_dynamic_cfg(sbxinfo, uc)
-    layer1_cfg = gen_container_cfgs(sbxinfo, uc, dyncfg)
+    layer1_cfg = gen_layer1(sbxinfo, uc, dyncfg)
     recursive_lyrs_jobs(sbxinfo, layer1_cfg, None)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
