@@ -742,7 +742,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
                 makesure_proc_safe('/proc', allow_newmntns=True)
             else:
                 log('加入已有的安全mnt ns为新进程的运行做准备')
-                os.setns(safe_mntns_fd, os.CLONE_NEWNS)
+                os.setns(safe_mntns_fd, gen_unshareflag(unshare_mnt))
 
             drop_caps()
         child_sock.send(b'x') # 给父进程发送信号
@@ -797,7 +797,7 @@ def make_proc_ro(proc_path, allow_newmntns):
     if not os.statvfs(proc_path).f_flag&MS.RDONLY :
         if allow_newmntns :
             log('创建并进入新的安全mnt ns以为新进程的运行做准备')
-            os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS =unshare_mnt
+            os.unshare(gen_unshareflag(unshare_mnt))
         mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
 
 def cleanup_pidnsleader():
