@@ -374,18 +374,16 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 resv_words = ['sbx', 'sbxs', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
-        # cfg/ :
-            # si.json
-            # bootsbx.py
-            # sbx.xxx.name
-            # sbx.name -> sbx.xxx.name
-            # lyr_cfg.xxx.json (多) 包括本层和所有递归子层
-            # events.layers.log (暂未实现） (需要build_fs处理 一路通挂载)
-            # tmux.xxx.socket (暂未实现) (需要build_fs处理 一路通挂载)
+        # sbxinfo.json
+        # bootsbx.py
+        # sbx.xxx.name
+        # sbx.name -> sbx.xxx.name
+        # events.layers.log (暂未实现） (需要build_fs处理 一路通挂载)
+        # lyr_cfg.xxx.json (多) 包括本层和所有递归子层
         # new.xxx.rootfs (多)所有有 newrootfs 的本层和递归子层
-        # temp  挂载为rw tmpfs
-        # overlays 挂载为tmpfs 可能rw (暂未实现）
+        # temp/  挂载为rw tmpfs
         # apps/ 挂为 tmpfs rw
+        # overlays.xxx.dirs/ 挂载为tmpfs 可能rw (暂未实现）
     if call_at_begin: # 刚启动脚本
         target_sbxdir_path = napath(thislyr_cfg.sbxdir_path0)
         old_sbxdir_path = None
@@ -424,20 +422,19 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
 
 
 
-    mkdirp(f'{target_sbxdir_path}/cfg')
-    if not os.path.exists(f'{target_sbxdir_path}/cfg/si.json'):
-        with open(f'{target_sbxdir_path}/cfg/si.json', 'w') as f:
+    if not os.path.exists(f'{target_sbxdir_path}/sbxinfo.json'):
+        with open(f'{target_sbxdir_path}/sbxinfo.json', 'w') as f:
             f.write(json.dumps(si, indent=2, ensure_ascii=False))
             os.chmod(f.name, 0o444)
-        safe_copy_script(f'{target_sbxdir_path}/cfg/bootsbx.py')
-        with open(f'{target_sbxdir_path}/cfg/sbx.{si.sandbox_name}.name', 'w') as f:
+        safe_copy_script(f'{target_sbxdir_path}/bootsbx.py')
+        with open(f'{target_sbxdir_path}/sbx.{si.sandbox_name}.name', 'w') as f:
             f.write(si.sandbox_name)
             os.chmod(f.name, 0o444)
-        os.symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/cfg/sbx.name')
+        os.symlink(f'sbx.{si.sandbox_name}.name', f'{target_sbxdir_path}/sbx.name')
 
     # 创建和写 (不包括本层)所有子层（递归） 需要的 路径和文件
     def create_lyrs_files_recr(lyr_cfg):
-        with open(f'{target_sbxdir_path}/cfg/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
+        with open(f'{target_sbxdir_path}/lyr_cfg.{lyr_cfg.layer_name}.json', 'w') as f:
             f.write(json.dumps(lyr_cfg, indent=2, ensure_ascii=False))
             os.chmod(f.name, 0o444)
         if lyr_cfg.newrootfs:
@@ -449,7 +446,7 @@ def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=No
 
     # 判断是最外层 才把 本层配置（即第1层） 和 userconfig 写入
     if call_at_begin and thislyr_cfg.depth==1:
-        with open(f'{target_sbxdir_path}/cfg/lyr_cfg.{thislyr_cfg.layer_name}.json', 'w') as f:
+        with open(f'{target_sbxdir_path}/lyr_cfg.{thislyr_cfg.layer_name}.json', 'w') as f:
             f.write(json.dumps(thislyr_cfg, indent=2, ensure_ascii=False) )
             os.chmod(f.name, 0o444)
 
@@ -501,17 +498,16 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     print(f"沙箱工作目录：{outest_sbxdir}")
-    mkdirp(f'{outest_sbxdir}/cfg')    # 创建config目录，此目录内千万不要做挂载
     os.chdir(outest_sbxdir)
     print(f'沙箱启动PID: {outest_pid}')
 
-    with open(f'{outest_sbxdir}/cfg/userconfig.json', 'w') as f:
+    with open(f'{outest_sbxdir}/userconfig.json', 'w') as f:
         f.write(json.dumps(uc, indent=2, ensure_ascii=False))
         os.chmod(f.name, 0o444)
-    with open(f'{outest_sbxdir}/cfg/sbx.{outest_pid}.pid', 'w') as f:
+    with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
         f.write(str(outest_pid))
         os.chmod(f.name, 0o444)
-    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/cfg/sbx.pid')
+    os.symlink(f'sbx.{outest_pid}.pid', f'{outest_sbxdir}/sbx.pid')
 
     sbxinfo.pythonbin = sys.executable
     sbxinfo.sandbox_name = sandbox_name
@@ -542,8 +538,8 @@ def main():
 
     else: # 是子层
         thislyr_cfg = d(json.loads(open(lyrcfg_file).read()))
-        thislyr_cfg.sbxdir_path0 = str(Path(lyrcfg_file).parent.parent)
-        si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/cfg/si.json').read()))
+        thislyr_cfg.sbxdir_path0 = padir(lyrcfg_file)
+        si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/sbxinfo.json').read()))
 
     set_loghead (f'{thislyr_cfg.layer_name}: ')
 
@@ -694,8 +690,8 @@ def main2(si, thislyr_cfg):
                 si.pythonbin ,
                 # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                 # 因此用本层的path1
-                f'{thislyr_cfg.sbxdir_path1}/cfg/bootsbx.py',
-                '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/cfg/lyr_cfg.{sublyr_cfg.layer_name}.json',
+                f'{thislyr_cfg.sbxdir_path1}/bootsbx.py',
+                '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
             ],
             stdin=True, stdout=True, stderr=True,
             child_no_caps = False,
@@ -1133,7 +1129,6 @@ def cleanup_outest(si):
         # new.*.rootfs/
         # apps/*/
     paths_rm_sub_files = [ #准备删这些目录的一级子文件和目录本身
-        f'{si.outest_sbxdir}/cfg',
         f'{si.outest_sbxdir}/temp',
         f'{si.outest_sbxdir}/apps',
         *glob.glob(f'{si.outest_sbxdir}/new.*.rootfs'),
