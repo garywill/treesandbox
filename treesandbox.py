@@ -51,9 +51,9 @@ def userconfig(si): # 这个只在顶层解析一次
         # dns=['127.0.0.1'], # 自定义dns
     )
 
-    uc.allow_opt=True # 允许访问真实/opt
     # uc.pulseaudio=True,
 
+    # uc.allow_opt=True # 允许访问真实/opt
     uc.mask_xdg_opens=True # 容器内部不能使用xdg-open, firefox, chromium 等
     # uc.mask_osrelease=True # 不可访问/etc/os-release
     uc.machineid='zero' # 把/etc/machine-id填0
@@ -268,9 +268,6 @@ def gen_layer4(si, uc, dyncfg):
         workdir=uc.workdir if uc.workdir else None,
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
-        subprocs=[
-            d( cmdvec=uc.default_app , subp_name='mainApp'),
-        ],
     )
 
 def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
@@ -352,7 +349,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
         if cfg.isMainLyr:
-            si.mainlyr = cfg.layer_name
+            si.mainLyr = cfg.layer_name
         for subpItem in (cfg.subprocs or [] ):
             CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
             CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
@@ -685,9 +682,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
             si.subp_log_fds[pn] = make_file_get_fd(f'{outest_sbxdir}/subp.{pn}.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
 
     def create_socketpair_fds():
-        a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        fd_chd = a.detach() ; set_fd_keep_on_exec(fd_chd, True)
-        fd_pa  = b.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
+        skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, True)
+        fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
         return d(pa=fd_pa, chd=fd_chd)
     si.oSkt_fds = d()
     for lyr in si.expected_alive_layers:
@@ -712,10 +709,16 @@ class OutestProcsMonitor:
         cls.procs_alive = []
         cls.procs_wdgsee = d()
         cls.procs_histseen = d()
-        cls.should_seen_soon = []
+        cls.logs_should_match_soon = []
         cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
         cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
         cls.fd_wr_wdgsee = os.open(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_WRONLY)
+
+        cls.oPaSkts = d()
+        for lyrn, fdpair in dict.items(si.oSkt_fds):
+            cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
+            # print(lyrn, cls.oPaSkts[lyrn], fdpair.pa)
+        cls.tell_lyr_runsubp(si.mainLyr, OG.uc.default_app+OG.user_cli_argv, 'mainApp') # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
@@ -723,7 +726,7 @@ class OutestProcsMonitor:
                 return [int(x) for x in line.split()[1:]]
     @classmethod
     def get_procsalive_arr_from_cg(cls) -> list:
-        if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         result = []
         for pid in open(f'{si.CG_SBX}/cgroup.procs').read().splitlines():
             try:
@@ -743,7 +746,7 @@ class OutestProcsMonitor:
         return result
     @classmethod
     def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
-        if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         procsalive_arr = cls.get_procsalive_arr_from_cg()
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
         cls.procs_alive = procsalive_arr # 写cls内部
@@ -755,6 +758,13 @@ class OutestProcsMonitor:
         finally:
             fcntl.flock(cls.fd_wr_alive, fcntl.LOCK_UN)
     @classmethod
+    def aliveproc_and_elproc_equal(cls, plv, pel): #plv="proc alive" | pel="proc from event log"
+        if plv.NSpid[-1] == pel.self_see_pid \
+        and plv.start_tick == pel.start_tick \
+        and plv.ns.pid == pel.ns.pid:
+            return True
+        else: return False
+    @classmethod
     def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc seen"
         if plv.NSpid[-1] == psn.self_see_pid \
         and plv.start_tick == psn.start_tick \
@@ -762,53 +772,92 @@ class OutestProcsMonitor:
             return True
         else: return False
     @classmethod
-    def logItem_to_seenprocItem(cls, NLOG):
+    def conv_to_seenproc(cls, aliveProc, logItem): # 输入的是一对互相符合的aliveProc和logItem条目
         return D(
-            self_see_pid = NLOG.self_see_pid,
-            start_tick = NLOG.start_tick,
-            pidns = NLOG.ns.pid,
-            pidns_tree = NLOG.pidns_tree,
-            pidns_depth = NLOG.pidns_depth
+            NSpid = aliveProc.NSpid,
+            pidns_tree = logItem.pidns_tree,
+            pidns_depth = logItem.pidns_depth,
+            start_tick = logItem.start_tick,
+            pidns = logItem.ns.pid,
+            self_see_pid = logItem.self_see_pid,
         )
     @classmethod
-    def got_a_ready_proc_log(cls, NLOG):
-        NPROC = cls.logItem_to_seenprocItem(NLOG)
-        cls.procs_histseen[NLOG.ready_proc_name] = NPROC
-        # if NLOG.ready_proc_name == 'xephyr': # TODO
-        if not NLOG.ready_proc_name in si.expected_alive_procs :
-            return
+    def sendmsg_to_lyr(cls, lyrname, msgobj):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
+    @classmethod
+    def tell_lyr_runsubp(cls, lyrname, cmdvec, subp_name=None):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        subp_item = d(cmdvec = cmdvec, subp_name=subp_name )
+        cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subp_item=subp_item) )
+    @classmethod
+    def symlink_into_sbxdir(cls, dest, file_in_sbxdir): # 创建软链，从外部，链到本沙箱实例目录内的文件
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        linkto = napath(f'{si.outest_sbxdir}/{file_in_sbxdir}')
+        CHK( not Path(linkto).is_dir(), f'为了安全，不允许链接到目录')
+        symlink(linkto, dest)
+    @classmethod
+    def symlink_from_sbxdir_to_in_proc_rootfs(cls, slk_name, to_proc_name, target_in_proc_rootfs): # 创建软链，从本沙箱实例目录内, 链到本沙箱的进程的 rootfs 里的某文件
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        pid = cls.procs_histseen[to_proc_name].NSpid[0]
+        real_linkto = napath(f'/proc/{pid}/root/{target_in_proc_rootfs}')
+        CHK( not Path(real_linkto).is_dir(), f'为了安全，不允许链接到目录')
+        symlink(real_linkto, f'{si.outest_sbxdir}/into.{to_proc_name}.{slk_name}.link')
+    @classmethod
+    def custom_action_when_procname_seen(cls, proc_name):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        if proc_name == 'xephyr':
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', '/tmp/.X11-unix/X10')
+            cls.symlink_into_sbxdir('/tmp/.X11-unix/X10', f'into.{proc_name}.x11socket.link')
+            cleanup_symlinks_to_rm.append('/tmp/.X11-unix/X10')
+    @classmethod
+    def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
-            if cls.aliveproc_and_seenproc_equal(proc, NPROC):
-                if NLOG in cls.should_seen_soon:
-                    log(f'把这条消息从未识别的消息列表中删除 {NLOG}')
-                    cls.should_seen_soon.remove(NLOG)
-                NPROC.NSpid = proc.NSpid
-                cls.procs_wdgsee[NLOG.ready_proc_name] = NPROC
-                break
-        else: # 是我们要关注的新进程启动的消息，但未在目前存活的进程列表中找到
-            if NLOG in cls.should_seen_soon: # 上次就加进去了，这次还没就认为出错
-                log(f'收到过{NLOG.ready_proc_name}的启动消息，但一直未发现过存活，可能出错')
+            if cls.aliveproc_and_elproc_equal(proc, elp):
+                return proc
+    @classmethod
+    def put_proc_into_seenlist(cls, proc_name, seenProc, logItem):
+        cls.procs_histseen[proc_name] = seenProc
+        if logItem in cls.logs_should_match_soon: # 上次已经加入了注意名单，现在可以移出注意名单
+            log(f'把这条消息从未识别的消息列表中删除 {logItem}')
+            cls.logs_should_match_soon.remove(logItem)
+        if proc_name in si.expected_alive_procs:
+            cls.procs_wdgsee[proc_name] = seenProc
+        cls.custom_action_when_procname_seen(proc_name)
+    @classmethod
+    def got_a_ready_proc_log(cls, logItem): # 被调用时，说明一个进程有了logItem出现
+        proc_name = logItem.ready_proc_name
+        # 判断这个进程是否已经在aliveProcs的列表里
+        if (aliveProc := cls.find_alive_proc_matching_logitem(logItem) ):
+            seenProc = cls.conv_to_seenproc(aliveProc, logItem)
+            cls.put_proc_into_seenlist(proc_name, seenProc, logItem)
+        else: # 不在aliveProcs列表里：1.可能暂时来不及出现，允许等下个周期再出现 2.若已经不是第1个周期，则判断进程死亡
+            if proc_name not in si.expected_alive_procs : # 看门狗不用管这个进程
+                return
+            if logItem not in cls.logs_should_match_soon: # 可能暂时来不及出现，允许等下个周期再出现
+                log(f'把此消息加入未识别的列表 {logItem}')
+                cls.logs_should_match_soon.append(logItem)
+            else: # 已经不是第1个周期，则判断进程死亡
+                log(f'收到过{proc_name}的启动消息，但一直未发现过存活，判断进程已死')
                 sys.exit()
-            else:
-                log(f'把此消息加入未识别的列表 {NLOG}')
-                cls.should_seen_soon.append(NLOG)
     @classmethod
     def get_and_parse_new_wlog(cls):
         new_logs = WlogReader.readnew()
-        for NLOG in cls.should_seen_soon + new_logs:
-            NLOG = d(NLOG)
+        for logItem in (cls.logs_should_match_soon + new_logs):
+            logItem = d(logItem)
 
-            if NLOG.event == 'error':
-                log(f'收到来自 {NLOG.logger} 的错误消息 {NLOG.errmsg}')
+            if logItem.event == 'error':
+                log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
                 # pipe_outest_exit_layer1.set_should_exit()
                 sys.exit(1)
 
-            if NLOG.ready_proc_name :
-                cls.got_a_ready_proc_log(NLOG)
+            if logItem.ready_proc_name :
+                cls.got_a_ready_proc_log(logItem)
         cls.write_procs_seen_to_fd(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
         cls.write_procs_seen_to_fd(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
     @classmethod
     def write_procs_seen_to_fd(cls, procs_seen_obj, fd):
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         try:
             json_str = '\n'.join(['{',
                 '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
@@ -820,6 +869,7 @@ class OutestProcsMonitor:
             fcntl.flock(fd,  fcntl.LOCK_UN)
     @classmethod
     def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         cls.update_procsalive()
         cls.get_and_parse_new_wlog()
         for proc_name,psn in dict.items(cls.procs_wdgsee):
@@ -919,7 +969,7 @@ def main():
     set_ps1('notready')
 
     # 创建主机与沙箱之间的临时共享目录
-    if is_outest:
+    if is_outest and si.sharedir_onhost:
         log(f'在 {si.sharedir_onhost} 创建主机与沙箱之间的临时共享目录')
         mkdirp(si.sharedir_onhost)
 
@@ -972,14 +1022,11 @@ def main():
     pid = os.fork()
     if pid == 0: # 子进程
         atexit._clear()
-        set_loghead (f'{tlcfg.layer_name}F: ')
+        set_loghead (f'{tlcfg.layer_name} F: ')
         skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
             pipe_outest_exit_layer1.i_am_layer1()
             set_pdeathsig() # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
-        else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
-            while os.getppid() not in [0, 1] : time.sleep(0.03)
-
         main2(skp_lyfk)
         sys.exit()
     else: # 父进程
@@ -994,10 +1041,11 @@ def main():
             skp_lyfk.pa_send(BS.SetYouUidUserDone.value)
         skp_lyfk.close()
 
-        if not is_outest:
-            sys.exit()
+        if is_outest:
+            OG.layer1_pid = pid
+            daemon_outest() # NOTE skp_lyfk 关了后，才进入daemon
         else:
-            daemon(True, pid)
+            sys.exit()
 
 
 
@@ -1064,39 +1112,59 @@ class WlogReader():
         return new_logs
 
 
-def daemon(is_outest, layer1_pid=None):
-    if is_outest:
-        OG.layer1_pid = layer1_pid
-        # TODO 等待5秒，等待主app启动的信号，否则退出
+def daemon_outest():
+    # TODO 等待5秒，等待主app启动的信号，否则退出
 
-        register_sig_handlers(outest=True)
-        # TODO 等 main2改好后，信号注册不判断is_outest
+    register_sig_handlers(outest=True)
 
+    WlogReader.init()
+    OutestProcsMonitor.i_am_outest()
 
-        WlogReader.init()
-        OutestProcsMonitor.i_am_outest()
-
-        set_ps1('outestDaemoning')
-
-    if not is_outest:
-        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-    #-----------
     while True:
+        OutestProcsMonitor.wdg()
 
-        if should_exit:
-            if is_outest:   pipe_outest_exit_layer1.set_should_exit()
-            else:           sys.exit()
-
-        if is_outest :
-            OutestProcsMonitor.wdg()
-
-        if not is_outest and tlcfg.depth == 1 :
-            if pipe_outest_exit_layer1.is_should_exit_set() :
-                sys.exit()
+        if should_exit: pipe_outest_exit_layer1.set_should_exit()
 
         if not exist_childtree(): sys.exit()
 
         time.sleep(0.2)
+
+
+def daemon_pidnsleader():
+    global should_exit
+    CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+    PidnsleaderListener.i_am_pidnsleader()
+    while True:
+        if should_exit: sys.exit()
+
+        if (msg_from_outest := PidnsleaderListener.readmsg_from_outest() ):
+            if msg_from_outest.action == 'should_exit':
+                should_exit = True
+                sys.exit()
+            elif msg_from_outest.action == 'run_subp':
+                PidnsleaderListener.HAS_SUBP_BY_OUTEST = True
+                layer_run_subp(no_wait=True,  **msg_from_outest.subp_item )
+                # TODO 有些需要去掉stdin
+
+        if tlcfg.depth == 1 :
+            if pipe_outest_exit_layer1.is_should_exit_set() :
+                sys.exit()
+
+        if PidnsleaderListener.HAS_SUBP_BY_OUTEST and not exist_childtree(): sys.exit()
+
+        time.sleep(0.2)
+
+class PidnsleaderListener():
+    I_AM_PIDNSLEADER=None
+    HAS_SUBP_BY_OUTEST=False
+    @classmethod
+    def i_am_pidnsleader(cls):
+        cls.I_AM_PIDNSLEADER=True
+        cls.oChdSkt = socket.socket(fileno=si.oSkt_fds[tlcfg.layer_name].chd)
+    @classmethod
+    def readmsg_from_outest(cls):
+        ready, _, _ = select.select([cls.oChdSkt], [], [], 0.5)
+        if ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
 
 def main2(skp_lyfk):
     set_proc_dispname(tlcfg.layer_name)
@@ -1129,6 +1197,11 @@ def main2(skp_lyfk):
 
     # 关闭临时socket
     skp_lyfk.close()# NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
+
+    # 非unshare_pid 层 则要等待fork前父进程退出
+    if not tlcfg.unshare_pid:
+        while os.getppid() not in [0, 1] : time.sleep(0.03)
+
 
     # 清理函数、信号处理注册
     if tlcfg.unshare_pid:
@@ -1181,24 +1254,25 @@ def main2(skp_lyfk):
     if not tlcfg.unshare_pid:
         close_important_fds()
 
-    # 放行那些等待住的subp (为了等 重要fd 关闭)
+    # 放行那些等待住的subp (为了等 重要fd 关闭. pidns层则不怕subp访问/proc/1/fd 因为无法访问 )
     for pid, pipe in inprepare_children:
         pipe.send(b'x') ; pipe.close() # 回信给子进程
 
     if tlcfg.unshare_pid:
-        daemon(False)
+        daemon_pidnsleader()
     else: # 如果不是 unshare_pid 的 ,这里将结束退出
         sys.exit()
 
-def layer_run_subp(cmdvec, subp_name=None,
+def layer_run_subp(cmdvec=None, subp_name=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
                    workdir=None,  # None则使用本层设置的workdir
+                   no_wait=False,
                    ): # TODO pty或setsid
 
     mainApp=None; subLayer=None; user_shell=None; dev_shell=None;
 
-    if subp_name == 'mainApp':        mainApp=True
+    if subp_name.startswith('mainApp'):mainApp=True
     if subp_name.startswith('layer'): subLayer = subp_name
     if subp_name == 'user_shell':     user_shell=True
     if subp_name == 'dev_shell':      dev_shell=True
@@ -1221,8 +1295,6 @@ def layer_run_subp(cmdvec, subp_name=None,
         atexit._clear()
         set_loghead(f"{loghead}subp: ")
         parent_sock.close() # 关闭不需要的 socket 端
-
-        # TODO 关闭本层的 与最外层通信的那个oSkt 的fd
 
         if not keep_caps:
             drop_caps()
@@ -1263,7 +1335,8 @@ def layer_run_subp(cmdvec, subp_name=None,
         child_sock.close() # 关闭不需要的 socket 端
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
         CHK( parent_sock.recv(1) == b'x', "收到的子进程信号不符合预期")
-        # parent_sock.send(b'x') ; parent_sock.close() # 不在这里回信给子进程，后面统一回
+        if no_wait:
+            parent_sock.send(b'x') ; parent_sock.close() ; parent_sock = None
         return pid, parent_sock
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
@@ -1732,7 +1805,11 @@ def cleanup_outest(outest_sbxdir, cg_dir, sharedir_onhost):
         try_pass(lambda: os.rmdir(dirpath) )
     for emptydir in [cg_dir, sharedir_onhost]:
         try_pass(lambda: os.rmdir(emptydir))
-    # for slkItem in cleanup_symlinks_to_rm: # TODO
+    for slkItem in cleanup_symlinks_to_rm:
+        if Path(slkItem).is_symlink() :
+            linkto = os.readlink(slkItem)
+            if linkto == si.outest_sbxdir or linkto.startswith(f'{si.outest_sbxdir}/'):
+                Path(slkItem).unlink()
 
 #==========================================
 #======= libc 工具函数 =========================
