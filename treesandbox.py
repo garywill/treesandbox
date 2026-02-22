@@ -571,7 +571,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     os.chdir(outest_sbxdir)
     mkdirp(CG_TSBXS)
 
-    symlink(f'/proc/{outest_pid}', f'{outest_sbxdir}/sbx.proc')
     with open(f'{outest_sbxdir}/sbx.{outest_pid}.pid', 'w') as f:
         f.write(str(outest_pid))
         os.chmod(f.name, 0o444)
@@ -805,13 +804,6 @@ def daemon(is_outest, layer1_pid=None):
         # TODO 等 main2改好后，信号注册不判断is_outest
 
         si.layer1_pid = layer1_pid
-
-        #### 这些都改为在 log的读取事件中做 TODO
-        with open(f'{si.outest_sbxdir}/proc.layer1.{layer1_pid}.pid', 'w') as f:
-            f.write(str(layer1_pid))
-            os.chmod(f.name, 0o444)
-        symlink(f'proc.layer1.{layer1_pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
-        ####
 
         WlogReader.init()
 
