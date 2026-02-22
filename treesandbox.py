@@ -120,7 +120,7 @@ def gen_layer2a(si, uc, dyncfg):
             d(batch_plan='dup-rootfs', destbase='/'),
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
-        dropcap_then_cmds=[
+        subprocs=[
             d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
         ],
     )
@@ -233,7 +233,7 @@ def gen_layer4a(si, uc, dyncfg):
         # uid 变回 1000
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
-        dropcap_then_cmds=[
+        subprocs=[
             d( cmdvec=["icewm"] ) if uc.icewm else None ,
         ],
     )
@@ -241,6 +241,7 @@ def gen_layer4a(si, uc, dyncfg):
 def gen_layer4(si, uc, dyncfg):
     return d( # 主 用户app 在这里跑
         layer_name='layer4', # 默认模板的 layer_name 不要修改
+        mainApp_lyr=True, # 这是 主要的 app 层
         unshare_pid=True, unshare_mnt=True,
         unshare_chdir=True, # chdir()不影响其他
 
@@ -248,9 +249,10 @@ def gen_layer4(si, uc, dyncfg):
         unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
         workdir=uc.workdir if uc.workdir else None,
-        # user_shell=True,
-        dropcap_then_cmds=[
-            d( cmdvec=uc.default_app , stdin=True, stdout=True, stderr=True),
+        # user_shell=True, # 主要给调试用
+        # dev_shell=True,  # 主要给调试用
+        subprocs=[
+            d( cmdvec=uc.default_app , mainApp=True), # mainApp=True 表示这是启动 主app进程 的命令
         ],
     )
 
@@ -303,10 +305,10 @@ def recr_rm_empty_lyr(si, cfg):
         have_rmed = False
         cnt_cmds = 0
         cnt_sl = 0
-        if cfg.dropcap_then_cmds :
-            cnt_cmds = len(cfg.dropcap_then_cmds)
-            cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
-            if cnt_cmds != len(cfg.dropcap_then_cmds) :
+        if cfg.subprocs :
+            cnt_cmds = len(cfg.subprocs)
+            cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
+            if cnt_cmds != len(cfg.subprocs) :
                 have_rmed = True
         if cfg.sublayers :
             cnt_sl = len(cfg.sublayers)
@@ -316,7 +318,7 @@ def recr_rm_empty_lyr(si, cfg):
             for sublyr_cfg in cfg.sublayers:
                 r = _recr(si, sublyr_cfg)
                 if r: have_rmed = True
-        if not (cfg.sublayers or cfg.dropcap_then_cmds or cfg.user_shell or cfg.dev_shell ):
+        if not (cfg.sublayers or cfg.subprocs or cfg.user_shell or cfg.dev_shell ):
             cfg.disabled = True
         return have_rmed
     while _recr(si, cfg): pass
@@ -340,8 +342,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.fs = [fsItem for fsItem in cfg.fs if fsItem is not None]
     if cfg.sublayers :
         cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr is not None]
-    if cfg.dropcap_then_cmds :
-        cfg.dropcap_then_cmds = [cmd for cmd in cfg.dropcap_then_cmds if cmd is not None]
+    if cfg.subprocs :
+        cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
+        CHK( cfg.unshare_pid, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid")
     if cfg.envs_unset:
         cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
     if cfg.envset_grps:
@@ -561,9 +564,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     print(f"cgroup：{CG_SBX}")
 
     atexit.register(lambda: cleanup_outest(outest_sbxdir, CG_SBX) ) # 顶层父进程注册清理函数
-    for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
-        signal.signal(sig, signals_handler)
-
 
     mkdirp(outest_sbxdir)    # 创建本次运行的临时目录, 包含'outest_newroot'和'cfg' 两个
     os.chdir(outest_sbxdir)
@@ -589,8 +589,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         fcntl.fcntl(fd, fcntl.F_SETFD, new_fdflag)
         return fd
 
-    sbxinfo.fd_layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
-    sbxinfo.fd_procs = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644)
+    sbxinfo.fd = d()
+    sbxinfo.fd.layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
+    sbxinfo.fd.proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644)
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
@@ -600,18 +601,18 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 def write_proclist_fd(proclist_arr):
     text = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in proclist_arr]) ,']'])
     try:
-        fcntl.flock(si.fd_procs, fcntl.LOCK_EX)
-        os.ftruncate(si.fd_procs, 0)
-        os.pwrite(si.fd_procs, text.encode(), 0)
+        fcntl.flock(si.fd.proclist, fcntl.LOCK_EX)
+        os.ftruncate(si.fd.proclist, 0)
+        os.pwrite(si.fd.proclist, text.encode(), 0)
     finally:
-        fcntl.flock(si.fd_procs, fcntl.LOCK_UN)
+        fcntl.flock(si.fd.proclist, fcntl.LOCK_UN)
 
 def read_proclist_fd() -> dict:
     try:
-        fcntl.flock(si.fd_procs, fcntl.LOCK_EX)
-        text = os.pread(si.fd_procs, os.fstat(si.fd_procs).st_size, 0).decode()
+        fcntl.flock(si.fd.proclist, fcntl.LOCK_EX)
+        text = os.pread(si.fd.proclist, os.fstat(si.fd.proclist).st_size, 0).decode()
     finally:
-        fcntl.flock(si.fd_procs, fcntl.LOCK_UN)
+        fcntl.flock(si.fd.proclist, fcntl.LOCK_UN)
     return d(json.loads(text))
 
 def get_nstypes(nsdir_path):
@@ -795,11 +796,20 @@ class WlogReader():
 
 def daemon(is_outest, layer1_pid=None):
     if is_outest:
+        # TODO 等待5秒，等待主app启动的信号，否则退出
+
+        for sig in SIGS_TO_HANDLE:
+            signal.signal(sig, signals_handler_outest)
+        # TODO 等 main2改好后，信号注册不判断is_outest
+
         si.layer1_pid = layer1_pid
+
+        #### 这些都改为在 log的读取事件中做 TODO
         with open(f'{si.outest_sbxdir}/proc.layer1.{layer1_pid}.pid', 'w') as f:
             f.write(str(layer1_pid))
             os.chmod(f.name, 0o444)
         symlink(f'proc.layer1.{layer1_pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
+        ####
 
         WlogReader.init()
 
@@ -807,28 +817,32 @@ def daemon(is_outest, layer1_pid=None):
 
     if not is_outest:
         CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-
-    async def loop():
-        nn = 0
-        while True:
-            nn += 1
-            await asyncio.sleep(0.2)
-
-            if should_exit:
-                if should_exit_signum is not None: log(f"因信号 {signal.Signals(should_exit_signum).name} (={should_exit_signum}) ，即将退出")
+    #-----------
+    nn = 0
+    while True:
+        nn += 1
+        time.sleep(0.2)
+        if should_exit:
+            if is_outest:
+                pipe_outest_exit_layer1.set_should_exit()
+            else:
                 sys.exit()
 
-            if is_outest and nn >=5:
-                nn=0; update_proclist()
 
-            if not is_outest and thislyr_cfg.depth == 1 :
-                if pipe_outest_exit_layer1.is_should_exit_set() : sys.exit()
+        if is_outest :
+            new_logs = WlogReader.readnew()
+            if nn >=5:
+                nn=0
+                update_proclist()
 
-            if not exist_childtree():
-                log("子进程树已空，退出")
+
+        if not is_outest and thislyr_cfg.depth == 1 :
+            if pipe_outest_exit_layer1.is_should_exit_set() :
                 sys.exit()
 
-    asyncio.run(loop())
+        if not exist_childtree():
+            sys.exit()
+
 
 def main2():
     # 写uid_map 等 。一般来说配合 unshare_user
@@ -889,91 +903,129 @@ def main2():
     if thislyr_cfg.unshare_pid:
         CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
         atexit.register(cleanup_pidnsleader)
-        for sig in EXIT_SIGNALS + [signal.SIGCHLD]:
-            signal.signal(sig, signals_handler)
+        # TODO 信号注册移到daemon中
+        for sig in SIGS_TO_HANDLE:
+            signal.signal(sig, signals_handler_pidnsleader)
 
     layer_set_status('afterRegSigs')
     set_proc_dispname(thislyr_cfg.layer_name)
     layer_set_status('booted')
 
-    direct_child_pids = [] # 记录下直接创建的子进程，但可能用不上
+    inprepare_children = [] # 记录下直接创建的子进程，但可能用不上
 
-    if thislyr_cfg.user_shell:
-        if thislyr_cfg.sublayers or thislyr_cfg.dropcap_then_cmds:
-            log("警告：因为启用了user_shell, 其余要启动的命令或子容器都会被忽略", file=sys.stderr)
-        layer_run_subp (['/bin/bash', '--norc' ] , blocking=True)
-        sys.exit()
-
-    for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
-        pid = layer_run_subp (cmdItem.cmdvec ,
-                stdin =cmdItem.stdin , stdout=cmdItem.stdout, stderr=cmdItem.stderr,
-                child_no_caps=True, workdir=thislyr_cfg.workdir
-            )
-        direct_child_pids.append(pid)
-
-    sublayers = thislyr_cfg.sublayers or []
-    # log(f"本层将生成 {len(sublayers)} 个子层")
-    for sublyr_cfg in (sublayers or []):
-        log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
-        pid = layer_run_subp([
-                si.pythonbin ,
-                # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
-                # 因此用本层的path1
-                f'{thislyr_cfg.sbxdir_path1}/bootsbx.py',
-                '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
-            ],
-            stdin=True, stdout=True, stderr=True,
-            child_no_caps = False,
+    if thislyr_cfg.user_shell or thislyr_cfg.dev_shell:
+        if thislyr_cfg.sublayers or thislyr_cfg.subprocs:
+            log("警告：因为启用了user_shell 或 dev_shell, 本层其余的子进程或子层都会被忽略", file=sys.stderr)
+            thislyr_cfg.sublayers = []
+            thislyr_cfg.subprocs = []
+        pid, pipe = layer_run_subp( ['/bin/bash', '--norc' ] ,
+                        **( d(user_shell=True) if thislyr_cfg.user_shell else {}),
+                        **( d(dev_shell=True)  if thislyr_cfg.dev_shell  else {}),
         )
-        direct_child_pids.append(pid)
+        inprepare_children.append((pid, pipe))
+
+    for subpItem in (thislyr_cfg.subprocs or [] ) :
+        pid, pipe = layer_run_subp (**subpItem)
+        inprepare_children.append((pid, pipe))
+
+    sublyrItem = thislyr_cfg.sublayers or []
+    # log(f"本层将生成 {len(sublyrItem)} 个子层")
+    for sublyr_cfg in (sublyrItem or []):
+        log(f"将运行子层 {sublyr_cfg.layer_name} 的启动脚本")
+        pid, pipe = layer_run_subp([
+                        si.pythonbin ,
+                        # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
+                        # 因此用本层的path1
+                        f'{thislyr_cfg.sbxdir_path1}/bootsbx.py',
+                        '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
+                    ],
+                    subLayer=True
+        )
+        inprepare_children.append((pid, pipe))
 
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   如果有子进程，则等待，否则就退出
     if thislyr_cfg.unshare_pid:
+        for pid, pipe in inprepare_children:
+            pipe.send(b'x') ; pipe.close() # 回信给子进程
         daemon(False)
-    # 如果不是 unshare_pid 的 ,这里直接结束退出
+    else: # 如果不是 unshare_pid 的 ,这里将结束退出
+        close_important_fds()
+        for pid, pipe in inprepare_children:
+            pipe.send(b'x') ; pipe.close() # 回信给子进程
+        sys.exit()
 
 safe_mntns_fd = None
-def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None): # TODO pty或setsid
+def layer_run_subp(cmdvec,
+
+                   mainApp=False, # mainApp==False则视为辅助进程
+                   subLayer=None,
+                   user_shell=None,
+                   dev_shell=None,
+
+                   keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
+                   stdin=None, stdout=None, stderr=None,
+                   workdir=None,  # None则使用本层设置的workdir
+                   ): # TODO pty或setsid
     global safe_mntns_fd
-    # 使用 socketpair 替代两个 pipe
+
+    if workdir is None and thislyr_cfg.workdir: workdir = thislyr_cfg.workdir
+
+    if user_shell or dev_shell:
+        stdin=True; stdout=True; stderr=True
+        if dev_shell: keep_caps=True
+    else:
+        if not workdir: workdir = si.HOME
+        if mainApp is False:
+            if stdin  is None: stdin  = False
+            if stdout is None: stdout = False
+            if stderr is None: stderr = False
+        else: # mainApp==True
+            if stdin  is None: stdin  = True
+            if stdout is None: stdout = True
+            if stderr is None: stderr = True
+
+    if subLayer:
+        stdin=True; stdout=True; stderr=True
+        keep_caps=True
+
     child_sock, parent_sock = socket.socketpair()
 
     pid = os.fork()
     if pid == 0: # 子进程
+        atexit._clear()
         set_loghead(f"{loghead}subp: ")
         parent_sock.close() # 关闭不需要的 socket 端
-        if child_no_caps:
+
+        if not subLayer:
             if safe_mntns_fd is None :
                 makesure_proc_safe('/proc', allow_newmntns=True)
             else:
                 log('加入已有的安全mnt ns为新进程的运行做准备')
                 os.setns(safe_mntns_fd, gen_unshareflag(d(unshare_mnt=True)))
 
+        if not keep_caps:
             drop_caps()
-        child_sock.send(b'x') # 给父进程发送信号
-        CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
-        child_sock.recv(1) ; child_sock.close()
-        wlog('subp_start', me_proc_info=True , extra_kvs=d(subp_cmdvec=cmdvec) )
-        # 关闭3以上的fd
-        if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
-            for fd in os.listdir('/proc/self/fd') :
-                if int(fd) >=3 :
-                    try:
-                        os.close(int(fd))
-                    except OSError as e:
-                        if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
 
-        log('准备带权启动:' if not child_no_caps else '准备启动（降权）:' , cmdvec)
+        child_sock.send(b'x') # 给父进程发送信号
+        CHK( select.select([child_sock], [], [], 5.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
+        child_sock.recv(1) ; child_sock.close()
+
+        wlog('subp_start', me_proc_info=True , extra_kvs=d(subp_cmdvec=cmdvec) )
+
+        if not (dev_shell or subLayer):
+            close_important_fds() # 关闭3以上的fd
+
+        log('准备带权启动:' if keep_caps or dev_shell else '准备启动（降权）:' , cmdvec)
         if workdir: os.chdir(workdir)
-        # 去掉 stdin/out/err 中不需要的 （下面无法再log或print）
+        # === 去掉 stdin/out/err 中不需要的 # NOTE 下面无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
         if not stdin:  os.dup2(devnull, 0)
         if not stdout: os.dup2(devnull, 1)
         if not stderr: os.dup2(devnull, 2)
         os.close(devnull)
-
+        # NOTE 无法再 log 或 print
         os.execvp(cmdvec[0], cmdvec)
         raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
     else: # 原进程
@@ -981,19 +1033,22 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
         parent_sock.recv(1) # 读取子进程的信号 (虽然值不重要，但为了同步)
         if safe_mntns_fd is None: safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
-        parent_sock.send(b'x') ; parent_sock.close() # 回信给子进程
-
-        if not blocking: # 非阻塞
-            return pid
-        else: # 阻塞
-            _, status = os.waitpid(pid, 0)
-            return status
+        # parent_sock.send(b'x') ; parent_sock.close() # 回信给子进程
+        return pid, parent_sock
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
     # os.exec*成功后不回来，替换了进程
         # l/v： 可变参 或 数组 来指定参数
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
+
+def close_important_fds():
+    for fd in os.listdir('/proc/self/fd') :
+        if fd in si.fd.values():
+            try:
+                os.close(int(fd))
+            except OSError as e:
+                if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
 
 
 def makesure_proc_safe(proc_path, allow_newmntns):
@@ -1009,7 +1064,7 @@ def make_proc_ro(proc_path, allow_newmntns):
 
 def cleanup_pidnsleader():
     if os.getpid() == 1:
-        for i in range(10):
+        for i in range(30):
             if not exist_childtree():
                 break
             os.kill(-1, signal.SIGTERM)
@@ -1018,15 +1073,25 @@ def cleanup_pidnsleader():
             os.kill(-1, signal.SIGKILL)
 
 
-# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 不一定要退出，由用户配置决定是否
-EXIT_SIGNALS = [ signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, ]
+
+def signals_handler_outest(signum, frame):
+    _signals_handler(signum, is_outest=True)
+
+def signals_handler_pidnsleader(signum, frame):
+    _signals_handler(signum)
+
+# NOTE HUP < INT < TERM 退出强烈程度 # TODO SIGHUP 是关闭终端窗口时的信号 ，由用户配置决定外层动作
+SIGS_TO_PASSBY = [signal.SIGINT, signal.SIGHUP, signal.SIGUSR1, signal.SIGUSR2, ]
+SIGS_TO_HANDLE = SIGS_TO_PASSBY + [signal.SIGTERM, signal.SIGCHLD]
 should_exit = False
-should_exit_signum = None
-def signals_handler(signum, frame):
+def _signals_handler(signum, is_outest=False):
     # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
-    global should_exit, should_exit_signum
-    if signum in EXIT_SIGNALS:
-        should_exit = True ; should_exit_signum = signum
+    global should_exit
+    if signum in SIGS_TO_PASSBY:
+        pass # TODO
+    elif signum == signal.SIGTERM:
+        should_exit = True
+        if is_outest: pipe_outest_exit_layer1.set_should_exit()
     elif signum == signal.SIGCHLD:
         while True:
             try:
@@ -1075,7 +1140,7 @@ def layer_set_status(status):
         wlog('layer_booted', me_proc_info=True, extra_kvs=d(layer_cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') ) )
 
 def wlog(*args, me_proc_info=False, errmsg=None, extra_kvs={}):
-    if not (si and si.fd_layerslog_a): return False
+    if not (si and si.fd.layerslog_a): return False
     event = args[0] if (errmsg is None) else 'error'
     logObj = d(
         logger = thislyr_cfg.layer_name if thislyr_cfg else '',
@@ -1090,12 +1155,12 @@ def wlog(*args, me_proc_info=False, errmsg=None, extra_kvs={}):
         logObj.ns = get_nstypes(f'/proc/self/ns')
     logObj.update(extra_kvs)
     try:
-        fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_EX)
-        os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
+        fcntl.flock(si.fd.layerslog_a, fcntl.LOCK_EX)
+        os.write(si.fd.layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
     except Exception as err:
         traceback.print_exc(file=sys.stderr)
     finally:
-        fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_UN)
+        fcntl.flock(si.fd.layerslog_a, fcntl.LOCK_UN)
 
 
 def build_fs():
