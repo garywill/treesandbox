@@ -35,6 +35,9 @@ def userconfig(si): # 这个只在顶层解析一次
         # d(mttype='robind', src=f'{si.startdir_on_host}', SDS=1),
     ]
 
+    # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
+    uc.default_app = ['bash'] # 命令不是字符串，而是shell命令以空格分割成的数组
+
     # 输入法等通信需要dbus
     uc.dbus_session="allow"
     # uc.dbus_session="filter" # (暂未实现)
@@ -227,7 +230,11 @@ def gen_layer3(si, uc, dyncfg):
                 # uid 变回 1000
                 unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
 
-                user_shell=True,
+                workdir=uc.workdir if uc.workdir else None,
+                dropcap_then_cmds=[
+                    d( cmdvec=uc.default_app , stdin=True, stdout=True, stderr=True),
+                ],
+
             ),
         ],
     )
