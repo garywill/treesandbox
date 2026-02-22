@@ -25,6 +25,8 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.gui="xpra" # 暂未实现
     # uc.gui="isolatedX"; de_start_cmd="plasmashell"  # 暂未实现
 
+    # uc.XId=50 # 使用内部隔离X11时，X11的显示编号，如果不指定，则随机
+
     uc.icewm = True if uc.gui == 'xephyr' else False
 
     uc.gpus     =      True if uc.gui else False
@@ -130,7 +132,7 @@ def gen_layer2c(si, uc, dyncfg):
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
         ],
         subprocs=[
-            d( cmdvec=["Xephyr",  ":10",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
+            d( cmdvec=["Xephyr",  f":{si.XId}",  "-resizeable",  "-ac"] , subp_name='xephyr') if uc.gui=='xephyr' else None,
         ],
     )
 
@@ -138,14 +140,14 @@ def gen_layer2z(si, uc, dyncfg):
     return d( # layer2z 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
         layer_name='layer2z',  unshare_mnt=True, unshare_chdir=True,
         start_after=[
-            d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
         ],
         newrootfs=True,
         fs=[
             d(batch_plan='dup-rootfs', srcbase='/zrootfs'),
             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
 
-            d(plan='robind', src='/tmp/.X11-unix/X10', dest='/sbxdir/temp/X10') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'/tmp/.X11-unix/X{si.XId}', dest=f'/sbxdir/temp/X{si.XId}') if uc.gui=='xephyr' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
     )
@@ -190,7 +192,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
-            d(plan='robind', src='/sbxdir/temp/X10', dest='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
+            d(plan='robind', src=f'/sbxdir/temp/X{si.XId}', dest=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
 
             *dyncfg.mnts_gui,
 
@@ -232,7 +234,7 @@ def gen_layer3(si, uc, dyncfg):
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus_session_socket') if uc.dbus_session else None,
-            d(DISPLAY=':10') if uc.gui=='xephyr' else None,
+            d(DISPLAY=f':{si.XId}') if uc.gui=='xephyr' else None,
         ],
         sublayers=[
             gen_layer4c(si, uc, dyncfg),
@@ -289,6 +291,17 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         ] if uc.gpus else [] ),
     ]
 
+    if uc.gui and uc.gui != 'realX': # 使用GUI但不是真实X, 说明是某种隔离的X,需要新的X编号
+        if uc.XId:
+            CHK( str(uc.XId) != '0' , '沙箱内的虚拟X11的显示编号不能用0')
+            XId = uc.XId
+            log(f'沙箱内隔离的X11的显示编号使用指定的 DISPLAY=:{XId}')
+        else:
+            while (XId := random.randrange(230, 980) ) :
+                if not os.path.lexists(f'/tmp/.X11-unix/X{XId}')  \
+                and not re.search(rf'\/tmp/\.X11-unix\/X{XId}\b', open('/proc/self/net/unix').read(), re.MULTILINE) :
+                    log(f'沙箱内隔离的X11的显示编号使用生成的随机号码 DISPLAY=:{XId}')
+                    break
 
     if uc.mask_xdg_opens:
         cmds_to_mask += [
@@ -309,7 +322,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     dyncfg = d({k: v for k, v in locals().items()
-            if k in ['paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost']})
+            if k in ['XId', 'paths_to_mask', 'machineid', 'mnts_gui', 'sharedir_onhost']})
     return dyncfg
 
 # === HIDE_FOR_SUBLAYERS END === NOTE: Don't change this line ===
@@ -619,13 +632,15 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         else :
             break
 
+    if 'XId' in dict.keys(dyncfg): XId = dyncfg.XId
+
     CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
     CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
     CG_SBX = f'{CG_TSBXS}/{instance_name}'
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'outest_sbxdir',
+        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'XId',
          'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
     } )
     si.pythonbin = sys.executable
@@ -807,9 +822,9 @@ class OutestProcsMonitor:
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', '/tmp/.X11-unix/X10')
-            cls.symlink_into_sbxdir('/tmp/.X11-unix/X10', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append('/tmp/.X11-unix/X10')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.XId}')
+            cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.XId}', f'into.{proc_name}.x11socket.link')
+            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.XId}')
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
