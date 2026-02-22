@@ -1,4 +1,4 @@
-#!/usr/bin/env -S python3 -I -B
+#!/usr/bin/env -S python3 -IBS
 
 # Tree Sandbox for Linux
 # Licensed under GPL
@@ -1008,7 +1008,7 @@ def main2(skp_lyfk):
     # 以subp启动子层
     for sublyr_cfg in (tlcfg.sublayers or []):
         pid, skp_spfk = layer_run_subp([
-                        si.pythonbin ,
+                        si.pythonbin , '-IBS',
                         # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                         # 因此用本层的path1
                         f'{tlcfg.sbxdir_path1}/bootsbx.py',
