@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib
 from pathlib import Path
 from glob import glob
 
@@ -26,10 +26,10 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.user_mnts = [
         # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
-        # d(batch_plan='appimage', dirname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
+        # d(batch_plan='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
 
         # 用当前目录下的 fakehome 目录，作为沙箱内 HOME 的永久储存（否则tmpfs作HOME）
-        # d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME),
+        # d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
         # HOME/bin
         d(plan='robind', src=f'{si.HOME}/bin', SDS=1),
@@ -745,15 +745,16 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     outest_pid = os.getpid()
     log(f'PID = {outest_pid}')
     startscript_on_host = scriptfilepath
-    startdir_on_host = scriptdirpath
+    CWD = scriptdirpath
     PTMP = f'/tmp/tsbxs-{uid}'
+    hash_bootsbx_py = hashlib.blake2b(open(scriptfilepath, 'rb').read()).hexdigest()
 
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
     os.chmod(PTMP, 0o700)
 
     si.update( { k: v for k, v in locals().items() if k in
         ['PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
-         'startscript_on_host', 'startdir_on_host']
+         'startscript_on_host', 'CWD', 'hash_bootsbx_py']
     } )
 
     uc = userconfig(si) # NOTE
@@ -1089,7 +1090,7 @@ def get_start_tick(statfile_path): # 返回的是字符串，不是数字
 
 def maybe_sendto_running_instance():
     log('检查有无正在运行的同种沙箱')
-    MATCH_SI_K = [ "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
+    MATCH_SI_K = ["hash_bootsbx_py", "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
             return True # is_still_alive() 返回 真

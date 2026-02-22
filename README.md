@@ -133,7 +133,7 @@ Edit `.py` file and edit `userconfig` part like this:
 ```python
 uc.sandbox_name='freecad'
 uc.user_mnts = [
-    d(batch_plan='appimage', dirname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(batch_plan='appimage', dirname='freecad', src=f'{si.CWD}/FreeCAD.AppImage'),
     d(plan='bind', src='/anyhdd2/projects_save/', SDS=1),
 ]
 uc.gui="realX"
@@ -158,9 +158,9 @@ Configure:
 ```python
 uc.sandbox_name='firefox' # sandbox name
 uc.user_mnts = [
-    d(plan='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
+    d(plan='robind', src=f'{si.CWD}/firefox', SDS=1), 
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
-    d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME), 
+    d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX"
 uc.dbus_session="filter" # input methods and other components need dbus

@@ -136,7 +136,7 @@
 ```python
 uc.sandbox_name='freecad' # 沙箱名称
 uc.user_mnts = [
-    d(batch_plan='appimage', dirname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(batch_plan='appimage', dirname='freecad',  src=f'{si.CWD}/FreeCAD.AppImage'),
     d(plan='bind', src='/anyhdd2/projects_save/', SDS=1), 
 ]
 uc.gui="realX" # 使用真实的 X11
@@ -161,9 +161,9 @@ TreeSandbox实现了在内部预先挂载AppImage，不需要把fuse挂载权限
 ```python
 uc.sandbox_name='firefox' # 沙箱名称
 user_mnts = [
-    d(plan='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
+    d(plan='robind', src=f'{si.CWD}/firefox', SDS=1), 
     # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
-    d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME), 
+    d(plan='bind', src=f'{si.CWD}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX" # 使用真实的 X11
 uc.dbus_session="filter" # 输入法等通信需要dbus
