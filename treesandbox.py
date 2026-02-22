@@ -116,10 +116,10 @@ def gen_layer2(si, uc, dyncfg):
 
             *dyncfg.mnts_gui,
 
-            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(plan='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").removeprefix(":")}', SDS=1),
             d(plan='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
 
-            d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path='), SDS=1 ),
+            d(plan='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
 
             d(batch_plan='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
             d(batch_plan='mask-privacy', destbase='/zrootfs'),
@@ -208,7 +208,7 @@ def gen_layer3(si, uc, dyncfg):
             # TODO 1. 改用dyncfg  2. layer2里也加
 
             *([
-            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").removeprefix(":")}', SDS=1),
             d(plan='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
@@ -219,7 +219,7 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
             *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
-            d(plan='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').lstrip('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(plan='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
             d(plan='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
 
             d(plan='empty-if-exist', dest='/etc/fstab'),
