@@ -333,7 +333,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             '--talk=org.freedesktop.IBus.*',
             '--talk=org.freedesktop.portal.IBus',
             '--talk=org.freedesktop.portal.Fcitx',
-            *uc.dbusproxy_extra]
+            *(uc.dbusproxy_extra or [])]
 
     if uc.mask_xdg_opens:
         cmds_to_mask += [
