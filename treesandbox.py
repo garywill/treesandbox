@@ -417,7 +417,7 @@ def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把l
     recr_rm_empty_lyr(si, layer1_cfg)
 
 
-resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
+resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'mainApp', 'mainApp_lyr']
 def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # dirmaker.xxx.name
@@ -591,8 +591,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         return fd
 
     sbxinfo.fd = d()
-    sbxinfo.fd.layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644)
-    sbxinfo.fd.proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644)
+    sbxinfo.fd.update( d(
+        layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
+
+        proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644),  # TODO 改用RDONLY
+
+    ) )
 
     make_mnt_fill_sbxdir(sbxinfo, layer1_cfg, call_at_begin=True)
 
@@ -912,7 +916,7 @@ def main2():
             log("警告：因为启用了user_shell 或 dev_shell, 本层其余的子进程或子层都会被忽略", file=sys.stderr)
             thislyr_cfg.sublayers = []
             thislyr_cfg.subprocs = []
-        pid, pipe = layer_run_subp( ['/bin/bash', '--norc' ] ,
+        pid, pipe = layer_run_subp( ['/bin/bash'] ,
                         **( d(user_shell=True) if thislyr_cfg.user_shell else {}),
                         **( d(dev_shell=True)  if thislyr_cfg.dev_shell  else {}),
         )
@@ -1025,7 +1029,7 @@ def layer_run_subp(cmdvec,
     else: # 原进程
         child_sock.close() # 关闭不需要的 socket 端
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
-        parent_sock.recv(1) # 读取子进程的信号 (虽然值不重要，但为了同步)
+        CHK( parent_sock.recv(1) == b'x', "收到的子进程信号不符合预期")
         if safe_mntns_fd is None: safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
         # parent_sock.send(b'x') ; parent_sock.close() # 回信给子进程
         return pid, parent_sock
@@ -1057,14 +1061,16 @@ def make_proc_ro(proc_path, allow_newmntns):
         mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
 
 def cleanup_pidnsleader():
-    if os.getpid() == 1:
-        for i in range(30):
-            if not exist_childtree():
-                break
-            os.kill(-1, signal.SIGTERM)
+    CHK( os.getpid() == 1, "应该只有pid=1的领头进程会运行此函数")
+    for u in range(3):
+        if not exist_childtree(): break
+        os.kill(-1, signal.SIGTERM)
+        for i in range(10):
+            if (clear := not exist_childtree()): break
             time.sleep(0.1)
-        else:
-            os.kill(-1, signal.SIGKILL)
+        if clear: break
+    else:
+        os.kill(-1, signal.SIGKILL)
 
 
 
@@ -1468,8 +1474,8 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
     allowed_nonabs = ['tmpfs', 'proc', 'devpts']
     if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
         raise_exit(f"mount的来源{source}不是绝对路径，且不在允许的{allowed_nonabs}之内")
-    if isinstance(source, str):
-        source = napath(source) if source.startswith('/') else source
+    if isinstance(source, str) and source.startswith('/'):
+        source = napath(source)
     target = napath(target)
     if source and source.startswith('/') and rslvy(source) != source:
         raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
