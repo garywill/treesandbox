@@ -371,7 +371,6 @@ def gen_layer3(si, uc, dyncfg):
         ],
         sublayers=[
             gen_layer4c(si, uc, dyncfg),
-            gen_layer4d(si, uc, dyncfg),
             gen_layer4(si, uc, dyncfg),
         ],
     )
@@ -384,24 +383,9 @@ def gen_layer4c(si, uc, dyncfg):
         # uid 变回 1000
         unshare_user=True, uid_map_as_user=True,
 
-        start_after = [
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='weston' else None,
-        ],
-
         subprocs=[
-            d( cmdvec=["icewm"] , subp_name='icewm') if uc.icewm else None ,
-        ],
-    )
+            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) if uc.icewm else None ,
 
-def gen_layer4d(si, uc, dyncfg):
-    return d(
-        layer_name='layer4d', # 默认模板的 layer_name 不要修改
-        unshare_pid=True, unshare_mnt=True,
-
-        # uid 变回 1000
-        unshare_user=True, uid_map_as_user=True,
-
-        subprocs=[
             d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
         ],
     )
@@ -537,6 +521,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
         CHK( cfg.unshare_pid and cfg.unshare_mnt, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid+unshare_mnt")
         CHK( cfg.uid_map_as_user, f"层{cfg.layer_name}有 subprocs 但没有启用 uid_map_as_user")
+        for subpItem in cfg.subprocs:
+            if subpItem.start_after:
+                subpItem.start_after = [item for item in subpItem.start_after if item is not None]
     if cfg.subprocs and cfg.sublayers:
         raise_exit("不能同时有 subprocs 和 sublayers")
     if cfg.envs_unset:
@@ -913,11 +900,7 @@ def main():
             log('更新环境变量' , envg)
             os.environ.update(envg)
 
-    for wait_task in (tlcfg.start_after or [] ):
-        if wait_task.waittype == 'socket-listened':
-            while not is_unix_socket_listened(wait_task.path):
-                time.sleep(0.1)
-                pass
+    wait_for_startAfters(tlcfg.start_after)
 
     # log(f"执行unshare")
     # TODO 用个数组储存 pid time 是fork前做，其他main2做
@@ -1024,7 +1007,7 @@ def main2(skp_lyfk):
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
         if tlcfg.user_shell: set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
-        pid, skp_spfk = layer_run_subp( ['/bin/bash'] ,
+        pid, skp_spfk = layer_run_subp(cmdvec=['/bin/bash'] ,
                         **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
                         **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
         )
@@ -1057,7 +1040,7 @@ def main2(skp_lyfk):
         sys.exit()
 
 
-def layer_run_subp(cmdvec=None, subp_name=None,
+def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
                    workdir=None,
@@ -1095,6 +1078,8 @@ def layer_run_subp(cmdvec=None, subp_name=None,
         skp_spfk.chd_send(BS.IChdBorn)
         skp_spfk.chd_recv(1, 5, BS.YouChdGo)
         skp_spfk.close()
+
+        wait_for_startAfters(start_after)
 
         wlog('subp_start', cmdvec=cmdvec, **(d(ready_proc_name=subp_name, pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree) if not subLayer else {}) )
 
@@ -1138,6 +1123,17 @@ def layer_run_subp(cmdvec=None, subp_name=None,
         # l/v： 可变参 或 数组 来指定参数
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
+
+def wait_for_startAfters(arr_startAfter):
+    if not arr_startAfter: return
+    for wait_task in arr_startAfter:
+        tt = time.monotonic()
+        if wait_task.waittype == 'socket-listened':
+            while not is_unix_socket_listened(wait_task.path):
+                CHK(time.monotonic() <= tt+10, f'等待时间过长，报出错误 （ {wait_task} ）')
+                time.sleep(0.1)
+
+
 
 def build_fs():
     if tlcfg.newrootfs: # 如果设置了将要变根，现在先提前确定新根的位置
