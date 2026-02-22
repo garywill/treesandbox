@@ -345,6 +345,8 @@ def gen_layer3(si, uc, dyncfg):
 
             *([
             d(plan='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
+            d(plan='rofile', dest=f'{si.HOME}/.icewm/prefoverride', content=ICEWM_PREF),
+            d(plan='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),
             d(plan='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
             d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if uc.icewm else [] ),
@@ -2257,7 +2259,7 @@ def drop_caps():
 
     # 验证 /proc/self/status 中所有能力字段为 0
     caps_dict = get_caps_dict()
-    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" )
+    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" ) # 用pop不用get
     for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
 
     # libc验证 no_new_privs
@@ -2523,10 +2525,15 @@ EXITCODE=$DIALOG_R
 exit $EXITCODE
 '''
 
+ICEWM_WINOPTIONS='''
+.ignorePositionHint: 1
+'''
 
 ICEWM_PREF='''
 ShowStartMenu=0
-SystemTray=0
+ShowLogoutMenu=0
+ShowSettingsMenu=0
+ShowRun=0
 
 TaskBarShowClock=0
 TaskBarShowCPUStatus=0
@@ -2536,11 +2543,18 @@ TaskBarShowBatteryStatus=0
 TaskBarShowNetStatus=0
 TaskBarShowAPMStatus=0
 
-Workspaces=0
-WorkspaceNames="Main"
-EnableWorkspaces=0
-#ShowWorkspaceSwitcher=0
-#ShowWorkspaces=0
+WorkspaceNames="1"
+TaskBarShowWorkspaces = 0
+
+TaskBarShowAllWindows=1
+
+EdgeSwitch=0
+HorizontalEdgeSwitch=0
+VerticalEdgeSwitch=0
+ContinuousEdgeSwitch=0
+
+LimitPosition=1
+LimitSize=1
 '''
 
 if __name__ == "__main__":
