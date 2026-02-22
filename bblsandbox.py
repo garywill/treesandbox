@@ -169,14 +169,16 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='robind', src='/sbxdir/temp/X10', dest='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
 
             *([
-            d(plan='robind', dest=f'{si.HOME}/.fonts', SDS=1),
-            d(plan='robind', dest=f'{si.HOME}/.fonts.conf', SDS=1),
-            d(plan='robind', dest=f'{si.HOME}/.cache/fontconfig', SDS=1),
-            d(plan='rosame', dest='/dev/dri', SDS=1),
-            d(plan='rosame', dest='/sys/class/drm', SDS=1),
-            *[ d(plan='rosame', dest=p, SDS=1)        for p in glob.glob('/sys/dev/char/226:*') ],
-            *[ d(plan='rosame', dest=padir(p), SDS=1) for p in glob.glob('/sys/devices/*/*/drm') ],
+            d(plan='robind', src=f'{si.HOME}/.fonts', SDS=1),
+            d(plan='robind', src=f'{si.HOME}/.fonts.conf', SDS=1),
+            d(plan='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1),
+            d(plan='rosame', src='/dev/dri', SDS=1),
+            d(plan='rosame', src='/sys/class/drm', SDS=1),
+            *[ d(plan='rosame', src=p, SDS=1)        for p in glob.glob('/sys/dev/char/226:*') ],
+            *[ d(plan='rosame', src=padir(p), SDS=1) for p in glob.glob('/sys/devices/*/*/drm') ],
+            *[ d(plan='rosame',  src=rslvy(f'{padir(p)}/driver'), SDS=1)  for p in glob.glob('/sys/devices/*/*/drm') ],
             ] if uc.gui else [] ),
+            # TODO layer2里也加 GPU / 字体
 
             d(plan='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.mask_xdg_opens else None,
             *[d(plan='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
