@@ -1244,11 +1244,18 @@ def commit_fsPlans(fsPlans):
     def z(rmtItem):
         remountPlans.append(rmtItem)
 
+    if target_fs_path.startswith(PTMP):
+        mount(PTMP, PTMP, None, MS.BIND|MS.REC|MS.RDONLY, None)
+        mount(None, PTMP, None, MS.REMOUNT|MS.BIND|MS.REC|MS.RDONLY, None)
+        CHK( os.statvfs(PTMP).f_flag&MS.RDONLY, "PTMP未成功转换为ro")
+
     mkdirp(target_fs_path)
     if napath(target_fs_path) != '/':
         mount("tmpfs", target_fs_path, "tmpfs", mntflag_newrootfs, None)
         mount(None, target_fs_path, None, MS.REC | MS.SLAVE, None)
         # # 用了slave它还是private,不知原因
+    os.chdir(target_fs_path)
+    CHK( Path(target_fs_path).is_mount() , f"{target_fs_path} 不是挂载点")
     mkdirp(f'{target_fs_path}/proc') # proc不在这里做，预留个目录
 
     for pItem in fsPlans:
@@ -1362,7 +1369,7 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
         elif batch_plan == 'basic-dev':
             # 最小 /dev 集合。把常用设备结点从宿主机 bind 进来；并为 shm 提供 tmpfs
             a( d( plan='rotmpfs', dest='/dev' ) )
-            basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random', 'tty', 'console', ]
+            basic_devs = [ 'null', 'zero', 'full', 'urandom', 'random',] # 'tty', 'console'
             for dname in basic_devs:
                 a( d( plan='same', dest=f'/dev/{dname}', src=f'/dev/{dname}' ) ) # 不能ro对单个具体设备？
             a( d( plan='devpts',  dest='/dev/pts') )
@@ -1508,7 +1515,8 @@ def safe_copy_script(copy_target_path):
 def cleanup_outest(outest_sbxdir, cg_dir):
     # if si and si.layer1_pid: try_pass(lambda: os.setpgid(si.layer1_pid, 0) )
     pipe_outest_exit_layer1.set_should_exit()
-    log(f"正在执行清理...")
+    log(f"准备退出，等待所有子进程结束后执行清理...")
+    while exist_childtree(): time.sleep(0.1)
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
         # new.*.rootfs/
