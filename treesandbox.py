@@ -19,7 +19,8 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # 允许在无app的情况下保持沙箱存活多久（秒）
 
     uc.apps = [
-        d(cmdvec=['bash'], appname='bash'), # 第一个是默认app,可不设appname
+        # 第一个是默认app,可不设appname
+        d(cmdvec=['bash'], appname='bash'),
     ]
     # 命令cmdvec是shell命令以空格分割成的数组
     # 启动沙箱时，可以用'--app <appname>'，也可以不用（选择默认app）
@@ -415,6 +416,7 @@ def gen_layer4(si, uc, dyncfg):
 
         start_after = [
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='weston' else None,
+            # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
@@ -1045,6 +1047,7 @@ def main2(skp_lyfk):
     for pid, skp_spfk in inprepare_children:
         skp_spfk.pa_send(BS.YouChdGo); skp_spfk.close()
 
+    # TODO 让最外层把每一层的pidfd和各类ns保活， 再继续
     if tlcfg.unshare_pid:
         daemon_pidnsleader()
     else: # 如果不是 unshare_pid 的 ,这里将结束退出
@@ -1691,9 +1694,11 @@ class OutestProcsMonitor:
     def custom_action_when_procname_seen(cls, proc_name):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         if proc_name == 'xephyr':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', 'xephyr', f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}') # TODO wayland
+            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
+        # TODO weston
+        # TODO xwayland
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
         for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
@@ -1715,6 +1720,7 @@ class OutestProcsMonitor:
         if (aliveProc := cls.find_alive_proc_matching_logitem(logItem) ):
             seenProc = cls.conv_to_seenproc(aliveProc, logItem)
             cls.put_proc_into_seenlist(proc_name, seenProc, logItem)
+            # NOTE 如果某个进程只出现一瞬间，有了logItem,但alive捉不到，那么就不会进入histseen列表里。可以考虑加个histlog,兼收这类
         else: # 不在aliveProcs列表里：1.可能暂时来不及出现，允许等下个周期再出现 2.若已经不是第1个周期，则判断进程死亡
             if proc_name not in si.expected_alive_procs : # 看门狗不用管这个进程
                 return
@@ -1909,6 +1915,7 @@ def signals_handler_outest(signum, frame):
     _signals_handler(signum, is_outest=True)
 def signals_handler_pidnsleader(signum, frame):
     _signals_handler(signum)
+
 sig_say_exit = False
 def _signals_handler(signum, is_outest=False):
     # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
@@ -1944,6 +1951,7 @@ loghead = ''
 def set_loghead(new_loghead):
     global loghead
     loghead = new_loghead
+# TODO log_warn函数
 def log(*args, **kwargs):
     new_args = args
     if loghead:
@@ -2400,19 +2408,6 @@ def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在�
     os.symlink(linkto, dest)
 
 
-class FileContent:
-    def __init__(self, data):
-        if isinstance(data, (list, dict)):
-            self._content = json.dumps(data, indent=2, ensure_ascii=False)
-        else:
-            self._content = str(data)
-        self._size_bytes = len(self._content.encode('utf-8'))
-    def __str__(self):
-        return f"<FileContent size={self._size_bytes}>"
-    def __repr__(self):
-        return self.__str__()
-
-
 class EnhancedFalse:
     def __str__(self):
         raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
@@ -2420,7 +2415,6 @@ class EnhancedFalse:
         raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
     def __bool__(self):
         return False
-
 FALSE = EnhancedFalse()
 
 
@@ -2482,10 +2476,8 @@ def eq_ignore_order(v1, v2):
 
 
 def try_pass(func):
-    try:
-        return func()
-    except:
-        pass
+    try:    return func()
+    except: pass
 
 def try_showerr(func):
     try:
@@ -2528,6 +2520,8 @@ EXITCODE=$DIALOG_R
 [[ $DIALOG_R -eq 2 ]] && EXITCODE=0
 exit $EXITCODE
 '''
+
+
 ICEWM_PREF='''
 ShowStartMenu=0
 SystemTray=0
