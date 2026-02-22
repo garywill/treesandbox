@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse
 from pathlib import Path
 from glob import glob
 
@@ -31,6 +31,13 @@ def userconfig(si): # 这个只在顶层解析一次
 
     # uc.see_real_hw=True # 看见真实/dev和/sys
 
+    # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
+    uc.apps = [
+        d(cmdvec=['bash'], appname='bash'), # 第一个是默认app,可不设appname
+    ]
+    # 命令cmdvec是shell命令以空格分割成的数组
+    # 启动沙箱时，可以用'--app <appname>'，也可以不用（选择默认app）
+
     uc.user_mnts = [
         # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
         # d(batch_plan='appimage', dirname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
@@ -50,8 +57,6 @@ def userconfig(si): # 这个只在顶层解析一次
 
     ]
 
-    # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
-    uc.default_app = ['bash'] # 命令不是字符串，而是shell命令以空格分割成的数组
 
     # 输入法等通信需要dbus
     # uc.dbus_session="allow"
@@ -645,6 +650,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
 
+    apps = uc.apps
+
     if (sharedir_prefix := uc.sharedir_prefix):
         CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
         sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
@@ -673,7 +680,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'XId',
+        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'XId', 'apps',
          'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX']
     } )
     si.pythonbin = sys.executable
@@ -766,7 +773,7 @@ class OutestProcsMonitor:
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
             # print(lyrn, cls.oPaSkts[lyrn], fdpair.pa)
-        cls.tell_lyr_runsubp(si.mainLyr, OG.uc.default_app+OG.user_cli_argv, 'mainApp') # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        cls.tell_lyr_runsubp(si.mainLyr, OG.mainApp_cmdvec, 'mainApp') # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
@@ -989,14 +996,19 @@ si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
 def main():
     global si, tlcfg
-    # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
-    if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
-        # 是顶层
-        is_outest = True # 是顶层
-    else: # 是子层
-        is_outest = False # 是子层
-        lyrcfg_file = sys.argv[2]
 
+    arg_parser = argparse.ArgumentParser(add_help=False)
+    sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
+    sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
+    sbx_arg_grp.add_argument("--lyrcfg", metavar="<lyrcfg_file>")
+
+    sbx_args, user_cli_argv = arg_parser.parse_known_args()
+
+    appname = sbx_args.app
+    lyrcfg_file = sbx_args.lyrcfg
+
+    if appname or not lyrcfg_file: is_outest = True # 是顶层
+    else: is_outest = False # 是子层
 
     if is_outest: # 是顶层
         si, layer1_cfg = init_sbxinfo() # 只有从最外层启动才运行这个函数
@@ -1010,8 +1022,11 @@ def main():
         si = d(json.loads(Path(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read_text()))
 
     if is_outest:
-        OG.user_cli_argv = sys.argv[1:]
-        if OG.user_cli_argv: log(f'启动新沙箱，要传给app的参数: {OG.user_cli_argv}')
+        if not appname or appname=='default': user_cli_app = si.apps[0]
+        else: user_cli_app = next((app for app in si.apps if app.get('appname') == appname), None)
+        CHK( user_cli_app and user_cli_app.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
+        OG.mainApp_cmdvec = user_cli_app.cmdvec + user_cli_argv
+        log(f'要在沙箱内运行的app的命令: {OG.mainApp_cmdvec}')
 
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
     set_ps1('notready')
