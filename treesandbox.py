@@ -16,6 +16,7 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.sandbox_name='' # 沙箱名称
 
     # uc.reuseInstance=True # 复用正在运行的同种沙箱实例（即，单实例沙箱，否则为多实例沙箱）
+    uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # 允许在无app的情况下保持沙箱存活多久（秒）
 
     uc.apps = [
         d(cmdvec=['bash'], appname='bash'), # 第一个是默认app,可不设appname
@@ -766,6 +767,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     apps = uc.apps
     if uc.reuseInstance: reuseInstance = uc.reuseInstance
+    if uc.idleKeepSbxTime: idleKeepSbxTime = uc.idleKeepSbxTime
 
     if (sharedir_prefix := uc.sharedir_prefix):
         CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
@@ -797,8 +799,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     pythonbin = sys.executable
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'outest_sbxdir', 'newXId', 'apps',
-         'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
+        ['sandbox_name', 'instance_name', 'reuseInstance', 'idleKeepSbxTime',  'outest_sbxdir',
+         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin']
     } )
 
     layer1_cfg = gen_layer1(si, uc, dyncfg)
@@ -833,6 +835,7 @@ class OutestProcsMonitor:
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
         cls.tell_lyr_runsubp(si.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        OutsideServ.init()
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
@@ -1000,6 +1003,59 @@ class OutestProcsMonitor:
             else:
                 log(f'{proc_name} 已不再存活，看门狗结束沙箱')
                 sys.exit()
+        OutsideServ.one_loop_task()
+
+class OutsideServ():
+    conns = []
+    cnt_recvmsg = 0
+    @classmethod
+    def init(cls):
+        cls.skt_OServLsn = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        cls.skt_OServLsn.bind(f'{si.outest_sbxdir}/OServ.socket')
+        cls.skt_OServLsn.listen(5)
+    @classmethod
+    def one_loop_task(cls):
+        # 处理已经建立的连接
+        for i in reversed(range(0, len(cls.conns))):
+            skt = cls.conns[i].skt_conn
+            ready, _, wrong = select.select([skt], [], [skt], 0)  # 非阻塞检查
+            if wrong:
+                log('警告：OutsideServ的一个连接出现异常', file=sys.stderr)
+                skt.close() ; del cls.conns[i]
+                continue
+            if ready:
+                data = skt.recv(300_000)
+                if data:
+                    cls.conns[i].last_tick = time.monotonic()
+                    # log(f"收到外部消息: {data!r}")
+                    try: cls.onDataRecved(data, cls.conns[i] )
+                    except Exception as err: log(f'警告：处理收到的消息过程中出错:{err}', file=sys.stderr)
+                else:
+                    # log("外部连接已断开（recv 返回空）") # 发完消息正常断开
+                    skt.close(); del cls.conns[i]
+            else: # 无消息
+                if cls.conns[i].last_tick + 60 < time.monotonic():
+                    log("警告：外部连接超时（连续无消息），关闭", file=sys.stderr)
+                    cls.conns[i].skt_conn.close() ; del cls.conns[i]
+
+
+        # 有没有新的外部连接
+        ready, _, _ = select.select([cls.skt_OServLsn], [], [], 0)
+        if ready:
+            conn, client_addr = cls.skt_OServLsn.accept()
+            cls.cnt_recvmsg += 1
+            # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
+            cls.conns.append( d(skt_conn=conn, last_tick=time.monotonic() , index=cls.cnt_recvmsg) )
+    @classmethod
+    def onDataRecved(cls, data, conn):
+        try: msgObj = d( json.loads( data.decode() ) )
+        except Exception as err: log(f'警告：无法正确解析收到的消息:{err}', file=sys.stderr)
+        for k,v in dict.items(msgObj.si_should_match or {}):
+            if si[k] != v:
+                log(f'警告：收到的消息中，si[{k}]与本沙箱不一致，忽略收到的消息。\n本沙箱值：{si[k]}\n消息中的值：{v}\n如果修改过沙箱配置，可能需要先中止正在运行的沙箱',file=sys.stderr)
+                return False
+        if msgObj.run_in_mainLyr_cmdvec:
+            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{conn.index}', stdin=False))
 
 
 def read_alltext_from_fd(fd:int) -> str:
@@ -1032,7 +1088,61 @@ def get_start_tick(statfile_path): # 返回的是字符串，不是数字
     return Path(statfile_path).read_text().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
 
 def maybe_sendto_running_instance():
-    return False
+    log('检查有无正在运行的同种沙箱')
+    MATCH_SI_K = [ "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
+    def is_still_alive(instance_name):
+        if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
+            return True # is_still_alive() 返回 真
+
+    chosen_instance = None
+    sock_estb = None
+    for dir_in_PTMP in Path(si.PTMP).iterdir():
+        dirname = dir_in_PTMP.name
+        # 是否是同种沙箱
+        if not re.match(rf'^{si.sandbox_name}_\d{{4}}-\d{{4}}-\d+$', dirname) :
+            continue
+        # 是否无 xxx_exit 退出标记
+        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
+            continue
+
+        tmp_t = time.monotonic()
+        while time.monotonic() <= tmp_t+1.5 and is_still_alive(dirname): # 允许那个实例2s的时间建立OutsideServ的socket文件
+            if is_socket(f'{si.PTMP}/{dirname}/OServ.socket'):
+                break
+            time.sleep(0.1)
+        else: # 那个实例2s都没有设置socket文件
+            log(f"忽略一个可能异常的旧实例 {dirname}")
+            continue
+
+        # 再检查一次 是否无 xxx_exit 退出标记
+        if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):
+            continue
+
+        tmp_t = time.monotonic()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        while time.monotonic() <= tmp_t+1 and is_still_alive(dirname): # 允许那个实例1s的时间开始监听那个它自己已经创建的socket
+            try:
+                sock.connect(f'{si.PTMP}/{dirname}/OServ.socket')
+                break
+            except ConnectionRefusedError:
+                time.sleep(0.05)
+        else:
+            log(f"忽略一个可能异常的旧实例(OServ.socket无响应): {dirname}")
+            continue
+
+
+        chosen_instance = dirname
+        sock_estb = sock
+        break
+    if chosen_instance and sock_estb:
+        log(f'找到实例 {chosen_instance} ')
+        msgObj = d()
+        msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
+        msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
+        sock_estb.send( json.dumps(msgObj).encode() )
+        return True
+        # sys.exit()
+
 
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
@@ -1078,13 +1188,16 @@ def main():
 
         # 判断应该 新实例 还是 发送app命令到 正在运行的实例
         if si.reuseInstance:
-            if maybe_sendto_running_instance():
-                sys.exit(0)
-
-        print(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
-        print(f"cgroup：{si.CG_SBX}")
-        print(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
-        if si.newXId: log(f'沙箱使用的X11编号 DISPLAY=:{si.newXId}')
+            try:
+                if maybe_sendto_running_instance():
+                    sys.exit(0) # 找到了正在运行的实例（实际上已经发送了命令给那个实例）
+            except Exception as err:
+                log(f"查找运行中的实例的过程中出错，认为没有正在运行的实例 （ {err} ）")
+        log('---------------------')
+        log(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
+        log(f"cgroup：{si.CG_SBX}")
+        log(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
+        if si.newXId: log(f'沙箱使用的X11/WAYLAND编号 : {si.newXId}')
 
         atexit.register(cleanup_outest) # 顶层父进程注册清理函数
 
@@ -1258,9 +1371,13 @@ def daemon_outest():
         time.sleep(0.2)
 
 
+
+lasttick_havechd = 0
 def daemon_pidnsleader():
+    global lasttick_havechd
     CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     PidnsleaderListener.i_am_pidnsleader()
+    PERIOD = 0.2
     while True:
         if sig_say_exit: sys.exit()
 
@@ -1268,16 +1385,27 @@ def daemon_pidnsleader():
             if msg_from_outest.action == 'sbx_exit':
                 sys.exit()
             elif msg_from_outest.action == 'run_subp':
-                PidnsleaderListener.HAS_SUBP_BY_OUTEST = True
                 layer_run_subp(no_wait=True,  **msg_from_outest.subpItem )
 
-        if PidnsleaderListener.HAS_SUBP_BY_OUTEST and not exist_childtree(): sys.exit()
+                if tlcfg.isMainLyr: # 默认认为收到过的第一个run_subp指令就是mainApp
+                    PidnsleaderListener.MainApp_Ever_Started = True
 
-        time.sleep(0.2)
+        if tlcfg.isMainLyr and PidnsleaderListener.MainApp_Ever_Started :
+            if not si.idleKeepSbxTime:
+                if not exist_childtree(): sys.exit()
+            else: # si.idleKeepSbxTime > 0:
+                if exist_childtree() :
+                    lasttick_havechd = time.monotonic()
+                else:
+                    tick_diff = time.monotonic() - lasttick_havechd
+                    if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} 主层空闲，若长时间空闲则结束沙箱')
+                    if time.monotonic() > lasttick_havechd+si.idleKeepSbxTime: sys.exit()
+
+        time.sleep(PERIOD)
 
 class PidnsleaderListener():
     I_AM_PIDNSLEADER=None
-    HAS_SUBP_BY_OUTEST=False
+    MainApp_Ever_Started=False # 是否收到过来自最外层的mainApp的启动命令（仅主层使用）
     @classmethod
     def i_am_pidnsleader(cls):
         cls.I_AM_PIDNSLEADER=True
@@ -1533,7 +1661,8 @@ def _signals_handler(signum, is_outest=False):
                 pid, status = os.waitpid(-1, os.WNOHANG)
                 if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                sig_say_exit = True ; break
+                if not tlcfg.isMainLyr or not si.idleKeepSbxTime: sig_say_exit = True ;
+                break
 
 
 def exist_childtree():
@@ -1907,6 +2036,7 @@ def cleanup_outest():
     log(f"准备退出，等待所有子进程结束后执行清理...")
     try_showerr(lambda: Path(f'{si.outest_sbxdir}_exit').touch() ) # 设个正在退出的标记
     try_showerr(lambda: Path(f'{si.outest_sbxdir}/EXITING').touch() )
+    try_pass(lambda: OutsideServ.skt_OServLsn.close() )
     # if OG and OG.layer1_pid: try_pass(lambda: os.setpgid(OG.layer1_pid, 0) )
     try_pass(lambda: OutestProcsMonitor.sbx_exit_broadcast())
 
