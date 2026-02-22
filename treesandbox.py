@@ -628,10 +628,12 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     sbxinfo.fd = d()
     sbxinfo.fd.update( d(
+        # 沙箱内只fd写，最外层用路径来读
         layerslog_a = create_file_for_sbx_fd(f'{outest_sbxdir}/events.layers.log', os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o644),
 
-        proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDWR|os.O_CREAT, 0o644),  # TODO 改用RDONLY
-
+        # RDONLY是因为沙箱内只fd读，仅最外层用路径写
+        proclist = create_file_for_sbx_fd(f'{outest_sbxdir}/proclist.json', os.O_RDONLY|os.O_CREAT, 0o644),
+        recoProcs = create_file_for_sbx_fd(f'{outest_sbxdir}/recogprocs.json', os.O_RDONLY|os.O_CREAT, 0o644),
     ) )
 
     sbxinfo.logs_fd = d()
@@ -644,54 +646,80 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     # 还要加将给app的cli参数
     return sbxinfo, layer1_cfg
 
-def write_proclist_fd(proclist_arr):
-    text = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in proclist_arr]) ,']'])
-    try:
-        fcntl.flock(si.fd.proclist, fcntl.LOCK_EX)
-        os.ftruncate(si.fd.proclist, 0)
-        os.pwrite(si.fd.proclist, text.encode(), 0)
-    finally:
-        fcntl.flock(si.fd.proclist, fcntl.LOCK_UN)
 
-def read_proclist_fd() -> dict:
+
+class OutestProcsMonitor:
+    I_AM_OUTEST=None
+    @classmethod
+    def i_am_outest(cls):
+        cls.I_AM_OUTEST=True
+        cls.proclist = []
+        cls.recogprocs = d()
+        cls.fd_wr_proclist = os.open(f'{si.outest_sbxdir}/proclist.json', os.O_WRONLY)
+    @classmethod
+    def get_NSpid_arr(cls, status_file_path) -> list:
+        for line in Path(status_file_path).read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return [int(x) for x in line.split()[1:]]
+    @classmethod
+    def get_procsinfo_arr_from_cg(cls) -> list:
+        if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        result = []
+        for pid in open(f'{si.CG_SBX}/cgroup.procs').read().splitlines():
+            try:
+                inode1 = os.stat(f'/proc/{pid}').st_ino
+
+                comm = Path(f'/proc/{pid}/comm').read_text().strip()
+                NSpid = cls.get_NSpid_arr(f'/proc/{pid}/status')
+                start_tick = get_start_tick(f'/proc/{pid}/stat')
+                ns = get_nstypes(f'/proc/{pid}/ns')
+                cmdvec = open(f'/proc/{pid}/cmdline').read().strip('\x00').split('\x00')
+
+                inode2 = os.stat(f'/proc/{pid}').st_ino
+                if inode1 != inode2: continue
+            except:
+                continue
+            result.append(d( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
+        return result
+    @classmethod
+    def update_proclist(cls): # 只有 最外层 原进程 调用这个函数
+        if not cls.I_AM_OUTEST: raise_exit("只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        proclist_arr = cls.get_procsinfo_arr_from_cg()
+        # NOTE 必须 既写本cls内部变量，也更新路径文件内容
+        cls.proclist = proclist_arr # 写cls内部
+        try: # 写文件
+            json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in proclist_arr]) ,']'])
+            fcntl.flock(cls.fd_wr_proclist, fcntl.LOCK_EX)
+            os.ftruncate(cls.fd_wr_proclist, 0)
+            os.pwrite(cls.fd_wr_proclist, json_str.encode(), 0)
+        finally:
+            fcntl.flock(cls.fd_wr_proclist, fcntl.LOCK_UN)
+
+
+def read_alltext_from_fd(fd:int) -> str:
     try:
-        fcntl.flock(si.fd.proclist, fcntl.LOCK_EX)
-        text = os.pread(si.fd.proclist, os.fstat(si.fd.proclist).st_size, 0).decode()
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return os.pread(fd, os.fstat(fd).st_size, 0).decode()
     finally:
-        fcntl.flock(si.fd.proclist, fcntl.LOCK_UN)
-    return d(json.loads(text))
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+def read_all_from_fd_then_jsonloads(fd) -> list|dict :
+    return d( json.loads( read_alltext_from_fd(fd) ) )
+
+def read_proclist() -> list:
+    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.proclist
+    else:   return read_all_from_fd_then_jsonloads(si.fd.proclist)
+
+def read_recogprocs() -> dict:
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.recogprocs
+    else:   return read_all_from_fd_then_jsonloads(si.fd.recogprocs)
+
 
 def get_nstypes(nsdir_path):
     return d({nstype:os.stat(f'{nsdir_path}/{nstype}').st_ino for nstype in os.listdir(nsdir_path)})
 
 def get_start_tick(statfile_path): # 返回的是字符串，不是数字
     return open(statfile_path,'r').read().split(') ')[-1].split(' ')[22-1-2]  # stat文件里的第22个字段是进程开始时间（cpu tick）， 去掉前两个字段
-
-def update_proclist(): # 只有 最外层 原进程 调用这个函数
-    def get_NSpid_arr(status_file_path) -> list:
-        for line in Path(status_file_path).read_text().splitlines():
-            if line.startswith("NSpid:"):
-                return [int(x) for x in line.split()[1:]]
-    host_pids = Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines()
-    proclist = []
-    for pid in host_pids:
-        try:
-            inode1 = os.stat(f'/proc/{pid}').st_ino
-
-            comm = Path(f'/proc/{pid}/comm').read_text().strip()
-            NSpid = get_NSpid_arr(f'/proc/{pid}/status')
-            start_tick = get_start_tick(f'/proc/{pid}/stat')
-            ns = get_nstypes(f'/proc/{pid}/ns')
-            cmdvec = open(f'/proc/{pid}/cmdline').read().strip('\x00').split('\x00')
-
-            inode2 = os.stat(f'/proc/{pid}').st_ino
-            if inode1 != inode2: continue
-        except:
-            continue
-        proclist.append(d( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
-    write_proclist_fd(proclist)
-    return proclist # 往fd里写之后也返回
-
 
 class pipe_outest_exit_layer1:
     _read_fd = None
@@ -777,7 +805,8 @@ def main():
     if is_outest:
         mkdirp(si.CG_SBX)
         Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
-        update_proclist()
+    if is_outest:
+        Path(f'{si.outest_sbxdir}/proclist.json').write_text("[]")
 
     # log(f"执行unshare")
     unshare_flag = gen_unshareflag(tlcfg)
@@ -851,6 +880,7 @@ def daemon(is_outest, layer1_pid=None):
         si.layer1_pid = layer1_pid
 
         WlogReader.init()
+        OutestProcsMonitor.i_am_outest()
 
         layer_set_status('outestDaemoning')
 
@@ -872,7 +902,7 @@ def daemon(is_outest, layer1_pid=None):
             new_logs = WlogReader.readnew()
             if nn >=5:
                 nn=0
-                update_proclist()
+                OutestProcsMonitor.update_proclist()
 
 
         if not is_outest and tlcfg.depth == 1 :
