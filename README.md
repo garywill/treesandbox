@@ -99,7 +99,7 @@ Required:
 Optional (for extra features):
 
 - squashfuse (mount AppImage internally)
-- Xephyr (isolated X11)
+- Xephyr + icewm (isolated X11)
 
 ## Simple usage examples
 

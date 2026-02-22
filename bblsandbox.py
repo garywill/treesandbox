@@ -22,6 +22,8 @@ def userconfig(si): # 这个只在顶层解析一次
     # uc.gui="xpra" # 暂未实现
     # uc.gui="isolatedX"; de_start_cmd="plasmashell"  # 暂未实现
 
+    uc.icewm = True if uc.gui == 'xephyr' else False
+
     uc.gpus     =      True if uc.gui else False
     uc.see_userfonts = True if uc.gui else False
 
@@ -103,9 +105,7 @@ def gen_container_cfgs(si, uc, dyncfg): # 这个只在顶层解析一次
                             d(batch_plan='sbxdir-in-newrootfs', dest='/sbxdir'),
                         ],
                         dropcap_then_cmds=[
-                            d(
-                                cmdlist=["Xephyr",  ":10",  "-resizeable",  "-ac"] ,
-                            ) if uc.gui=='xephyr' else None,
+                            d( cmdlist=["Xephyr",  ":10",  "-resizeable",  "-ac"] ) if uc.gui=='xephyr' else None,
                         ],
                     ),
                     gen_layer2h(si, uc, dyncfg)
@@ -192,6 +192,11 @@ def gen_layer3(si, uc, dyncfg):
             ] if uc.net.dns == 'real' else [] ),
             d(plan='rofile', dest=rslvn('/etc/resolv.conf'), content=''.join([f'nameserver {ip}\n' for ip in uc.net.dns]) ) if isinstance(uc.net.dns, list) else None,
 
+            *([
+            d(plan='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
+            d(plan='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
+            d(plan='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
+            ] if uc.icewm else [] ),
         ],
         envs_unset=[
             "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
@@ -209,6 +214,10 @@ def gen_layer3(si, uc, dyncfg):
 
                 # uid 变回 1000
                 unshare_user=True, setgroups_deny=True, uid_map=f'{si.uid} 0 1\n', gid_map=f'{si.gid} 0 1\n',
+
+                dropcap_then_cmds=[
+                    d( cmdlist=["icewm"] ) if uc.icewm else None ,
+                ],
             ),
             d( # 主 用户app 在这里跑
                 layer_name='layer4', # 默认模板的 layer_name 不要修改
@@ -1456,6 +1465,25 @@ fi
 EXITCODE=$DIALOG_R
 [[ $DIALOG_R -eq 2 ]] && EXITCODE=0
 exit $EXITCODE
+'''
+
+ICEWM_PREF='''
+ShowStartMenu=0
+SystemTray=0
+
+TaskBarShowClock=0
+TaskBarShowCPUStatus=0
+TaskBarShowMEMStatus=0
+TaskBarShowMailboxStatus=0
+TaskBarShowBatteryStatus=0
+TaskBarShowNetStatus=0
+TaskBarShowAPMStatus=0
+
+Workspaces=0
+WorkspaceNames="Main"
+EnableWorkspaces=0
+#ShowWorkspaceSwitcher=0
+#ShowWorkspaces=0
 '''
 
 def get_appimg_sqoffset(appimg_path):

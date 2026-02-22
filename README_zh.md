@@ -96,7 +96,7 @@
 可选：
 
 - squashfuse (内部AppImage挂载)
-- Xephyr (隔离X11)
+- Xephyr + icewm (隔离X11)
 
 ## 简单用例 
 
