@@ -911,13 +911,7 @@ def layer_run_subp(cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=T
         child_sock.send(b'x') # 给父进程发送信号
         CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
         child_sock.recv(1) ; child_sock.close()
-        wlog('subp_starting', logNs=True,
-            kvpairs=d(
-                self_see_pid=os.getpid(),
-                start_tick=get_start_tick('/proc/self/stat'),
-                subp_cmdvec=cmdvec,
-            )
-        )
+        wlog('subp_start', me_proc_info=True , extra_kvs=d(subp_cmdvec=cmdvec) )
         # 关闭3以上的fd
         if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
             for fd in os.listdir('/proc/self/fd') :
@@ -1034,20 +1028,23 @@ def layer_set_status(status):
     os.environ['PS1'] = ps1
 
     if status == 'booted':
-        wlog('booted')
+        wlog('layer_booted', me_proc_info=True, extra_kvs=d(layer_cmdvec=open(f'/proc/self/cmdline').read().strip('\x00').split('\x00') ) )
 
-def wlog(*args, kvpairs={},  logNs=False, errmsg=None):
+def wlog(*args, me_proc_info=False, errmsg=None, extra_kvs={}):
     if not (si and si.fd_layerslog_a): return False
     event = args[0] if (errmsg is None) else 'error'
     logObj = d(
         logger = thislyr_cfg.layer_name if thislyr_cfg else '',
-        event = event, **kvpairs
+        event = event,
     )
     if event == 'error':
         logObj.errmsg = errmsg
     if event == 'booted': logNs = True
-    if logNs:
-        logObj.js = get_nstypes(f'/proc/self/ns')
+    if me_proc_info:
+        logObj.self_see_pid=os.getpid()
+        logObj.start_tick=get_start_tick('/proc/self/stat')
+        logObj.ns = get_nstypes(f'/proc/self/ns')
+    logObj.update(extra_kvs)
     try:
         fcntl.flock(si.fd_layerslog_a, fcntl.LOCK_EX)
         os.write(si.fd_layerslog_a, ''.join([json.dumps(logObj), '\n\n']).encode())
