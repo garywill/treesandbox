@@ -11,6 +11,7 @@ from pathlib import Path
 # 普通用户设置这里
 def userconfig(si): # 这个只在顶层解析一次
     uc = d()
+
     uc.sandbox_name='' # 沙箱名称
 
     # 若不设置 homedir ，则会用 tmpfs 当 $HOME
@@ -684,7 +685,7 @@ def main2(si, thislyr_cfg):
     for cmdItem in (thislyr_cfg.dropcap_then_cmds or [] ) :
         pid = layer_run_subp ( thislyr_cfg, cmdItem.cmdvec ,
                 stdin =cmdItem.stdin , stdout=cmdItem.stdout, stderr=cmdItem.stderr,
-                child_no_caps=True,
+                child_no_caps=True, workdir=thislyr_cfg.workdir
             )
         direct_child_pids.append(pid)
 
@@ -723,7 +724,7 @@ def main2(si, thislyr_cfg):
     # 如果不是 unshare_pid 的 ,这里直接结束退出
 
 safe_mntns_fd = None
-def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False):
+def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False, workdir=None):
     global safe_mntns_fd
     # 使用 socketpair 替代两个 pipe
     child_sock, parent_sock = socket.socketpair()
@@ -754,7 +755,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
                         if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
 
         log('准备带权启动:' if not child_no_caps else '准备启动（降权）:' , cmdvec)
-
+        if workdir: os.chdir(workdir)
         # 去掉 stdin/out/err 中不需要的 （下面无法再log或print）
         devnull = os.open('/dev/null', os.O_RDWR)
         if not stdin:  os.dup2(devnull, 0)
