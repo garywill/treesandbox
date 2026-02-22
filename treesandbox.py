@@ -107,7 +107,7 @@ def gen_layer2(si, uc, dyncfg):
 
         sublayers = [
             gen_layer2c(si, uc, dyncfg),
-            gen_layer2h(si, uc, dyncfg),
+            gen_layer2z(si, uc, dyncfg),
         ],
     )
 
@@ -130,9 +130,9 @@ def gen_layer2c(si, uc, dyncfg):
         ],
     )
 
-def gen_layer2h(si, uc, dyncfg):
-    return d( # layer2h 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
-        layer_name='layer2h',  unshare_mnt=True, unshare_chdir=True,
+def gen_layer2z(si, uc, dyncfg):
+    return d( # layer2z 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
+        layer_name='layer2z',  unshare_mnt=True, unshare_chdir=True,
         start_after=[
             d(waittype='socket-listened', path='/tmp/.X11-unix/X10') if uc.gui=='xephyr' else None,
         ],
@@ -861,7 +861,7 @@ def main():
     for env_to_unset in (tlcfg.envs_unset or [] ):
         os.environ.pop(env_to_unset, None)
     for envg in (tlcfg.envset_grps or [] ) :
-        log(envg)
+        log('设置环境变量' , envg)
         os.environ.update(envg)
 
     for wait_task in (tlcfg.start_after or [] ):
