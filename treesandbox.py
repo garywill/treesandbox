@@ -36,7 +36,7 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.user_mnts = [
         # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
-        # d(batch_plan='appimage', appname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
+        # d(batch_plan='appimage', dirname='xxxx', src=f'{si.startdir_on_host}/xxxx.AppImage'),
 
         # 用当前目录下的 fakehome 目录，作为沙箱内 HOME 的永久储存（否则tmpfs作HOME）
         # d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME),
@@ -1636,10 +1636,10 @@ def commit_fsPlans(fsPlans):
         elif plan == 'devpts':
             mkdirp(real_dest)
             mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
-        elif plan == 'appimg-mount':
+        elif plan in ['appimg-mount', 'sqfs-mount'] :
             mkdirp(real_dest)
             src = rslvy(src)
-            offset = get_appimg_sqoffset(src)
+            offset = get_appimg_sqoffset(src) if plan == 'appimg-mount' else 0
             # TODO 先做symlink链接到真实appimage文件路径，再调用 squashfuse命令
             run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
         elif plan == 'remountro':
@@ -1716,14 +1716,15 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
                 if os.path.lexists(path):
                     a( d( plan='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
         elif batch_plan == 'appimage':
-            a( d(plan='appimg-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.appname}') )
+            a( d(plan='appimg-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.dirname}') )
             start_sh_content = f'''#!/bin/bash
                 script=$(readlink -f "$0")
                 scriptpath=$(dirname "$script")
-                env APPDIR="$scriptpath/{pItem.appname}" "$scriptpath"/{pItem.appname}/AppRun "$@"
+                env APPDIR="$scriptpath/{pItem.dirname}" "$scriptpath"/{pItem.dirname}/AppRun "$@"
             '''
-            a( d(plan='rofile', dest=f'/sbxdir/apps/run_{pItem.appname}', destmode=0o555, content=start_sh_content) )
-
+            a( d(plan='rofile', dest=f'/sbxdir/apps/run_{pItem.dirname}', destmode=0o555, content=start_sh_content) )
+        elif batch_plan == 'squashfs':
+            a( d(plan='sqfs-mount', src=pItem.src, dest=f'/sbxdir/apps/{pItem.dirname}') )
         # 下面是 plan 而不是 batch_plan 。因为它们两个不应同时有，所以用同一if树
         elif plan:
             a( pItem )

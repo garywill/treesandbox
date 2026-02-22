@@ -134,7 +134,7 @@
 ```python
 uc.sandbox_name='freecad' # 沙箱名称
 uc.user_mnts = [
-    d(batch_plan='appimage', appname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(batch_plan='appimage', dirname='freecad',  src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
     d(plan='bind', src='/anyhdd2/projects_save/', SDS=1), 
 ]
 uc.gui="realX" # 使用真实的 X11

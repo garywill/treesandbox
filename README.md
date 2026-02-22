@@ -119,7 +119,7 @@ Edit `.py` file and edit `userconfig` part like this:
 ```python
 uc.sandbox_name='freecad'
 uc.user_mnts = [
-    d(batch_plan='appimage', appname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
+    d(batch_plan='appimage', dirname='freecad', src=f'{si.startdir_on_host}/FreeCAD.AppImage'),
     d(plan='bind', src='/anyhdd2/projects_save/', SDS=1),
 ]
 uc.gui="realX"
