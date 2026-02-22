@@ -602,31 +602,36 @@ def main():
 
     layer_set_status('afterUnshare')
 
-    # log(f"即将fork")
-    pid = os.fork()
-    if pid == 0: # 子进程
-        # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
-        if is_outest:
-            set_pdeathsig()
-        else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
-            while os.getppid() not in [0, 1] : time.sleep(0.03)
+    must_fork = True if thislyr_cfg.unshare_pid or thislyr_cfg.unshare_user else False
 
+    if not must_fork: # must_fork==False 即 不是最外层
         main2()
-        # log(f"fork后的子进程即将退出")
         sys.exit()
-    else: # 父进程
-        if not is_outest:
+    else: # must_fork==True
+        # log(f"即将fork")
+        pid = os.fork()
+        if pid == 0: # 子进程
+            # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
+            if is_outest:
+                set_pdeathsig()
+            else: # 若非最外层，则需要等待fork之前的进程退出，才往下进行
+                while os.getppid() not in [0, 1] : time.sleep(0.03)
+
+            main2()
             sys.exit()
+        else: # 父进程
+            if not is_outest:
+                sys.exit()
 
-        layer_set_status('PaAfterFork')
+            layer_set_status('PaAfterFork')
 
-        _, status = os.waitpid(pid, 0)
-        if os.WIFEXITED(status):
-            exit_code = os.WEXITSTATUS(status)
-            log(f"沙箱内部首层领头进程已退出( {exit_code} )")
-        elif os.WIFSIGNALED(status):
-            signal_num = os.WTERMSIG(status)
-            log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
+            _, status = os.waitpid(pid, 0)
+            if os.WIFEXITED(status):
+                exit_code = os.WEXITSTATUS(status)
+                log(f"沙箱内部首层领头进程已退出( {exit_code} )")
+            elif os.WIFSIGNALED(status):
+                signal_num = os.WTERMSIG(status)
+                log(f"沙箱内部首层领头进程被信号 {signal_num} 终止")
 
 
 def main2():
