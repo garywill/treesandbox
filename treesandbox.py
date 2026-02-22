@@ -14,20 +14,8 @@ def userconfig(si): # 这个只在顶层解析一次
     uc = d()
 
     uc.sandbox_name='' # 沙箱名称
-    uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
 
-    # 若不设置gui则内部无任何X11
-    uc.gui="realX" # 使用真实的 X11
-    # uc.gui="xephyr"
-
-    # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
-
-    uc.icewm = True if uc.gui == 'xephyr' else False
-
-    uc.gpus     =      True if uc.gui else False
-    uc.see_userfonts = True if uc.gui else False
-
-    # uc.see_real_hw=True # 看见真实/dev和/sys
+    # uc.reuseInstance=True # 复用正在运行的同种沙箱实例（即，单实例沙箱，否则为多实例沙箱）
 
     # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
     uc.apps = [
@@ -56,6 +44,23 @@ def userconfig(si): # 这个只在顶层解析一次
     ]
 
 
+
+
+    # 若不设置gui则内部无任何X11
+    uc.gui="realX" # 使用真实的 X11
+    # uc.gui="xephyr"
+
+    # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
+
+    uc.icewm = True if uc.gui == 'xephyr' else False
+
+    uc.gpus     =      True if uc.gui else False
+    uc.see_userfonts = True if uc.gui else False
+
+    # uc.see_real_hw=True # 看见真实/dev和/sys
+
+
+
     # 输入法等通信需要dbus
     # uc.dbus_session="allow"
     # uc.dbus_session="filter" # 默认过滤规则:允许输入法和通知。还可以自己在 uc.dbusproxy_extra 中加
@@ -67,6 +72,8 @@ def userconfig(si): # 这个只在顶层解析一次
         iface='real', # 使用真实的网络介面
         # custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
     )
+
+    uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
 
     # uc.pulseaudio=True,
     # uc.cups=True, # CUPS打印服务 NOTE 注意 CUPS-PDF 沙箱内的输出位置是否已暴露给主机
@@ -1026,8 +1033,9 @@ def main():
         log(f'要在沙箱内运行的app的命令: {OG.mainApp_cmdvec}')
 
         # 判断应该 新实例 还是 发送app命令到 正在运行的实例
-        if maybe_sendto_running_instance():
-            sys.exit(0)
+        if si.reuseInstance:
+            if maybe_sendto_running_instance():
+                sys.exit(0)
 
         print(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
         print(f"cgroup：{si.CG_SBX}")
