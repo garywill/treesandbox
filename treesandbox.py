@@ -144,12 +144,12 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         dbusproxy_argv = [
             os.getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
             '--talk=org.freedesktop.Notifications',
-            '--talk=org.kde.StatusNotifierWatcher',
             '--talk=org.fcitx.*',
             '--talk=org.freedesktop.IBus.*',
             '--talk=org.freedesktop.portal.IBus',
             '--talk=org.freedesktop.portal.Fcitx',
             *(uc.dbusproxy_extra or [])]
+            # '--talk=org.kde.StatusNotifierWatcher', org.kde.StatusNotifierItem # TODO 这两个与系统托盘图标有关， realX时可以考虑允许
 
     # 处理 /etc/resolv.conf
     CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "此Linux上，/var/run不是指向/run, 与现代发行版的习惯不同，暂时无法处理这种情况")
@@ -197,7 +197,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     # bridge seefrom是从哪层可看见这个桥进程 seeto是通过这个桥进程看到哪个层的fs
-    if uc.gui in ['weston', 'xephyr']:
+    if uc.gui in ['weston']:
         bItem = d(seefrom='semitruCmpannLyr', seeto='mainLyr')
         bItem.create_links = []
         bItem.create_links.append(f'/tmp/.X11-unix/X{newXId}') if uc.gui in ['weston','xephyr'] else None
@@ -357,7 +357,7 @@ def gen_layer3(si, uc, dyncfg):
             *([
             d(op='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
             d(op='rofile', dest=f'{si.HOME}/.icewm/prefoverride', content=ICEWM_PREF),
-            d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),
+            # d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),# 让app无法决定新窗口位置
             d(op='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
             d(op='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
             ] if dyncfg.icewm else [] ),
@@ -373,6 +373,7 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envs_unset=[
             "ICEAUTHORITY", "XAUTHORITY", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHLOCALHOSTNAME", "IBUS_ADDRESS", "DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS",
+            "XDG_SESSION_DESKTOP", "XDG_CURRENT_DESKTOP", "KDE_FULL_SESSION", "KDE_APPLICATIONS_AS_SCOPE", "KDE_SESSION_UID", "KDE_SESSION_VERSION", # TODO 如果用户主机不是KDE是其他, 会有其他变量需要去除
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
@@ -392,7 +393,10 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_pid=True, unshare_mnt=True,
 
         subprocs=[
-            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) if dyncfg.icewm else None ,
+            *([
+            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            d( cmdvec=["icewmtray"] , subp_name='icewmtray', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            ] if dyncfg.icewm else [] ) ,
 
             d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
         ],
