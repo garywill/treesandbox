@@ -685,9 +685,9 @@ class pipe_outest_exit_layer1:
             else: raise
 
 si = None # sbxinfo , sandbox info
-thislyr_cfg = None
+tlcfg = None # thislyr_cfg , this layer config
 def main():
-    global si, thislyr_cfg
+    global si, tlcfg
     # sys.argv[0] 是这个.py文件, sys.argv[1] 是cli传给此脚本的第1个参数
     if not len(sys.argv)>=2 or sys.argv[1] != '--lyrcfg' :
         # 是顶层
@@ -699,35 +699,35 @@ def main():
 
     if is_outest: # 是顶层
         si, layer1_cfg = init_sbxinfo() # 只有从最外层启动才运行这个函数
-        thislyr_cfg = layer1_cfg
+        tlcfg = layer1_cfg
 
-        thislyr_cfg.sbxdir_path0 = si.outest_sbxdir
+        tlcfg.sbxdir_path0 = si.outest_sbxdir
 
     else: # 是子层
-        thislyr_cfg = d(json.loads(open(lyrcfg_file).read()))
-        thislyr_cfg.sbxdir_path0 = padir(lyrcfg_file)
-        si = d(json.loads(open(f'{thislyr_cfg.sbxdir_path0}/sbxinfo.json').read()))
+        tlcfg = d(json.loads(open(lyrcfg_file).read()))
+        tlcfg.sbxdir_path0 = padir(lyrcfg_file)
+        si = d(json.loads(open(f'{tlcfg.sbxdir_path0}/sbxinfo.json').read()))
 
-    set_loghead (f'{thislyr_cfg.layer_name}: ' if not is_outest else 'outest: ')
+    set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
 
     # 预先算好变根后的 sbxdir_path1
-    if not thislyr_cfg.newrootfs:
-        thislyr_cfg.sbxdir_path1 = thislyr_cfg.sbxdir_path0
+    if not tlcfg.newrootfs:
+        tlcfg.sbxdir_path1 = tlcfg.sbxdir_path0
     else:
-        thislyr_cfg.sbxdir_path1 = next((pItem.dest for pItem in thislyr_cfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
+        tlcfg.sbxdir_path1 = next((pItem.dest for pItem in tlcfg.fs if pItem.batch_plan == 'sbxdir-in-newrootfs'), None)
     # sbxdir_path 说明
     # 本层变根 前 后 的 sbxdir_path ( sbxdir_path0 sbxdir_path1)
     # 变根前 0 = 刚启动本层启动脚本时
     # 变根后 1 = 即将运行下层的启动脚本时
     # 变根不一定发生，由本层配置决定，但也把两个sbxdir_path以 前 后 来称呼
 
-    for env_to_unset in (thislyr_cfg.envs_unset or [] ):
+    for env_to_unset in (tlcfg.envs_unset or [] ):
         os.environ.pop(env_to_unset, None)
-    for envg in (thislyr_cfg.envset_grps or [] ) :
+    for envg in (tlcfg.envset_grps or [] ) :
         log(envg)
         os.environ.update(envg)
 
-    for wait_task in (thislyr_cfg.start_after or [] ):
+    for wait_task in (tlcfg.start_after or [] ):
         if wait_task.waittype == 'socket-listened':
             while not is_unix_socket_listened(wait_task.path):
                 time.sleep(0.1)
@@ -741,12 +741,12 @@ def main():
         update_proclist()
 
     # log(f"执行unshare")
-    unshare_flag = gen_unshareflag(thislyr_cfg)
+    unshare_flag = gen_unshareflag(tlcfg)
     os.unshare(unshare_flag)
 
     layer_set_status('afterUnshare')
 
-    must_fork = True if thislyr_cfg.unshare_pid or thislyr_cfg.unshare_user or thislyr_cfg.unshare_time else False
+    must_fork = True if tlcfg.unshare_pid or tlcfg.unshare_user or tlcfg.unshare_time else False
 
     if not must_fork: # must_fork==False 即 不是最外层
         main2()
@@ -759,7 +759,7 @@ def main():
             if is_outest:
                 atexit._clear()
 
-                set_loghead (f'{thislyr_cfg.layer_name}: ')
+                set_loghead (f'{tlcfg.layer_name}: ')
 
                 pipe_outest_exit_layer1.i_am_layer1()
 
@@ -816,7 +816,7 @@ def daemon(is_outest, layer1_pid=None):
         layer_set_status('outestDaemoning')
 
     if not is_outest:
-        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
     #-----------
     nn = 0
     while True:
@@ -836,7 +836,7 @@ def daemon(is_outest, layer1_pid=None):
                 update_proclist()
 
 
-        if not is_outest and thislyr_cfg.depth == 1 :
+        if not is_outest and tlcfg.depth == 1 :
             if pipe_outest_exit_layer1.is_should_exit_set() :
                 sys.exit()
 
@@ -846,97 +846,97 @@ def daemon(is_outest, layer1_pid=None):
 
 def main2():
     # 写uid_map 等 。一般来说配合 unshare_user
-    if thislyr_cfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
-    if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
-    if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
+    if tlcfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
+    if tlcfg.uid_map: Path('/proc/self/uid_map').write_text(tlcfg.uid_map)
+    if tlcfg.gid_map: Path('/proc/self/gid_map').write_text(tlcfg.gid_map)
 
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
     layer_set_status('forkedBeforeFs')
 
     # 如果设置了将要变根，现在先提前确定新根的位置
-    if thislyr_cfg.newrootfs:
-        thislyr_cfg.newrootfs_path = f'{thislyr_cfg.sbxdir_path0}/new.{thislyr_cfg.layer_name}.rootfs'
+    if tlcfg.newrootfs:
+        tlcfg.newrootfs_path = f'{tlcfg.sbxdir_path0}/new.{tlcfg.layer_name}.rootfs'
     else:
-        thislyr_cfg.newrootfs_path = '/'
-    mkdirp(thislyr_cfg.newrootfs_path)
+        tlcfg.newrootfs_path = '/'
+    mkdirp(tlcfg.newrootfs_path)
 
-    if thislyr_cfg.fs:
+    if tlcfg.fs:
         build_fs() # 无论本层是否设置了变根，都调用这个函数
 
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
-    new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
-    if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
+    new_proc_path = napath(tlcfg.newrootfs_path+'/proc')
+    if tlcfg.unshare_pid or tlcfg.newrootfs:
         os.unshare(gen_unshareflag(d(unshare_mnt=True))) # 不管本层在开始有没有 unshare mnt ， 这里都要再 unshare mnt 一次, 保证不影响父进程所看到的 /proc
         # log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
     # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
-    if not thislyr_cfg.sublayers and os.getpid() != 1:
+    if not tlcfg.sublayers and os.getpid() != 1:
         makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
-    if not thislyr_cfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
+    if not tlcfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
         make_proc_ro( new_proc_path , allow_newmntns=False )
     layer_set_status('afterFs')
 
     # 执行变根 (chroot)
-    if thislyr_cfg.newrootfs:
-        mkdirp(f'{thislyr_cfg.newrootfs_path}/oldroot')
-        # log(f'准备变根到 {thislyr_cfg.newrootfs_path}')
-        pivot_root(thislyr_cfg.newrootfs_path, f'{thislyr_cfg.newrootfs_path}/oldroot')
+    if tlcfg.newrootfs:
+        mkdirp(f'{tlcfg.newrootfs_path}/oldroot')
+        # log(f'准备变根到 {tlcfg.newrootfs_path}')
+        pivot_root(tlcfg.newrootfs_path, f'{tlcfg.newrootfs_path}/oldroot')
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
         mount(None, '/', None, MS.REMOUNT|MS.RDONLY|mntflag_newrootfs, None)
         # log(f'本层文件系统就绪 {os.listdir('/')}')
-    del thislyr_cfg.newrootfs_path
-    del thislyr_cfg.sbxdir_path0
+    del tlcfg.newrootfs_path
+    del tlcfg.sbxdir_path0
     del new_proc_path
 
 
-    if thislyr_cfg.sbxdir_path1:
-        os.chdir(thislyr_cfg.sbxdir_path1)
+    if tlcfg.sbxdir_path1:
+        os.chdir(tlcfg.sbxdir_path1)
 
     layer_set_status('afterChroot')
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   处理各种SIGNAL
-    if thislyr_cfg.unshare_pid:
-        CHK( os.getpid() == 1, f"{thislyr_cfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+    if tlcfg.unshare_pid:
+        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
         atexit.register(cleanup_pidnsleader)
         # TODO 信号注册移到daemon中
         for sig in SIGS_TO_HANDLE:
             signal.signal(sig, signals_handler_pidnsleader)
 
     layer_set_status('afterRegSigs')
-    set_proc_dispname(thislyr_cfg.layer_name)
+    set_proc_dispname(tlcfg.layer_name)
     layer_set_status('booted')
 
     inprepare_children = [] # 记录下直接创建的子进程，但可能用不上
 
-    if thislyr_cfg.user_shell or thislyr_cfg.dev_shell:
-        if thislyr_cfg.sublayers or thislyr_cfg.subprocs:
+    if tlcfg.user_shell or tlcfg.dev_shell:
+        if tlcfg.sublayers or tlcfg.subprocs:
             log("警告：因为启用了user_shell 或 dev_shell, 本层其余的子进程或子层都会被忽略", file=sys.stderr)
-            thislyr_cfg.sublayers = []
-            thislyr_cfg.subprocs = []
+            tlcfg.sublayers = []
+            tlcfg.subprocs = []
         pid, pipe = layer_run_subp( ['/bin/bash'] ,
-                        **( d(user_shell=True) if thislyr_cfg.user_shell else {}),
-                        **( d(dev_shell=True)  if thislyr_cfg.dev_shell  else {}),
+                        **( d(user_shell=True) if tlcfg.user_shell else {}),
+                        **( d(dev_shell=True)  if tlcfg.dev_shell  else {}),
         )
         inprepare_children.append((pid, pipe))
 
-    for subpItem in (thislyr_cfg.subprocs or [] ) :
+    for subpItem in (tlcfg.subprocs or [] ) :
         pid, pipe = layer_run_subp (**subpItem)
         inprepare_children.append((pid, pipe))
 
-    sublyrItem = thislyr_cfg.sublayers or []
+    sublyrItem = tlcfg.sublayers or []
     # log(f"本层将生成 {len(sublyrItem)} 个子层")
     for sublyr_cfg in (sublyrItem or []):
         pid, pipe = layer_run_subp([
                         si.pythonbin ,
                         # 这个脚本虽然是用于创建子层的，但现在仍是在本层,本层的变根后的状态，
                         # 因此用本层的path1
-                        f'{thislyr_cfg.sbxdir_path1}/bootsbx.py',
-                        '--lyrcfg', f'{thislyr_cfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
+                        f'{tlcfg.sbxdir_path1}/bootsbx.py',
+                        '--lyrcfg', f'{tlcfg.sbxdir_path1}/lyr_cfg.{sublyr_cfg.layer_name}.json',
                     ],
                     subLayer=sublyr_cfg.layer_name
         )
@@ -945,7 +945,7 @@ def main2():
 
     # 如果unshare_pid,则我是init进程(pid=1)
     #   如果有子进程，则等待，否则就退出
-    if thislyr_cfg.unshare_pid:
+    if tlcfg.unshare_pid:
         for pid, pipe in inprepare_children:
             pipe.send(b'x') ; pipe.close() # 回信给子进程
         daemon(False)
@@ -969,7 +969,7 @@ def layer_run_subp(cmdvec,
     if not (subLayer or dev_shell or user_shell):
         CHK( os.statvfs('/proc').f_flag&MS.RDONLY , "/proc 非只读, 请检查分层模板配置")
 
-    if workdir is None and thislyr_cfg.workdir: workdir = thislyr_cfg.workdir
+    if workdir is None and tlcfg.workdir: workdir = tlcfg.workdir
 
     if dev_shell:
         keep_caps=True
@@ -1137,7 +1137,7 @@ def layer_set_status(status):
     ps1 = ''.join( [
         r'''$(LEC=$? ; if [[ $LEC -ne 0 ]]; then echo -n '\[\e[0;91m\]' ; else echo -n '\[\e[0;94m\]' ; fi ; printf "(%3d)" $LEC ; echo -n '\[\e[0m\]' ) \[\e[1;93m\]'''
         ,
-        f'{si.sandbox_name} {thislyr_cfg.layer_name} {status}',
+        f'{si.sandbox_name} {tlcfg.layer_name} {status}',
         r''' | \w > \[\e[0m\]'''
     ])
     os.environ['PS1'] = ps1
@@ -1149,7 +1149,7 @@ def wlog(*args, me_proc_info=False, errmsg=None, extra_kvs={}):
     if not (si and si.fd.layerslog_a): return False
     event = args[0] if (errmsg is None) else 'error'
     logObj = d(
-        logger = thislyr_cfg.layer_name if thislyr_cfg else '',
+        logger = tlcfg.layer_name if tlcfg else '',
         event = event,
     )
     if event == 'error':
@@ -1178,7 +1178,7 @@ def build_fs():
 
 
 def commit_fsPlans(fsPlans):
-    target_fs_path = thislyr_cfg.newrootfs_path
+    target_fs_path = tlcfg.newrootfs_path
     # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
     remountPlans = []
     def z(rmtItem):
@@ -1233,7 +1233,7 @@ def commit_fsPlans(fsPlans):
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
             RO = True if plan == 'rofile' else False
-            with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
+            with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
                 mode = None ; optn = None
                 if RO :             mode = 0o444
@@ -1256,11 +1256,11 @@ def commit_fsPlans(fsPlans):
                 mount('/dev/null', real_dest,  None, MS.BIND|MS.RDONLY, optn)
                 try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
             else: # 普通文件、socket, fifo
-                mount(f'{thislyr_cfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
+                mount(f'{tlcfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
                 try_pass(lambda: mount(None, real_dest,  None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) )
         elif plan == 'sbxdir-in-newrootfs':
             CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
-            make_mnt_fill_sbxdir(si,  thislyr_cfg, call_at_buildfs=True)
+            make_mnt_fill_sbxdir(si,  tlcfg, call_at_buildfs=True)
         elif plan == 'devpts':
             mkdirp(real_dest)
             mount('devpts', real_dest, 'devpts', MS.NOEXEC|MS.NOSUID, 'mode=0666,ptmxmode=0666,newinstance')
@@ -1282,7 +1282,7 @@ def gen_fsPlans(): # 把fs里面的batch_plan都转成plan,并去重、排序
     def a(stepobj):
         fsPlans.append(stepobj)
 
-    for pItem in thislyr_cfg.fs:
+    for pItem in tlcfg.fs:
         # 一个 pItem 里， batch_plan 和 plan 只应该出现其中一种
         batch_plan = pItem.batch_plan # 预设的多个plan的集合
         plan = pItem.plan # 一个plan
