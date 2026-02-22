@@ -1018,26 +1018,32 @@ class OutsideServ():
     def one_loop_task(cls):
         # 处理已经建立的连接
         for i in reversed(range(0, len(cls.conns))):
-            skt = cls.conns[i].skt_conn
-            ready, _, wrong = select.select([skt], [], [skt], 0)  # 非阻塞检查
+            connItem = cls.conns[i]
+            ready, _, wrong = select.select([connItem.skt_conn], [], [connItem.skt_conn], 0)  # 非阻塞检查
             if wrong:
                 log('警告：OutsideServ的一个连接出现异常', file=sys.stderr)
-                skt.close() ; del cls.conns[i]
+                cls.close_conn(connItem)
                 continue
-            if ready:
-                data = skt.recv(300_000)
+            elif ready:
+                try: data = connItem.skt_conn.recv(300_000)
+                except Exception as err:
+                    log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
+                    cls.close_conn(connItem)
+
                 if data:
-                    cls.conns[i].last_tick = time.monotonic()
+                    connItem.last_tick = time.monotonic()
                     # log(f"收到外部消息: {data!r}")
-                    try: cls.onDataRecved(data, cls.conns[i] )
-                    except Exception as err: log(f'警告：处理收到的消息过程中出错:{err}', file=sys.stderr)
+                    try: cls.onDataRecved(data, connItem )
+                    except Exception as err:
+                        log(f'警告：处理收到的消息过程中出错:{err}', file=sys.stderr)
+                        cls.close_conn(connItem)
                 else:
                     # log("外部连接已断开（recv 返回空）") # 发完消息正常断开
-                    skt.close(); del cls.conns[i]
+                    cls.close_conn(connItem)
             else: # 无消息
-                if cls.conns[i].last_tick + 60 < time.monotonic():
+                if connItem.last_tick + 60 < time.monotonic():
                     log("警告：外部连接超时（连续无消息），关闭", file=sys.stderr)
-                    cls.conns[i].skt_conn.close() ; del cls.conns[i]
+                    cls.close_conn(connItem)
 
 
         # 有没有新的外部连接
@@ -1048,15 +1054,49 @@ class OutsideServ():
             # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
             cls.conns.append( d(skt_conn=conn, last_tick=time.monotonic() , index=cls.cnt_recvmsg) )
     @classmethod
-    def onDataRecved(cls, data, conn):
+    def onDataRecved(cls, data, connItem):
         try: msgObj = d( json.loads( data.decode() ) )
-        except Exception as err: log(f'警告：无法正确解析收到的消息:{err}', file=sys.stderr)
+        except Exception as err:
+            errmsg = f'无法正确解析收到的消息:{err}'
+            log(f'警告：{errmsg}', file=sys.stderr)
+            cls.response_close(connItem, message=errmsg)
+            return False
         for k,v in dict.items(msgObj.si_should_match or {}):
-            if si[k] != v:
-                log(f'警告：收到的消息中，si[{k}]与本沙箱不一致，忽略收到的消息。\n本沙箱值：{si[k]}\n消息中的值：{v}\n如果修改过沙箱配置，可能需要先中止正在运行的沙箱',file=sys.stderr)
+            if not eq_ignore_order(si[k], v):
+                errmsg = f'si[{k}]不一致。\n正在运行的沙箱的值：{si[k]}\n消息中的值：{v}\n（如果修改过沙箱配置，可能需要先中止正在运行的沙箱）'
+                log(f'警告：{errmsg}', file=sys.stderr)
+                cls.response_close(connItem, message=errmsg)
                 return False
         if msgObj.run_in_mainLyr_cmdvec:
-            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{conn.index}', stdin=False))
+            OutestProcsMonitor.tell_lyr_runsubp(si.mainLyr, d(cmdvec=msgObj.run_in_mainLyr_cmdvec, subp_name=f'mainApp_{connItem.index}', stdin=False))
+            cls.response_close(connItem, reuseSucceeded=True, message=f'mainApp_{connItem.index}')
+            return True
+    @classmethod
+    def response_close(cls, connItem, reuseSucceeded=None, youStartNewInstance=None, message=None):
+        responseObj = d()
+        if reuseSucceeded:      responseObj.reuseSucceeded = True
+        if youStartNewInstance: responseObj.youStartNewInstance = True
+        if message:             responseObj.message = message
+        try:
+            connItem.skt_conn.send( json.dumps(responseObj).encode() )
+            return True
+        except Exception as err:
+            log(f'警告：向外部连接回复失败 {err}', file=sys.stderr)
+            return False
+        finally:
+            cls.close_conn(connItem)
+
+    @classmethod
+    def close_conn(cls, connItem):
+        connItem.skt_conn.close()
+        try: cls.conns.remove(connItem)
+        except Exception as err: log(f'警告：关闭外部来的连接时发生错误（可能已被关闭过）: {err}', file=sys.stderr)
+
+def eq_ignore_order(v1, v2):
+    if type(v1) != type(v2): return False
+    if isinstance(v1, dict): return v1.keys() == v2.keys() and all(eq_ignore_order(v1[k], v2[k]) for k in v1)
+    if isinstance(v1, list): return len(v1) == len(v2) and sorted(v1, key=str) == sorted(v2, key=str)
+    return v1 == v2
 
 
 def read_alltext_from_fd(fd:int) -> str:
@@ -1136,13 +1176,51 @@ def maybe_sendto_running_instance():
         sock_estb = sock
         break
     if chosen_instance and sock_estb:
-        log(f'找到实例 {chosen_instance} ')
+        log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
         msgObj = d()
         msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
         msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
-        sock_estb.send( json.dumps(msgObj).encode() )
-        return True
-        # sys.exit()
+
+        try:
+            sock_estb.send( json.dumps(msgObj).encode() )
+        except Exception as err:
+            log(f'错误：向找到的实例发送消息失败 {err}', file=sys.stderr)
+            sys.exit(1)
+
+        ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
+        if wrong:
+            log(f'警告：等待回复时出错，可能超时或未知错误', file=sys.stderr)
+            sys.exit(1)
+        elif ready:
+            try:
+                data = sock_estb.recv(300_000)
+            except Exception as err:
+                log(f'警告：读取socket收到的数据时出错:{err}', file=sys.stderr)
+                sys.exit(1)
+            if data:
+                try:
+                    msgObj = d( json.loads( data.decode() ) )
+                except Exception as err:
+                    log(f'警告：无法正确解析收到的消息:{err}', file=sys.stderr)
+                    sys.exit(1)
+                if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
+                if msgObj.reuseSucceeded:
+                    log('成功发送app命令给该实例')
+                    sys.exit(0)
+                else:
+                    log(f'警告：该正在运行的实例未回复成功', file=sys.stderr)
+                    if msgObj.youStartNewInstance:
+                        log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
+                        return False
+                    sys.exit(1)
+            else:
+                log(f'警告：收到空回复', file=sys.stderr)
+                sys.exit(1)
+
+        else: # 未知
+            log(f'警告：未收到正在运行的实例的成功回复', file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
 
 si = None # sbxinfo , sandbox info
