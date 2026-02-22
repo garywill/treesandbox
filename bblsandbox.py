@@ -307,12 +307,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
 
     # 检查fs条目
     for fsItem in (cfg.fs or []):
-        if fsItem.dest:
-            fsItem.dest = napath(fsItem.dest)
-        if fsItem.src:
-            fsItem.src = napath(fsItem.src)
-        if fsItem.destbase:
-            fsItem.destbase = napath(fsItem.destbase)
+        if fsItem.dest: fsItem.dest = napath(fsItem.dest)
+        if fsItem.src: fsItem.src = napath(fsItem.src)
+        if fsItem.destbase: fsItem.destbase = napath(fsItem.destbase)
 
     if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
         if not any( pItem.batch_plan == 'sbxdir-in-newrootfs' for pItem in cfg.fs):
@@ -579,16 +576,10 @@ def main():
 
 
 def main2(si, thislyr_cfg):
-    # 一般来说配合 unshare_user
-    if thislyr_cfg.setgroups_deny:
-        # log(f"setgroups = deny")
-        Path('/proc/self/setgroups').write_text('deny\n')
-    if thislyr_cfg.uid_map:
-        # log(f"uid_map = {thislyr_cfg.uid_map.strip()}")
-        Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
-    if thislyr_cfg.gid_map:
-        # log(f"gid_map = {thislyr_cfg.gid_map.strip()}")
-        Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
+    # 写uid_map 等 。一般来说配合 unshare_user
+    if thislyr_cfg.setgroups_deny: Path('/proc/self/setgroups').write_text('deny\n')
+    if thislyr_cfg.uid_map: Path('/proc/self/uid_map').write_text(thislyr_cfg.uid_map)
+    if thislyr_cfg.gid_map: Path('/proc/self/gid_map').write_text(thislyr_cfg.gid_map)
 
     set_ps1(si, thislyr_cfg, 'forkedBeforeFs')
     log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
@@ -738,9 +729,9 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
 
         # 去掉 stdin/out/err 中不需要的 （下面无法再log或print）
         devnull = os.open('/dev/null', os.O_RDWR)
-        os.dup2(devnull, 0) if not stdin else None
-        os.dup2(devnull, 1) if not stdout else None
-        os.dup2(devnull, 2) if not stderr else None
+        if not stdin:  os.dup2(devnull, 0)
+        if not stdout: os.dup2(devnull, 1)
+        if not stderr: os.dup2(devnull, 2)
         os.close(devnull)
 
         os.execvp(cmdvec[0], cmdvec)
@@ -749,8 +740,7 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
         child_sock.close() # 关闭不需要的 socket 端
         CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
         parent_sock.recv(1) # 读取子进程的信号 (虽然值不重要，但为了同步)
-        if safe_mntns_fd is None:
-            safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
+        if safe_mntns_fd is None: safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
         parent_sock.send(b'x') # 回信给子进程
         parent_sock.close()
 
@@ -874,32 +864,32 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
             CHK( os.path.lexists(src) , f"来源{src}不存在")
             if plan in ['bind', 'robind'] :
                 src = rslvy(src)
-            ro = True if plan in ['rosame', 'robind'] else False
+            RO = True if plan in ['rosame', 'robind'] else False
             if Path(src).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 symlink(Path(src).readlink(), real_dest)
                 # TODO chroot 前后对symlink做一致性检查
             elif Path(src).is_dir(): # 文件夹
                 mkdirp(real_dest)
                 mount(src, real_dest, None, mntflag_binddir, None)
-                z(d(dirpath=real_dest, flag=mntflag_binddir )) if ro else None
+                if RO : z(d(dirpath=real_dest, flag=mntflag_binddir ))
             elif (Path(src).is_file() \
                 or Path(src).is_char_device() \
                 or Path(src).is_block_device() ) :
                 # 普通文件可以这这样。猜测 字符设备、块设备 也可以当普通文件一样处理
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND, None)
-                mount(None, real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+                mount(None, real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if RO else None
             elif Path(src).is_socket(): # 已知socket不能remount成ro
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
             else:
                 raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
         elif plan in ['tmpfs', 'rotmpfs']:
-            ro = True if plan == 'rotmpfs' else False
+            RO = True if plan == 'rotmpfs' else False
             mkdirp(real_dest)
             flag = pItem.flag or mntflag_tmpfs
             mount('tmpfs', real_dest, 'tmpfs', flag , None)
-            z(d(dirpath=real_dest, flag=flag)) if ro else None
+            if RO : z(d(dirpath=real_dest, flag=flag))
         elif plan == 'dir':
             mkdirp(real_dest)
         elif plan == 'any-exist': #如果已存在，无论是文件/目录/软链都可以，不存在就建个空文件
@@ -908,20 +898,19 @@ def commit_thislyr_fsPlans(si, thislyr_cfg, fsPlans): # 这个函数是本层为
         elif plan in ['file', 'rofile'] :
             # NOTE 无论何种情况，都不要对目标文件做写入，而是创建个临时文件去“挂载覆盖”。
             # 记得永远不要写入目标文件，防止覆盖用户文件
-            ro = True if plan == 'rofile' else False
+            RO = True if plan == 'rofile' else False
             with tempfile.NamedTemporaryFile( dir=f'{thislyr_cfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(pItem.content)
-                os.chmod(f.name, 0o444) if ro else None
+                os.chmod(f.name, 0o444) if RO else None
                 os.chmod(f.name, pItem.destmode) if pItem.destmode else None
                 make_file_exist(real_dest)
                 mount(f.name, real_dest, None, MS.BIND, None)
-                mount(None,   real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if ro else None
+                mount(None,   real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, None) if RO else None
         elif plan == 'symlink':
             symlink(pItem.linkto, real_dest)
             # TODO chroot 前后对symlink做一致性检查
         elif plan == 'empty-if-exist' : # TODO landlock 优先
-            if not os.path.lexists(real_dest):
-                continue
+            if not os.path.lexists(real_dest): continue
             optn='mode=0000'
             if Path(real_dest).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
                 raise_exit(f"要保证为空的路径{real_dest}所属文件类型为symlink，暂未实现处理方式")
@@ -966,14 +955,10 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
             srcbase = pItem.srcbase or '/'
             CHK( destbase in ['/', '/zrootfs'], "dup-rootfs要求destbase必须为'/'或'/zrootfs'")
             CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs要求srcbase 必须为'/'或'/zrootfs'")
-            a( d( plan='rotmpfs', dest=destbase , flag=mntflag_newrootfs) ) if destbase != '/' else None
+            if destbase != '/':
+                a( d( plan='rotmpfs', dest=destbase , flag=mntflag_newrootfs) )
             for x in os.listdir(srcbase):
-                if x in [
-                    'proc',
-                    'sbxdir',
-                    'zrootfs',
-                ]:
-                    continue
+                if x in [ 'proc', 'sbxdir', 'zrootfs', ]: continue
                 a( d( plan='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
             a( d( plan='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif batch_plan == 'sbxdir-in-newrootfs':
@@ -1028,14 +1013,10 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
 
     for pItem in fsPlans:
         if pItem.SDS:
-            if pItem.src and not pItem.dest:
-                pItem.dest = pItem.src
-            elif pItem.dest and not pItem.src:
-                pItem.src = pItem.dest
-            elif not pItem.src and not pItem.dest:
-                raise_exit(f"{pItem} 既无 src 也无 dest")
-            elif napath(pItem.src) != napath(pItem.dest):
-                raise_exit(f"{pItem}设置了SDS，但src与dest不一致")
+            if   pItem.src and not pItem.dest: pItem.dest = pItem.src
+            elif pItem.dest and not pItem.src: pItem.src = pItem.dest
+            elif not pItem.src and not pItem.dest:        raise_exit(f"{pItem} 既无 src 也无 dest")
+            elif napath(pItem.src) != napath(pItem.dest): raise_exit(f"{pItem}设置了SDS，但src与dest不一致")
             del pItem.SDS
     fsPlans = [d({'plan': dict.pop(pItem, 'plan'), **pItem}) for pItem in fsPlans]
 
@@ -1107,17 +1088,13 @@ def safe_copy_script(copy_target_path):
             end_index = i
         if start_index is not None and end_index is not None:
             break
-    if start_index is None:
-        raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
-    if end_index is None:
-        raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
-    if not (start_index < end_index):
-        raise_exit("userconfig 的开始和结束标记顺序不正确")
+    if start_index is None: raise_exit(f"找不到 userconfig 的开始标记 '{start_marker}'")
+    if end_index is None: raise_exit(f"找不到 userconfig 的结束标记 '{end_marker}'")
+    if not (start_index < end_index): raise_exit("userconfig 的开始和结束标记顺序不正确")
 
     # 将范围内的所有行（包括开始和结束标记行）设置为空字符串
     lines_arr[start_index] = removed_mark
-    for i in range(start_index+1, end_index + 1):
-        lines_arr[i] = ""
+    lines_arr[start_index + 1 : end_index + 1] = [""] * (end_index - start_index)
     script_content_safe = '\n'.join(lines_arr)
     Path(copy_target_path).write_text(script_content_safe)
     os.chmod(copy_target_path, 0o444)
@@ -1283,8 +1260,7 @@ def drop_caps():
     # 验证 /proc/self/status 中所有能力字段为 0
     caps_dict = get_caps_dict()
     CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" )
-    for k,v in caps_dict.items():
-        CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
+    for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
 
     # libc验证 no_new_privs
     CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
@@ -1305,20 +1281,17 @@ def mkdirp(dirpath):
 
 def napath(pstr):
     pstr = str(pstr)
-    if not str(pstr.startswith('/')):
-        raise_exit(f"不是绝对路径： {pstr}")
+    if not str(pstr.startswith('/')): raise_exit(f"不是绝对路径： {pstr}")
     return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
 
 def make_file_exist(path): # 路径不能已有目录
-    if Path(path).is_dir():
-        raise_exit(f"{path}已是文件夹")
+    if Path(path).is_dir(): raise_exit(f"{path}已是文件夹")
     if not os.path.exists(path):
         mkdirp(Path(path).parent)
         Path(path).touch()
 
 def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在哪个位置创建软链。
-    if Path(dest).is_symlink() and Path(dest).readlink() == linkto:
-        return
+    if Path(dest).is_symlink() and Path(dest).readlink() == linkto: return
     mkdirp(Path(dest).parent)
     os.symlink(linkto, dest)
 
@@ -1338,8 +1311,7 @@ def rslvy(path):
     return str(Path(napath(path)).resolve(strict=True))
 
 def padir(path):
-    if napath(path) == '/':
-        raise_exit(f"{path}已是根路径，无法再取得上级目录")
+    if napath(path) == '/': raise_exit(f"{path}已是根路径，无法再取得上级目录")
     return str(Path(path).parent)
 
 def run_a_cmd(cmdv):
@@ -1348,8 +1320,7 @@ def run_a_cmd(cmdv):
                          text=True, bufsize=1, universal_newlines=True
                          )
     prc.wait()
-    if prc.returncode != 0:
-        raise_exit(f"命令运行未成功（{prc.returncode}）")
+    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}）")
 
 def is_unix_socket_listened(sock_path):
     if not os.path.exists(sock_path):
