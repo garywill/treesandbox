@@ -17,7 +17,6 @@ def userconfig(si): # 这个只在顶层解析一次
 
     # uc.reuseInstance=True # 复用正在运行的同种沙箱实例（即，单实例沙箱，否则为多实例沙箱）
 
-    # uc.workdir='/tmp' # 沙箱内运行用户app之前切换到哪个工作目录
     uc.apps = [
         d(cmdvec=['bash'], appname='bash'), # 第一个是默认app,可不设appname
     ]
@@ -281,7 +280,6 @@ def gen_layer4(si, uc, dyncfg):
         unshare_user=True, uid_map_as_user=True,
 
         envset_grps = [uc.setenvs],
-        workdir=uc.workdir if uc.workdir else None,
         # user_shell=True, # 调试用
         # dev_shell=True,  # 调试用
     )
@@ -789,7 +787,7 @@ class OutestProcsMonitor:
         cls.oPaSkts = d()
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
-        cls.tell_lyr_runsubp(si.mainLyr, OG.mainApp_cmdvec, 'mainApp') # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        cls.tell_lyr_runsubp(si.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
     @classmethod
     def get_NSpid_arr(cls, status_file_path) -> list:
         for line in Path(status_file_path).read_text().splitlines():
@@ -866,10 +864,9 @@ class OutestProcsMonitor:
             if loose: log(f"警告：发送消息给{lyrname}未成功: {err}", file=sys.stderr)
             else: raise
     @classmethod
-    def tell_lyr_runsubp(cls, lyrname, cmdvec, subp_name=None):
+    def tell_lyr_runsubp(cls, lyrname, subpItem):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        subp_item = d(cmdvec = cmdvec, subp_name=subp_name )
-        cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subp_item=subp_item) )
+        cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subpItem=subpItem) )
     @classmethod
     def symlink_into_sbxdir(cls, dest, file_in_sbxdir): # 创建软链，从外部，链到本沙箱实例目录内的文件
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
@@ -1029,6 +1026,8 @@ def main():
         if not user_cli_appname or user_cli_appname=='default': chosen_appItem = si.apps[0]
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == user_cli_appname), None)
         CHK( chosen_appItem and chosen_appItem.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
+        OG.chosen_appItem = chosen_appItem
+        OG.user_cli_argv = user_cli_argv
         OG.mainApp_cmdvec = chosen_appItem.cmdvec + user_cli_argv
         log(f'要在沙箱内运行的app的命令: {OG.mainApp_cmdvec}')
 
@@ -1225,7 +1224,7 @@ def daemon_pidnsleader():
                 sys.exit()
             elif msg_from_outest.action == 'run_subp':
                 PidnsleaderListener.HAS_SUBP_BY_OUTEST = True
-                layer_run_subp(no_wait=True,  **msg_from_outest.subp_item )
+                layer_run_subp(no_wait=True,  **msg_from_outest.subpItem )
 
         if PidnsleaderListener.HAS_SUBP_BY_OUTEST and not exist_childtree(): sys.exit()
 
@@ -1343,7 +1342,7 @@ def main2(skp_lyfk):
 def layer_run_subp(cmdvec=None, subp_name=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
-                   workdir=None,  # None则使用本层设置的workdir
+                   workdir=None,
                    no_wait=False,
                    ): # TODO pty或setsid
 
@@ -1354,13 +1353,12 @@ def layer_run_subp(cmdvec=None, subp_name=None,
     if subp_name == 'user_shell':     user_shell=True
     if subp_name == 'dev_shell':      dev_shell=True
 
-    if workdir is None and tlcfg.workdir: workdir = tlcfg.workdir
-
     if dev_shell:
         keep_caps=True
 
-    if not (user_shell or dev_shell):
-        if not workdir: workdir = si.HOME
+    if not workdir:
+        if user_shell or dev_shell: workdir = tlcfg.sbxdir_path1
+        else: workdir = si.HOME
 
     if subLayer:
         keep_caps=True
