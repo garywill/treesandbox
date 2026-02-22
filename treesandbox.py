@@ -93,8 +93,6 @@ def gen_layer1(si, uc, dyncfg): # 这个只在顶层解析一次
         unshare_pid=True, # 第1层必须
         unshare_mnt=True, # 第1层尝试有unshare mnt但不newrootfs
 
-        unshare_chdir=True, # chdir()不影响其他
-
         # uid 变 0
         unshare_user=True, uid_map_as_root=True,
         # 准备开始第2层。这第1层的 sublayers 数组应该只有一个元素，即，第2层只有一个容器
@@ -105,7 +103,6 @@ def gen_layer2(si, uc, dyncfg):
     return d(
         layer_name='layer2', # 默认模板的 layer_name 不要修改
         unshare_mnt=True,
-        unshare_chdir=True, # chdir()不影响其他
         newrootfs=True, # 第2层必须 # 有newrootfs则必须有fs
         fs=[ # fs全称fs_plans_for_new_rootfs 。
             # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
@@ -139,8 +136,6 @@ def gen_layer2c(si, uc, dyncfg):
     # layer2c实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
     return d(
         layer_name='layer2c', unshare_pid=True, unshare_mnt=True,
-        unshare_chdir=True, # chdir()不影响其他
-
         # uid 变回 1000
         unshare_user=True, uid_map_as_user=True,
 
@@ -157,9 +152,9 @@ def gen_layer2c(si, uc, dyncfg):
 
 def gen_layer2z(si, uc, dyncfg):
     return d( # layer2z 作为 layer2和3之间，把layer2的/zrootfs变回真/，准备让layer3接
-        layer_name='layer2z',  unshare_mnt=True, unshare_chdir=True,
+        layer_name='layer2z',  unshare_mnt=True,
         start_after=[
-            d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.gui=='filter' else None,
+            d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.XId}') if uc.gui=='xephyr' else None,
         ],
         newrootfs=True,
@@ -177,8 +172,7 @@ def gen_layer3(si, uc, dyncfg):
     return d(
         layer_name='layer3', # 默认模板的 layer_name 不要修改
         unshare_mnt=True,
-        unshare_chdir=True, # chdir()不影响其他
-        unshare_cg=True,
+        unshare_cgroup=True,
         unshare_ipc=True,
         unshare_time=True,
         unshare_uts=True,
@@ -267,7 +261,6 @@ def gen_layer4c(si, uc, dyncfg):
     return d(
         layer_name='layer4c', # 默认模板的 layer_name 不要修改
         unshare_pid=True, unshare_mnt=True,
-        unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
         unshare_user=True, uid_map_as_user=True,
@@ -282,7 +275,6 @@ def gen_layer4(si, uc, dyncfg):
         layer_name='layer4', # 默认模板的 layer_name 不要修改
         isMainLyr=True,  # 我是主app所在层
         unshare_pid=True, unshare_mnt=True,
-        unshare_chdir=True, # chdir()不影响其他
 
         # uid 变回 1000
         unshare_user=True, uid_map_as_user=True,
@@ -490,8 +482,8 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.layer_name == 'layer3': # 对第3层检查
         if cfg.fs and any( pItem.batch_plan == 'dup-rootfs' for pItem in cfg.fs) :
             raise_exit(f"层{cfg.layer_name}不应该在fs中使用 batch_plan='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
-        if not (cfg.unshare_mnt and cfg.unshare_chdir and cfg.unshare_cg and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_chdir, unshare_cg, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
+        if not (cfg.unshare_mnt and cfg.unshare_cgroup and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
+            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_cgroup, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
         if not any( pItem.batch_plan == 'container-rootfs' for pItem in cfg.fs):
             raise_exit(f"层{cfg.layer_name}的fs中无 batch_plan='container-rootfs' 的条目 （要求有）")
 
@@ -1071,11 +1063,10 @@ def main():
 
     # log(f"执行unshare")
     # TODO 用个数组储存 pid time 是fork前做，其他main2做
-    unshr_cfg = d({k:v for k,v in dict.items(tlcfg) if k.startswith('unshare_') })
-    unshr_cfg.unshare_mnt=False # unshare排除mnt（后面再做）
-    if tlcfg.depth != 1: unshr_cfg.unshare_user=False # 非首层则unshare排除user（后面再做）
-    unshare_flag = unshrflg(unshr_cfg)
-    os.unshare(unshare_flag)
+    unshr_cfg = lyrcfg_to_unshrcfg(tlcfg)
+    unshr_cfg.mnt=False # unshare排除mnt（后面再做）
+    if tlcfg.depth != 1: unshr_cfg.user=False # 非首层则unshare排除user（后面再做）
+    os.unshare(unshrflg(unshr_cfg))
 
     set_ps1('afterUnshare')
 
@@ -1239,7 +1230,7 @@ def main2(skp_lyfk):
         log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
 
     if tlcfg.unshare_mnt: # 现在才做，保证不影响父进程所看到的 /proc
-        os.unshare(unshrflg(d(unshare_mnt=True)))
+        os.unshare(unshrflg(d(mnt=True)))
 
 
     # 本层文件系统、挂载proc （维持 rw）， 变根
@@ -1250,7 +1241,7 @@ def main2(skp_lyfk):
 
     # Unshare User (非首层)
     if tlcfg.unshare_user and tlcfg.depth > 1 : # 第1层的若要做在之前就做了
-        os.unshare(unshrflg(d(unshare_user=True)))
+        os.unshare(unshrflg(d(user=True)))
     # 变内部uid=1000 (user)
     if tlcfg.uid_map_as_user: # NOTE 此时父进程看到的 proc 必须为 rw
         skp_lyfk.chd_send(BS.SetMeUidUser.value)
@@ -1798,20 +1789,23 @@ def commit_remounts(remntPlans):
         flag |= os.statvfs(dirpath).f_flag & (MS.NODEV|MS.NOSUID|MS.NOEXEC)
         mount(None, dirpath, None, MS.REMOUNT|MS.RDONLY|flag, None)
 
-
-def unshrflg(cfg):
-    unshare_flag = 0
-    unshare_flag |= os.CLONE_NEWPID if cfg.unshare_pid else 0
-    unshare_flag |= os.CLONE_NEWNS if cfg.unshare_mnt else 0
-    unshare_flag |= os.CLONE_NEWUSER if cfg.unshare_user else 0
-    unshare_flag |= os.CLONE_FS if cfg.unshare_chdir else 0
-    unshare_flag |= os.CLONE_FILES if cfg.unshare_fd else 0
-    unshare_flag |= os.CLONE_NEWCGROUP if cfg.unshare_cg else 0
-    unshare_flag |= os.CLONE_NEWIPC if cfg.unshare_ipc else 0
-    unshare_flag |= os.CLONE_NEWTIME if cfg.unshare_time else 0
-    unshare_flag |= os.CLONE_NEWUTS if cfg.unshare_uts else 0
-    unshare_flag |= os.CLONE_NEWNET if cfg.unshare_net else 0
-    return unshare_flag
+def lyrcfg_to_unshrcfg(lyrcfg):
+    return d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
+def unshrflg(unshr_cfg):
+    [CHK(x in ['pid','mnt','user','cgroup','ipc','time','uts','net'], f'{x}这个unshare flag目前不允许使用') for x in dict.keys(unshr_cfg)]
+    unshr_flg = 0
+    unshr_flg |= os.CLONE_NEWPID if unshr_cfg.pid else 0
+    unshr_flg |= os.CLONE_NEWNS if unshr_cfg.mnt else 0
+    unshr_flg |= os.CLONE_NEWUSER if unshr_cfg.user else 0
+    unshr_flg |= os.CLONE_NEWCGROUP if unshr_cfg.cgroup else 0
+    unshr_flg |= os.CLONE_NEWIPC if unshr_cfg.ipc else 0
+    unshr_flg |= os.CLONE_NEWTIME if unshr_cfg.time else 0
+    unshr_flg |= os.CLONE_NEWUTS if unshr_cfg.uts else 0
+    unshr_flg |= os.CLONE_NEWNET if unshr_cfg.net else 0
+    # 以下暂时不允许用
+    unshr_flg |= os.CLONE_FS if unshr_cfg.chdir else 0
+    unshr_flg |= os.CLONE_FILES if unshr_cfg.fd else 0
+    return unshr_flg
 
 def safe_copy_script(copy_target_path):
     old_content = Path(scriptfilepath).read_text()
