@@ -1,6 +1,6 @@
-# Box-in-box Linux Sandbox
+# Tree Sandbox
 
-可无限嵌套的Linux沙箱。Box-in-box Linux Sandbox 下文简称 **BBL**。
+可无限嵌套的Linux沙箱。
 
 一定程度上可作为Firejail、Flatpak、Bubblewrap的替代品。
 
@@ -20,7 +20,7 @@
     [dbus-daemon --session] (A) (真实dbus用户服务)
     [fcitx5-daemon] (真实输入法)
     
-    [BBL沙箱] 
+    [TreeSandbox沙箱] 
      |--[子容器:不信任空间] 
      |   |
      |   |--[子容器:用户App:不信任] 
@@ -49,7 +49,7 @@
 
 我暂时把它称为Firejail/Flatpak替代品。Bubblewrap等工具我也用过，它们不让用户控制每一个细节，就连官方工具unshare也是，因此自己做一个完全可控的。主攻其他工具不支持的沙箱多层namespace无限嵌套，和便捷的容器树配置。
 
-在开箱即用性方面，BBL介于Firejail和Bubblewrap之间。BBL没有像Firejail那样为每种App适配一种模板，而BBL有一个内置的、可随用户选项灵活适应的默认模板，可以覆盖95%的情景，因此比Bubblewrap方便。甚至如果高级用户愿意去修改模板，则可达到比Bubblewrap更强的控制力。
+在开箱即用性方面，TreeSandbox介于Firejail和Bubblewrap之间。TreeSandbox没有像Firejail那样为每种App适配一种模板，而TreeSandbox有一个内置的、可随用户选项灵活适应的默认模板，可以覆盖95%的情景，因此比Bubblewrap方便。甚至如果高级用户愿意去修改模板，则可达到比Bubblewrap更强的控制力。
 
 这个项目处于早期，可以使用，但要知道，目前无专业团队参与。
 
@@ -110,10 +110,10 @@
 
 从网络下载任意app的`.AppImage`文件。
 
-复制一份BBL的`.py`脚本，与下载的AppImage放在一起:
+复制一份TreeSandbox的`.py`脚本，与下载的AppImage放在一起:
 
 ```
-/anyhdd/freecad/bblsbxrun_freecad.py
+/anyhdd/freecad/sbxrun_freecad.py
 /anyhdd/freecad/FreeCAD.AppImage
 /anyhdd2/projects_save/
 ```
@@ -129,16 +129,16 @@ uc.user_mnts = [
 uc.gui="realX" # 使用真实的 X11
 ```
 
-BBL实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
+TreeSandbox实现了在内部预先挂载AppImage，不需要把fuse挂载权限给AppImage。会把AppImage里的内容挂载到沙箱内的`/sbxdir/apps/freecad/`下。 启动沙箱后，在内运行`/sbxdir/apps/run_freecad`即启动我们的app。
 
 沙箱内app所创建的工程可以保存在`/anyhdd2/projects_save/`下（用了`SDS`挂载工程目录，沙箱内外皆以同一路径访问此目录，`SDS`是"src and dest are same"的缩写）
 
 **例子2：** 沙箱内运行下载的二进制程序
 
-例如下载`firefox.tar.xz`, 解压，像上例一样把解压出来的文件和复制的一份BBL的`.py`脚本放一起:
+例如下载`firefox.tar.xz`, 解压，像上例一样把解压出来的文件和复制的一份TreeSandbox的`.py`脚本放一起:
 
 ```
-/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
 ```
 
@@ -157,7 +157,7 @@ uc.dbus_session="allow" # 输入法等通信需要dbus
 以上尚未挂载持久化的路径以保存浏览器profile目录。若需要，可创建一个`fakehome`目录
 
 ```
-/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/fakehome
 /anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
 ```
@@ -296,7 +296,7 @@ layer1 = d( # 第1层
 
 （以上所列文件系统已经写进模板里，不需要用户去创建）
 
-`/sbxdir`是BBL沙箱所需要的目录，它包含：
+`/sbxdir`是TreeSandbox沙箱所需要的目录，它包含：
 
 - AppImage挂载点（与普通用户有关，以下其余普通用户可以不了解）
 - 本层及本层的子层的配置信息

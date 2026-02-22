@@ -1,8 +1,8 @@
 English | [中文](README_zh.md)
 
-# Box-in-box Linux Sandbox
+# Tree Sandbox
 
-A Linux sandbox tool that allows unlimited nesting. (**BBL**, short for Box-in-box Linux).
+A Linux sandbox tool that allows unlimited nesting. 
 
 > Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English.
 
@@ -21,7 +21,7 @@ Here's an example, the sandbox container tree might look like:
     [X11]   Real Desktop
     [dbus-daemon --session]  <A>    Real user dbus service
 
-    [BBL Sandbox]
+    [Tree Sandbox Sandbox]
       |-[Sub-container : Untrusted zone]
       |   |
       |   |-[Sub-container : Untrusted : User App]
@@ -107,10 +107,10 @@ In following examples, app processes in sandbox can see only ro system dirs, emp
 
 **Example 1** — Run AppImage in sandbox
 
-Place a copy of BBL script next to an AppImage of some app you downloaded. 
+Place a copy of Tree Sandbox script next to an AppImage of some app you downloaded. 
 
 ```
-/anyhdd/freecad/bblsbxrun_freecad.py
+/anyhdd/freecad/sbxrun_freecad.py
 /anyhdd/freecad/FreeCAD.AppImage
 /anyhdd2/projects_save/
 ```
@@ -125,7 +125,7 @@ uc.user_mnts = [
 uc.gui="realX"
 ```
 
-BBL mounts AppImage contents inside the sandbox so AppImage itself doesn’t need to have FUSE caps. This mounts the AppImage under `/sbxdir/apps/freecad/` inside the sandbox. After launching the sandbox, run `/sbxdir/apps/run_freecad` inside it to start the app.
+Tree Sandbox mounts AppImage contents inside the sandbox so AppImage itself doesn’t need to have FUSE caps. This mounts the AppImage under `/sbxdir/apps/freecad/` inside the sandbox. After launching the sandbox, run `/sbxdir/apps/run_freecad` inside it to start the app.
 
 Project files created by the app can be saved under `/anyhdd2/projects_save/` because that host path was bound into the sandbox. The `SDS` flag means “source and destination are the same” so the directory appears with the same path inside and outside the sandbox.
 
@@ -134,7 +134,7 @@ Project files created by the app can be saved under `/anyhdd2/projects_save/` be
 If you downloaded an app (for example `firefox.tar.xz`) and want to use the app inside the sandbox:
 
 ```
-/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/firefox/.... (contains firefox binaries and libraries)
 ```
 
@@ -153,7 +153,7 @@ uc.dbus_session="allow" # input methods and other components need dbus
 If you want to persist the browser profile, provide a fake home directory next to the script:
 
 ```
-/anyhdd/ffx/bblsbxrun_firefox.py
+/anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/fakehome
 /anyhdd/ffx/firefox/....
 ```
@@ -175,7 +175,7 @@ uc.user_mnts = [
 ```
 ## Sandbox layering model
 
-BBL is a multi-layer, nestable sandbox. The script ships with a default nested template:
+Tree Sandbox is a multi-layer, nestable sandbox. The script ships with a default nested template:
 
 ```
 Linux Host 

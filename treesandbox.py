@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 
-# Box-in-Box Linux (BBL) Sandbox
+# Tree Sandbox for Linux
 # Licensed under GPL
-# https://github.com/garywill/bblsandbox
+# https://github.com/garywill
 
 import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types, select, fcntl
 from pathlib import Path
@@ -372,7 +372,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg): # cfg：要处理的层， parent_
         recursive_lyrs_jobs(si, sublyr_cfg, cfg)
 
 
-resv_words = ['sbx', 'sbxs', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
+resv_words = ['sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs']
 def make_mnt_fill_sbxdir(si, thislyr_cfg, call_at_begin=None, call_at_buildfs=None): # 创建本层的sbxdir, 可能是刚启动时新创建，也可能是准备变根前为变根后的环境内创建（可能复制启动时已有的）
     # sbxdir_path/ :
         # sbxinfo.json
@@ -1028,7 +1028,7 @@ def gen_fsPlans_by_lyrcfg(si, lyr_cfg): # 把fs里面的batch_plan都转成plan,
         elif batch_plan == 'mask-privacy':
             destbase = pItem.destbase
             CHK( destbase in ['/', '/zrootfs'], "mask-privacy要求destbase必须为'/'或'/zrootfs'")
-            path_maskfile = f'{si.HOME}/.config/bblsandbox/paths_never_access.txt'
+            path_maskfile = f'{si.HOME}/.config/treesandbox/paths_never_access.txt'
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
             paths_to_mask = [path.strip() for path in paths_to_mask if path.strip()]
@@ -1506,7 +1506,7 @@ def get_appimg_sqoffset(appimg_path):
 
 #=====================================================
 # 常量
-PTMP = '/tmp/sbxs' # 不同沙箱实例共用的 主临时目录
+PTMP = '/tmp/tsbxs' # 不同沙箱实例共用的 主临时目录
 
 if __name__ == "__main__":
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
