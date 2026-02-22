@@ -1138,7 +1138,7 @@ def cleanup_outest(si):
         for f in Path(dirpath).iterdir():
             if f.is_file() :
                 try_pass(lambda: f.unlink() )
-            try_pass(lambda: os.rmdir(dirpath) )
+        try_pass(lambda: os.rmdir(dirpath) )
 
 #==========================================
 #======= libc 工具函数 =========================
