@@ -619,6 +619,36 @@ def update_proclist(): # 只有 最外层 原进程 调用这个函数
     write_proclist_fd(proclist)
     return proclist # 往fd里写之后也返回
 
+
+class pipe_outest_exit_layer1:
+    _read_fd = None
+    _write_fd = None
+    @classmethod
+    def init(cls):
+        cls._read_fd, cls._write_fd = os.pipe()
+        fcntl.fcntl(cls._read_fd, fcntl.F_SETFL, fcntl.fcntl(cls._read_fd, fcntl.F_GETFL) | os.O_NONBLOCK) # 设置读为非阻塞
+    @classmethod
+    def i_am_outest(cls):
+        os.close(cls._read_fd); cls._read_fd = None
+    @classmethod
+    def i_am_layer1(cls):
+        os.close(cls._write_fd); cls._write_fd = None
+        fcntl.fcntl(cls._read_fd, fcntl.F_SETFD, fcntl.fcntl(cls._read_fd, fcntl.F_GETFD) | fcntl.FD_CLOEXEC)
+    @classmethod
+    def set_should_exit(cls):
+        try:
+            os.write(cls._write_fd, b'x')
+        except OSError as err:
+            if err.errno != errno.EPIPE:  raise # 忽略 Broken pipe（layer1 已退出）
+    @classmethod
+    def is_should_exit_set(cls):
+        try:
+            data = os.read(cls._read_fd, 1) # 尝试读一个字节
+            return len(data) > 0
+        except OSError as err:
+            if err.errno in (errno.EAGAIN, errno.EWOULDBLOCK): return False  # 无数据，非阻塞返回
+            else: raise
+
 si = None # sbxinfo , sandbox info
 thislyr_cfg = None
 def main():
@@ -688,8 +718,11 @@ def main():
         sys.exit()
     else: # must_fork==True
         # log(f"即将fork")
+        if is_outest: pipe_outest_exit_layer1.init()
         pid = os.fork()
         if pid == 0: # 子进程
+            if is_outest: pipe_outest_exit_layer1.i_am_layer1()
+
             # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
             if is_outest:
                 set_pdeathsig()
@@ -699,8 +732,11 @@ def main():
             main2()
             sys.exit()
         else: # 父进程
+            if is_outest: pipe_outest_exit_layer1.i_am_outest()
+
             if not is_outest:
                 sys.exit()
+
             si.layer1_pid = pid
             Path(f'{si.outest_sbxdir}/proc.layer1.{pid}.pid').write_text(str(pid))
             symlink(f'proc.layer1.{pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
@@ -821,6 +857,7 @@ def main2():
         # TODO 改用poll
         async def loop():
             while True:
+                if thislyr_cfg.depth == 1 and pipe_outest_exit_layer1.is_should_exit_set() : sys.exit()
                 if not exist_childtree():
                     log("子进程树已空，退出")
                     sys.exit()
