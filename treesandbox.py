@@ -770,6 +770,29 @@ def main():
             else:
                 daemon(True, pid)
 
+
+class WlogReader():
+    wlogf = None
+    @classmethod
+    def init(cls):
+        cls.wlogf = open(f'{si.outest_sbxdir}/events.layers.log', 'r')
+        cls.offset = 0
+    @classmethod
+    def _read(cls):
+        try:
+            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_EX)
+            return cls.wlogf.read()
+        finally:
+            fcntl.flock(cls.wlogf.fileno(), fcntl.LOCK_UN)
+    @classmethod
+    def readnew(cls):
+        new_logs = []
+        for line in cls._read().splitlines():
+            if not line.strip(): continue
+            new_logs.append(json.loads(line))
+        return new_logs
+
+
 def daemon(is_outest, layer1_pid=None):
     if is_outest:
         si.layer1_pid = layer1_pid
@@ -777,6 +800,8 @@ def daemon(is_outest, layer1_pid=None):
             f.write(str(layer1_pid))
             os.chmod(f.name, 0o444)
         symlink(f'proc.layer1.{layer1_pid}.pid', f'{si.outest_sbxdir}/proc.layer1.pid')
+
+        WlogReader.init()
 
         layer_set_status('outestDaemoning')
 
