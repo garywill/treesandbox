@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill/bblsandbox
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, glob , datetime , types, select
 from pathlib import Path
 
 # === HIDE_FOR_SUBLAYERS BEGIN === NOTE: Don't change this line ===
@@ -604,13 +604,16 @@ def main2(si, thislyr_cfg):
         build_thislyr_fs(si, thislyr_cfg) # 无论本层是否设置了变根，都调用这个函数
 
     # 在build_fs完了之后挂载/proc, 与fsPlans那边的代码解耦
+    new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
     if thislyr_cfg.unshare_pid or thislyr_cfg.newrootfs:
-        new_proc_path = napath(thislyr_cfg.newrootfs_path+'/proc')
         log(f'挂载proc到 {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, None)
-        if not thislyr_cfg.sublayers: # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
-            protect_proc( new_proc_path )
+    # 如果非最后一层，不要让 proc 变 ro ，也不要让 proc 内有其他挂载， 否则下一层出错
+    if not thislyr_cfg.sublayers and os.getpid() != 1:
+        makesure_proc_safe( new_proc_path , allow_newmntns=False ) # safe = proc ro + 1/fd屏蔽
+    if not thislyr_cfg.sublayers : # 隐含条件 pid==1  # 仅让 proc ro ， 不要屏蔽1/fd
+        make_proc_ro( new_proc_path , allow_newmntns=False )
     set_ps1(si, thislyr_cfg, 'afterFs')
 
     # 执行变根 (chroot)
@@ -626,6 +629,7 @@ def main2(si, thislyr_cfg):
         log(f'本层文件系统就绪 {os.listdir('/')}')
     del thislyr_cfg.newrootfs_path
     del thislyr_cfg.sbxdir_path0
+    del new_proc_path
 
 
     if thislyr_cfg.sbxdir_path1:
@@ -698,27 +702,63 @@ def main2(si, thislyr_cfg):
         asyncio.run(loop())
     # 如果不是 unshare_pid 的 ,这里直接结束退出
 
-def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, keepfds=False, blocking=False):
+safe_mntns_fd = None
+def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=True, stderr=True, blocking=False):
+    global safe_mntns_fd
+    # 使用 socketpair 替代两个 pipe
+    child_sock, parent_sock = socket.socketpair()
+
     pid = os.fork()
     if pid == 0: # 子进程
         set_loghead(f"{loghead}subp: ")
-        if not stdin:
-            devnull = os.open('/dev/null', os.O_RDONLY)
-            os.dup2(devnull, 0) # 将 stdin (fd 0) 重定向到 /dev/null
-            os.close(devnull)
-        # TODO NOTE stdout stderr = false 未实现
-        # TODO NOTE keepfds=False 未实现
+        parent_sock.close() # 关闭不需要的 socket 端
         if child_no_caps:
-            protect_proc('/proc')
+            if safe_mntns_fd is None :
+                makesure_proc_safe('/proc', allow_newmntns=True)
+            else:
+                log('加入已有的安全mnt ns为新进程的运行做准备')
+                os.setns(safe_mntns_fd, os.CLONE_NEWNS)
+
             drop_caps()
+        child_sock.send(b'x') # 给父进程发送信号
+        CHK( select.select([child_sock], [], [], 1.0) [0] , "子进程 等待 原进程 的回信，超时了") # 等待接收回信
+        child_sock.recv(1)
+        child_sock.close()
+
+        # 关闭3以上的fd
+        if child_no_caps: # 本来应该是判断 keepfds==False, 但用child_no_caps替代先了
+            for fd in os.listdir('/proc/self/fd') :
+                if int(fd) >=3 :
+                    try:
+                        os.close(int(fd))
+                    except OSError as e:
+                        if e.errno != 9: raise # 9 EBADF 错误表示可能已关闭 （Bad file descriptor），可忽略9错误
+
         log('准备启动（不降权）:' if not child_no_caps else '准备降权启动:' , cmdvec)
+
+        # 去掉 stdin/out/err 中不需要的 （下面无法再log或print）
+        devnull = os.open('/dev/null', os.O_RDWR)
+        os.dup2(devnull, 0) if not stdin else None
+        os.dup2(devnull, 1) if not stdout else None
+        os.dup2(devnull, 2) if not stderr else None
+        os.close(devnull)
+
         os.execvp(cmdvec[0], cmdvec)
         os._exit(123) # 正常不会到这里 , 不能用sys.exit, 否则会执行原进程的清理
-    if not blocking: # 非阻塞
-        return pid
-    else: # 阻塞
-        _, status = os.waitpid(pid, 0)
-        return status
+    else: # 原进程
+        child_sock.close() # 关闭不需要的 socket 端
+        CHK( select.select([parent_sock], [], [], 2.0) [0] , "原进程 等待 子进程，超时了")
+        parent_sock.recv(1) # 读取子进程的信号 (虽然值不重要，但为了同步)
+        if safe_mntns_fd is None:
+            safe_mntns_fd = os.open(f'/proc/{pid}/ns/mnt', os.O_RDONLY)
+        parent_sock.send(b'x') # 回信给子进程
+        parent_sock.close()
+
+        if not blocking: # 非阻塞
+            return pid
+        else: # 阻塞
+            _, status = os.waitpid(pid, 0)
+            return status
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
     # os.exec*成功后不回来，替换了进程
@@ -726,20 +766,17 @@ def layer_run_subp(thislyr_cfg, cmdvec, child_no_caps=True, stdin=True, stdout=T
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
 
-def protect_proc(proc_path):
-    if os.getpid() != 1:
-        os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS=unshare_mnt
-        def maskpath(path):
-            if not Path(path).is_mount():
-                optn='mode=0000'
-                mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc, optn)
-                mount('tmpfs', path, 'tmpfs', MS.RDONLY|mntflag_proc|MS.REMOUNT, optn)
-        maskpath(f'{proc_path}/1/fd')
-        # TODO /proc/1/fd /proc/1/mem /proc/1/environ /proc/1/maps  /proc/1/smaps /proc/1/task/ /proc/1/wchan, /proc/1/stack
-        # /proc/1/attr/ /proc/1/autogroup /proc/1/oom_score_adj /proc/1/cwd, /proc/1/root
 
-    mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
+def makesure_proc_safe(proc_path, allow_newmntns):
+    # 删除了tmpfs覆盖/proc/1/fd 的代码，因为好像它自动会屏蔽
+    make_proc_ro(proc_path, allow_newmntns=allow_newmntns)
 
+def make_proc_ro(proc_path, allow_newmntns):
+    if not os.statvfs(proc_path).f_flag&MS.RDONLY :
+        if allow_newmntns :
+            log('创建并进入新的安全mnt ns以为新进程的运行做准备')
+            os.unshare(os.CLONE_NEWNS) # CLONE_NEWNS =unshare_mnt
+        mount(None, proc_path, None, MS.REMOUNT|MS.RDONLY|mntflag_proc, None)
 
 def cleanup_pidnsleader():
     if os.getpid() == 1:
