@@ -16,9 +16,6 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.sandbox_name='' # 沙箱名称
     uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
 
-    # 若不设置 homedir ，则会用 tmpfs 当 $HOME
-    # uc.homedir=f'{si.startdir_on_host}/fakehome'
-
     # 若不设置gui则内部无任何X11
     uc.gui="realX" # 使用真实的 X11
     # uc.gui="xephyr"
@@ -204,8 +201,6 @@ def gen_layer3(si, uc, dyncfg):
             d(plan='robind', dest='/sys', src='/sys'),
             ] if uc.see_real_hw else [] ),
             # TODO 1. 改用dyncfg  2. layer2里也加
-
-            d(plan='bind', dest=f'{si.HOME}', src=uc.homedir) if uc.homedir else None, # 若这条不成立，container-roofs那条会产生一个tmpfs的家目录
 
             *([
             d(plan='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),

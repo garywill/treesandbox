@@ -19,8 +19,9 @@
 
 可选：
 
-- squashfuse (内部AppImage挂载)
+- xdg-dbus-proxy
 - Xephyr + icewm (隔离X11)
+- squashfuse (内部AppImage挂载)
 
 
 ## 开发目标
@@ -110,7 +111,6 @@
     - [ ] 同种沙箱单实例（从主机启动一种App的沙箱后，再次启动同种App的沙箱，则传递命令参数至已运行的沙箱。说明：以你设置的`sandbox_name`来区分“同种沙箱”）
 - [x] 看门狗（若沙箱内app或辅助app退出，则结束沙箱）
 - [ ] 容器内部shell接口暴露给主机
-- [ ] 可选的seccomp
 - 单文件脚本，随处复制，依使用需求修改头部选项。免安装，精简依赖
 
 ## 简单用例 
@@ -151,6 +151,7 @@ TreeSandbox实现了在内部预先挂载AppImage，不需要把fuse挂载权限
 ```
 /anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
+/anyhdd/ffx/fakehome
 ```
 
 编辑我们的`.py`文件，配置：
@@ -160,26 +161,12 @@ uc.sandbox_name='firefox' # 沙箱名称
 user_mnts = [
     d(plan='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
     # 也可以去掉上面的`SDS`而改为`dest='/sbxdir/apps/firefox'`。
+    d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX" # 使用真实的 X11
 uc.dbus_session="filter" # 输入法等通信需要dbus
 ```
 
-以上尚未挂载持久化的路径以保存浏览器profile目录。若需要，可创建一个`fakehome`目录
-
-```
-/anyhdd/ffx/sbxrun_firefox.py
-/anyhdd/ffx/fakehome
-/anyhdd/ffx/firefox/.... (内含firefox-bin, *.so 等 解压出来的文件)
-```
-
-并配置
-
-```python
-homedir=f'{si.startdir_on_host}/fakehome',
-```
-
-即可持久化保存沙箱内家目录文件。（`/anyhdd/ffx/fakehome`会被挂载到沙箱内的`/home/用户名`）
 
 **例子3：** 沙箱内直接使用自己的vimrc配置
 

@@ -76,7 +76,6 @@ Early-stage. It works and you can read the code, but it has not been developed o
 - DBus:
     - [x] Optional host DBus exposure to sandbox
     - [x] Optional DBus proxy filtering DBus communication
-- [ ] Optional Seccomp 
 - [ ] Optional network traffic control 
 - Instance Manage and Args Passing
     - [x] Multi-instances for same sandbox (Multiple startups of same sandbox will have multi-instances running. Each other isolated and independent) 
@@ -136,6 +135,7 @@ If you downloaded an app (for example `firefox.tar.xz`) and want to use the app 
 ```
 /anyhdd/ffx/sbxrun_firefox.py
 /anyhdd/ffx/firefox/.... (contains firefox binaries and libraries)
+$anyhdd/ffx/fakehome
 ```
 
 Configure:
@@ -145,27 +145,11 @@ uc.sandbox_name='firefox' # sandbox name
 uc.user_mnts = [
     d(plan='robind', src=f'{si.startdir_on_host}/firefox', SDS=1), 
     # alternatively, remove SDS and set dest='/sbxdir/apps/firefox'
+    d(plan='bind', src=f'{si.startdir_on_host}/fakehome', dest=si.HOME), 
 ]
 uc.gui="realX"
 uc.dbus_session="filter" # input methods and other components need dbus
 ```
-
-If you want to persist the browser profile, provide a fake home directory next to the script:
-
-```
-/anyhdd/ffx/sbxrun_firefox.py
-/anyhdd/ffx/fakehome
-/anyhdd/ffx/firefox/....
-```
-
-and configure:
-
-```python
-homedir=f'{si.startdir_on_host}/fakehome',
-```
-
-The `fakehome` directory will be mounted into the sandbox at the user’s home path.
-
 **Example 3**— use your existing vimrc inside the sandbox
 
 ```python
