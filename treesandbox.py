@@ -266,6 +266,8 @@ def gen_layer2c(si, uc, dyncfg):
             d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
             d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
         ],
+        daemon_tasks = [
+        ],
     )
 
 def gen_layer2z(si, uc, dyncfg):
@@ -434,7 +436,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     startscript_on_host = scriptfilepath
     CWD = scriptdirpath
     PTMP = f'/tmp/tsbxs-{uid}'
-    hash_bootsbx_py = hashlib.blake2b(open(scriptfilepath, 'rb').read()).hexdigest()
+    hash_bootsbx_py = hash_blake2b(open(scriptfilepath, 'rb').read())
 
     CHK(uid != 0 and gid != 0, f'目前本沙箱未支持以root运行')
     if not os.getenv("XDG_RUNTIME_DIR"):
@@ -656,12 +658,15 @@ def recr_rm_empty_lyr(si, cfg):
 
         cnt_cmds_0 = len(cfg.subprocs or [] )
         cnt_sl_0 = len(cfg.sublayers or [] )
+        cnt_task_0 = len(cfg.daemon_tasks or [])
         if cfg.subprocs : cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
         if cfg.sublayers : cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr and not sublyr.disabled]
+        if cfg.daemon_tasks : cfg.daemon_tasks = [task for task in cfg.daemon_tasks if task]
         cnt_cmds_1 = len(cfg.subprocs or [] )
         cnt_sl_1 = len(cfg.sublayers or [] )
+        cnt_task_1 = len(cfg.daemon_tasks or [])
 
-        if cnt_cmds_0 != cnt_cmds_1 or cnt_sl_0 != cnt_sl_1:
+        if cnt_cmds_0 != cnt_cmds_1 or cnt_sl_0 != cnt_sl_1 or cnt_task_0 != cnt_task_1:
             have_rmed = True
         for sublyr_cfg in (cfg.sublayers or [] ):
             if _recr(si, sublyr_cfg):
@@ -873,7 +878,7 @@ def main(lyrcfg_in):
         log(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
         if si.newXId: log(f'沙箱使用的X11/WAYLAND编号 : {si.newXId}')
 
-        atexit.register(cleanup_outest) # 顶层父进程注册清理函数
+        reg_cleanup_func(cleanup_outest) # 顶层父进程注册清理函数
 
         mkdirp(si.CG_TSBXS)
         mkdirp(si.CG_SBX)
@@ -926,7 +931,7 @@ def main(lyrcfg_in):
     # log(f"即将fork")
     pid = os.fork()
     if pid == 0: # 子进程
-        atexit._clear()
+        unreg_cleanup_func()
         set_loghead (f'{tlcfg.layer_name} F: ')
         skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
@@ -1003,7 +1008,7 @@ def main2(skp_lyfk):
     # 清理函数、信号处理注册 (要在sublayer之后)
     if tlcfg.unshare_pid:
         CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
-        atexit.register(cleanup_pidnsleader)
+        reg_cleanup_func(cleanup_pidnsleader)
         register_sig_handlers(pidnsleader=True)
 
     set_ps1('ready')
@@ -1072,9 +1077,9 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
     pid = os.fork()
     if pid == 0: # 子进程
-        atexit._clear()
-        if not subLayer: set_loghead(f"{loghead}subp: ")
-        else: set_loghead(f"{loghead}sublayer_starting: ")
+        unreg_cleanup_func()
+        set_loghead(f"{loghead}subp {subp_name}: ")
+        set_proc_dispname('subp')
         skp_spfk.i_am_chd()
 
         if not keep_caps:
@@ -1411,7 +1416,7 @@ def commit_remounts(remntPlans):
 
 def maybe_sendto_running_instance():
     log('检查有无正在运行的同种沙箱')
-    MATCH_SI_K = ["hash_bootsbx_py", "uid", "gid", "username", "groupname", "HOME", "PTMP", "sharedir_onhost", "sandbox_name", "apps", "CG_HOSTUSER", "CG_TSBXS", "pythonbin", "all_layers", "mainLyr", "expected_alive_procs", "expected_alive_layers" ]
+    MATCH_SI_K = ["hash_bootsbx_py", "uid", "gid", "username", "groupname", "PTMP", "pythonbin",  ]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
             return True # is_still_alive() 返回 真
@@ -1856,10 +1861,37 @@ def get_wdgsee() -> dict:
     if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
     else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
 
+def fork(create_socketpair=False, loghead=None, proc_dispname=None):
+    sktpair = TmpSocketPair() if create_socketpair else None
+    pid = os.fork()
+    CHK(pid >= 0, 'fork失败')
+    if pid == 0 : # 子进程
+        unreg_cleanup_func()
+        if loghead is not None: set_loghead(loghead)
+        if proc_dispname is not None: set_proc_dispname(proc_dispname)
+        if create_socketpair: sktpair.i_am_chd()
+    else: # 原进程
+        if create_socketpair: sktpair.i_am_pa()
+    return pid, sktpair
 
+whoCleanupRegister = None
+def reg_cleanup_func(cleanup_func):
+    global whoCleanupRegister
+    if not whoCleanupRegister is None: log_warn('已注册过清理函数') ; os._exit(1)
+    whoCleanupRegister = (os.getpid(), get_nstypes('/proc/self/ns').pid)
+    atexit.register(cleanup_func)
+def unreg_cleanup_func():
+    global whoCleanupRegister
+    atexit._clear()
+    whoCleanupRegister = None
+def isMeThatRegedCleanup(): # TODO 把stat里的时间也加入要素
+    if (os.getpid(), get_nstypes('/proc/self/ns').pid) == whoCleanupRegister : return True
+    else: log_warn('不是本进程注册的清理函数。可能出现清理函数未及时清理'); return False
 
 cleanup_symlinks_to_rm = []
 def cleanup_outest():
+    atexit._clear()
+    if not isMeThatRegedCleanup(): return
     if os.getpid() == 1: return
     log(f"准备退出，等待所有子进程结束后执行清理...")
     try_showerr(lambda: Path(f'{si.outest_sbxdir}_exit').touch() ) # 设个正在退出的标记
@@ -1903,7 +1935,9 @@ def cleanup_outest():
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
 def cleanup_pidnsleader():
-    if os.getpid() != 1 : log("错误：pid != 1 。应该只有领头进程运行此清理函数"); return
+    atexit._clear()
+    if not isMeThatRegedCleanup(): return
+    if os.getpid() != 1 : log_warn("pid != 1 。应该只有领头进程运行此清理函数"); return
     for u in range(3):
         if not exist_childtree(): break
         os.kill(-1, signal.SIGTERM)
@@ -2117,9 +2151,10 @@ def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
 def get_important_fds():
-    return list(si.file_fds.values()) \
+    result = list(si.file_fds.values()) \
             + list(si.subp_log_fds.values()) \
             + [fd for fd_pair in dict.values(si.oSkt_fds) for fd in dict.values(fd_pair)]
+    return result
 
 def set_important_fds_cloexec():
     fds_to_cloexec = get_important_fds()
@@ -2453,6 +2488,10 @@ def eq_ignore_order(v1, v2):
     return v1 == v2
 
 
+def hash_blake2b(in_str):
+    return hashlib.blake2b(in_str).hexdigest()
+
+
 def try_pass(func):
     try:    return func()
     except: pass
@@ -2539,6 +2578,7 @@ if __name__ == "__main__":
         OG = None
         if isinstance(lyrcfg_to_use, dict):
             log(f'子层 {lyrcfg_to_use.layer_name}')
+            set_proc_dispname(lyrcfg_to_use.layer_name)
         try:
             lyrcfg_to_use = main(lyrcfg_to_use)
         except Exception as err:
