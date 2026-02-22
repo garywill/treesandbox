@@ -22,8 +22,8 @@
 - xdg-dbus-proxy
 - Weston + Xwayland + icewm (隔离X11)
 - Xephyr + icewm (隔离X11)
-- squashfuse (内部AppImage挂载)
-- zenity (内部阻止随意的网页等弹窗而改用询问)
+- squashfuse (内部AppImage、squashfs挂载)
+- zenity 或 kdialog (内部阻止随意的网页等弹窗而改用询问)
 
 
 ## 开发目标

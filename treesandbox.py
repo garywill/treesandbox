@@ -4,7 +4,7 @@
 # Licensed under GPL
 # https://github.com/garywill
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource
 from pathlib import Path
 from glob import glob
 shutil.rmtree = None
@@ -50,8 +50,8 @@ def userconfig(si): # 这个只在顶层解析一次
 
     # 若不设置gui则内部无任何X11
     # uc.gui="realX" # 使用真实的 X11
+    uc.gui="weston" # 用的是weston里的Xwayland
     # uc.gui="xephyr"
-    uc.gui="weston"
 
     # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
 
@@ -258,8 +258,6 @@ def gen_layer2c(si, uc, dyncfg):
     # layer2c实际上深度为3, 这层是为了运行可信程序如 xpra client , dbus proxy 等
     return d(
         layer_name='layer2c', unshare_pid=True, unshare_mnt=True,
-        # uid 变回 1000
-        unshare_user=True, uid_map_as_user=True,
 
         newrootfs=True,
         fs=[
@@ -390,9 +388,6 @@ def gen_layer4c(si, uc, dyncfg):
         layer_name='layer4c', # 默认模板的 layer_name 不要修改
         unshare_pid=True, unshare_mnt=True,
 
-        # uid 变回 1000
-        unshare_user=True, uid_map_as_user=True,
-
         subprocs=[
             d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) if dyncfg.icewm else None ,
 
@@ -405,9 +400,6 @@ def gen_layer4(si, uc, dyncfg):
         layer_name='layer4', # 默认模板的 layer_name 不要修改
         is_mainlyr=True,  # 我是主app所在层
         unshare_pid=True, unshare_mnt=True,
-
-        # uid 变回 1000
-        unshare_user=True, uid_map_as_user=True,
 
         envset_grps = [uc.setenvs],
 
@@ -557,7 +549,6 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.subprocs :
         cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
         CHK( cfg.unshare_pid and cfg.unshare_mnt, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid+unshare_mnt")
-        CHK( cfg.uid_map_as_user, f"层{cfg.layer_name}有 subprocs 但没有启用 uid_map_as_user")
         for subpItem in cfg.subprocs:
             if subpItem.start_after:
                 subpItem.start_after = [item for item in subpItem.start_after if item is not None]
@@ -569,7 +560,7 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.envset_grps = [item for item in cfg.envset_grps if item is not None]
     if cfg.start_after:
         cfg.start_after = [item for item in cfg.start_after if item is not None]
-    if cfg.uid_map_as_root or cfg.uid_map_as_user:
+    if cfg.uid_map_as_root :
         CHK( cfg.unshare_user, f"层{cfg.layer_name}有 uid_map_as_* 但没有启用 unshare_user")
 
     if cfg.unshare_pid and not cfg.unshare_mnt:
@@ -658,6 +649,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
+            if cfg.subprocs or cfg.is_mainlyr: used_proc_names.append(cfg.layer_name+'_userns')
         if cfg.is_mainlyr:
             CHK(not si.specialLyrs.mainLyr, '有重复的mainLyr')
             si.specialLyrs.mainLyr = cfg.layer_name
@@ -770,7 +762,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
         def make_file_get_fd(filepath, open_flag, filemode):
             fd = os.open(filepath, open_flag, filemode)
-            set_fd_keep_on_exec(fd, True)
+            set_fd_keep_on_exec(fd, False)
             return fd
 
         si.file_fds = d()
@@ -795,8 +787,8 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
         def create_socketpair_fds():
             skt_chd, skt_pa = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-            fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, True)
-            fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, True) # 为了不让fd号码乱，pa也保留
+            fd_chd = skt_chd.detach() ; set_fd_keep_on_exec(fd_chd, False)
+            fd_pa  = skt_pa.detach() ; set_fd_keep_on_exec(fd_pa, False) # 为了不让fd号码乱，pa也保留
             return d(pa=fd_pa, chd=fd_chd)
         si.oSkt_fds = d()
         for lyr in si.expected_alive_layers:
@@ -859,32 +851,38 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
 si = None # sbxinfo , sandbox info
 tlcfg = None # thislyr_cfg , this layer config
-OG = None # outest global info
+OG = None # outest global dynamic info
+LG = None # layer global dynamic info
 def main(lyrcfg_in):
     global si, tlcfg, OG
-
-    arg_parser = argparse.ArgumentParser(add_help=False)
-    sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
-    sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
-
-    sbx_args, user_cli_argv = arg_parser.parse_known_args()
-
-    user_cli_appname = sbx_args.app
 
     if not isinstance(lyrcfg_in, dict): is_outest = True # 是顶层
     else: is_outest = False # 是子层
 
     if is_outest: # 是顶层
+        arg_parser = argparse.ArgumentParser(add_help=False)
+
+        arg_parser.add_argument("--nocleanup", action='store_true')
+
+        sbx_arg_grp = arg_parser.add_mutually_exclusive_group()
+        sbx_arg_grp.add_argument("--app", metavar="<user_cli_appname>")
+
+        sbx_args, user_cli_argv = arg_parser.parse_known_args()
+
+        nocleanup = sbx_args.nocleanup
+        user_cli_appname = sbx_args.app
+
+    if is_outest:
         si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
         tlcfg = layer1_cfg
 
         tlcfg.sbxdir_path0 = si.outest_sbxdir
+
+        if nocleanup: si.nocleanup = True
     else: # 是子层
         tlcfg = lyrcfg_in
         tlcfg.sbxdir_path0 = '/sbxdir' if is_dir('/sbxdir') else si.outest_sbxdir
         # si =  # 不需要再加载si, 因为是fork来的
-
-
 
 
     if is_outest:
@@ -973,12 +971,7 @@ def main(lyrcfg_in):
     else: # 父进程
         skp_lyfk.i_am_pa()
 
-        if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 为了改写子进程uid_map, 此时我看到的proc必须rw
-            skp_lyfk.pa_recv(1, 5, BS.SetMeUidUser)
-            Path(f'/proc/{pid}/setgroups').write_text('deny\n')
-            Path(f'/proc/{pid}/uid_map').write_text(f'{si.uid} 0 1\n')
-            Path(f'/proc/{pid}/gid_map').write_text(f'{si.gid} 0 1\n')
-            skp_lyfk.pa_send(BS.SetYouUidUserDone)
+        # if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 已删除 map_as_user 的功能
         skp_lyfk.close()
 
         if is_outest:
@@ -1005,18 +998,12 @@ def main2(skp_lyfk):
 
     # 本层文件系统、挂载proc （维持 rw）， 变根
     build_fs()
-    # 若符合条件， proc 改 ro
-    if tlcfg.new_proc_dir_mnted and not tlcfg.sublayers :
-        mount(None  , '/proc', None, mntflag_proc|MS.REMOUNT|MS.RDONLY, 'hidepid=1')
 
     # Unshare User (非首层)
     if tlcfg.unshare_user and tlcfg.depth > 1 : # 第1层的若要做在之前就做了
         os.unshare(unshrflg(d(user=True)))
     # 变内部uid=1000 (user)
-    if tlcfg.uid_map_as_user: # NOTE 此时父进程看到的 proc 必须为 rw
-        skp_lyfk.chd_send(BS.SetMeUidUser)
-        skp_lyfk.chd_recv(1, 2, BS.SetYouUidUserDone)
-        log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
+    # if tlcfg.uid_map_as_user: # 已删除 map_as_user 功能
 
     # 关闭临时socket
     skp_lyfk.close()# NOTE 注意， 在创建任何 subp 之前 ， skp_lyfk(临时socket)必须已关闭
@@ -1048,7 +1035,7 @@ def main2(skp_lyfk):
 
     # 以subp启动user_shell / dev_shell
     if tlcfg.user_shell or tlcfg.dev_shell:
-        if tlcfg.user_shell: set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
+        if tlcfg.user_shell: set_3ge_fds_cloexec() # 沙箱启动时设置过，保险再来一次
         pid, skp_spfk = layer_run_subp(cmdvec=['/bin/bash'] ,
                         **( d(subp_name='user_shell') if tlcfg.user_shell else {}),
                         **( d(subp_name='dev_shell')  if tlcfg.dev_shell  else {}),
@@ -1056,26 +1043,28 @@ def main2(skp_lyfk):
         inprepare_children.append((pid, skp_spfk))
 
     # 以subp启动普通辅助app
-    set_important_fds_cloexec() # NOTE 设置 沙箱级重要fd 为CLOEXEC
+    set_3ge_fds_cloexec() # 沙箱启动时设置过，保险再来一次
+
+    if tlcfg.subprocs or tlcfg.is_mainlyr:
+        LG.userns_unpri = layer_create_unpri_userns() # NOTE  要在layer_booted之前
+
     for subpItem in (tlcfg.subprocs or [] ) :
         pid, skp_spfk = layer_run_subp (**subpItem)
         inprepare_children.append((pid, skp_spfk))
 
     #-------------------------------------------
 
-    # 向最外层发送“本层已boot”，
+    # 向最外层发送“本层已boot”， ( NOTE 要在 layer_create_unpri_userns 之后)
     wlog('layer_booted', me_proc_info=True,
          ready_proc_name=tlcfg.layer_name,
          cmdvec=Path(f'/proc/self/cmdline').read_text().strip('\x00').split('\x00') ,
          pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
          **(d(is_mainlyr=True) if tlcfg.is_mainlyr else {}),
          **(d(is_semitruCmpannLyr=True) if tlcfg.is_semitruCmpannLyr else {}),
+         **(d(userns_unpri=LG.userns_unpri) if LG.userns_unpri else {}),
     )
 
-
-    # 关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd)
-    if not tlcfg.unshare_pid:
-        close_important_fds()
+    # NOTE 本来这里应该关闭重要fd (防止本 中间层 退出前，subp有短暂机会入侵本进程的fd), 但因为userns隔离 (所有层进程都是uid=0, 且有hidepid=1） ，所以不需要
 
     # 放行那些等待住的subp (为了等 重要fd 关闭. pidns层则不怕subp访问/proc/1/fd 因为无法访问 )
     for pid, skp_spfk in inprepare_children:
@@ -1121,8 +1110,6 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         set_proc_dispname('subp')
         skp_spfk.i_am_chd()
 
-        if not keep_caps:
-            drop_caps()
 
         skp_spfk.chd_send(BS.IChdBorn)
         skp_spfk.chd_recv(1, 5, BS.YouChdGo)
@@ -1161,14 +1148,18 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         os.close(devnull)
         # NOTE 无法再 log 或 print NOTE
 
-        # === 去掉沙箱级别的fd  # NOTE 下面无法再 wlog
-        if not (subLayer or dev_shell):
-            close_important_fds()
-        # NOTE 无法再 wlog NOTE
+        set_3ge_fds_cloexec() # 启动时已做过，再做一次保险
 
         if not subLayer:
+            if not keep_caps:
+                close_3ge_fds(keep_fds=[LG.userns_unpri.usernsfd]) # 已经给它们cloexec=True， 这些再关闭一次更保险
+                os.setns(LG.userns_unpri.usernsfd, unshrflg(d(user=1)))
+                drop_caps()
+
             os.execvp(cmdvec[0], cmdvec)
-            raise_exit(f"exec()启动新程序 [ {cmdvec[0]} ] 失败", no_cleanup=True)
+            errmsg = f"exec()启动新程序 [ {cmdvec[0]} ] 失败"
+            # wlog('error', errmsg=errmsg) # fd 已关闭，无法wlog
+            raise_exit(errmsg, no_cleanup=True)
         else: # 是subLayer
             return 0, None
     else: # 原进程
@@ -1183,6 +1174,39 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         # l/v： 可变参 或 数组 来指定参数
         # p : 指定path
         # e : 指定环境变量，不继承父的环境。必须完整路径
+
+def layer_create_unpri_userns():
+    CHK(os.getpid()==1, '只有pid=1才应该调用这个')
+    pid, skp = fork(create_socketpair=True, loghead=f'{loghead} userns', proc_dispname='unpri pidfd')
+    if pid == 0: # 子进程
+        os.unshare(unshrflg(d(user=True)))
+        skp.chd_send(BS.SetMeUidUser)
+        skp.chd_recv(1, 2, BS.SetYouUidUserDone)
+        skp.close()
+        drop_caps()
+        wlog('layer_userns', me_proc_info=True,
+             ready_proc_name=f'{tlcfg.layer_name}_userns',
+             pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
+        )
+        os.execvp('sleep', ['sleep', 'infinity'])
+        raise_exit('exec sleep 未成功') # exec后不应该到这里
+    else: # 原进程
+        skp.pa_recv(1, 1, BS.SetMeUidUser)
+
+        Path(f'/proc/{pid}/setgroups').write_text('deny\n')
+        Path(f'/proc/{pid}/uid_map').write_text(f'{si.uid} 0 1\n')
+        Path(f'/proc/{pid}/gid_map').write_text(f'{si.gid} 0 1\n')
+        result = d()
+        result.pid = pid
+        result.pidfd = os.pidfd_open(pid)
+        result.usernsfd = os.open(f'/proc/{pid}/ns/user', os.O_RDONLY)
+        result.usernsino = os.stat(f'/proc/{pid}/ns/user').st_ino
+        # log(result)
+        set_fd_keep_on_exec(result.pidfd, False)
+        set_fd_keep_on_exec(result.usernsfd, False)
+
+        skp.pa_send(BS.SetYouUidUserDone)
+        return result
 
 def wait_for_startAfters(arr_startAfter):
     if not arr_startAfter: return
@@ -1437,6 +1461,7 @@ def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
         used_dest = set()
         for i in reversed(range(0, len(fsOpertns))):
             opItem = fsOpertns[i]
+            if opItem.op == 'remountro': continue
             if opItem.dest in used_dest:
                 log(f"debug:因dest重复(={opItem.dest})，移除{opItem}")
                 fsOpertns[i] = d(removed=True)
@@ -1597,8 +1622,9 @@ class OutsideServ():
 
 
         # 有没有新的外部连接
-        ready, _, _ = select.select([cls.skt_OServLsn], [], [], 0)
-        if ready:
+        ready, _, wrong = select.select([cls.skt_OServLsn], [], [cls.skt_OServLsn], 0)
+        if wrong: raise_exit('等待新的外部连接时发生未知错误')
+        elif ready:
             conn, client_addr = cls.skt_OServLsn.accept()
             cls.cnt_recvmsg += 1
             # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
@@ -1770,19 +1796,25 @@ class OutestProcsMonitor:
         seefrom = bItem.real_seefrom
         seeto   = bItem.real_seeto
         bridge_name = bItem.bridge_name
-        condition = [seefrom, seeto]
+        condition = [seefrom, seeto, seefrom+'_userns']
         if proc_name in condition:
             if set(condition).issubset(set(dict.keys( cls.procs_histseen ))):
                 log(f'创建桥 {bridge_name}')
-                seefrom_pid = cls.procs_histseen[seefrom].NSpid[0]
+                seefrom_pid         = cls.procs_histseen[seefrom].NSpid[0]
+                seefrom_userns_pid  = cls.procs_histseen[seefrom+'_userns'].NSpid[0]
                 seeto_pid   = cls.procs_histseen[seeto].NSpid[0]
-                pidfd_seefrom = os.pidfd_open(seefrom_pid)
+                pidfd_seefrom        = os.pidfd_open(seefrom_pid)
+                pidfd_seefrom_userns = os.pidfd_open(seefrom_userns_pid)
+                usernsfd = os.open(f'/proc/{seefrom_userns_pid}/ns/user', os.O_RDONLY)
                 pidfd_seeto   = os.pidfd_open(seeto_pid)
-                ns_seefrom = get_nstypes(f'/proc/{seefrom_pid}/ns')
+                ns_seefrom        = get_nstypes(f'/proc/{seefrom_pid}/ns')
+                ns_seefrom_userns = get_nstypes(f'/proc/{seefrom_userns_pid}/ns')
                 ns_seeto   = get_nstypes(f'/proc/{seeto_pid}/ns')
-                PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name )
+                PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name,
+                               close_fds=True,
+                               close_keep_fds=[si.file_fds.layerslog_a, pidfd_seefrom, pidfd_seefrom_userns, pidfd_seeto, usernsfd],
+                               set_fds_CLOEXEC=True )
                 if PID1 == 0: # 第一个子进程.因为之前创建layer1时unshare过，这里已经是与layer1同pidns
-                    set_important_fds_cloexec()
                     # TODO 判断其他ns种类，如果不同，也要setns过去
                     os.setns(pidfd_seefrom, unshrflg(d(pid=1)))
 
@@ -1799,30 +1831,35 @@ class OutestProcsMonitor:
 
                         start_tick=get_start_tick('/proc/self/stat')
                         ns = get_nstypes(f'/proc/self/ns') # 这还不是最终的，还要改
-                        os.setns(pidfd_seeto, unshrflg(d(mnt=1))) # 在这之后就不可以获得自己的ns或start_tick信息
-                        ns.mnt = ns_seeto.mnt
-                        os.setns(pidfd_seefrom, unshrflg(d(user=1))) # 在这之后无法setns
-                        ns.user = ns_seefrom.user
 
+                        ns.mnt = ns_seeto.mnt
+                        os.setns(pidfd_seeto, unshrflg(d(mnt=1))) # 在这之后就不可以获得自己的ns或start_tick信息
+
+                        ns.user = ns_seefrom_userns.user
                         wlog('subp_start',
                              ready_proc_name=bridge_name ,
                              self_see_pid=mypid,
                              start_tick=start_tick,
                              ns=ns,
                         )
+                        close_3ge_fds(keep_fds=[usernsfd])
+                        os.setns(usernsfd, unshrflg(d(user=1))) # 在这之后无法setns NOTE 在这之前应该关闭重要fd
 
-                        # log(os.listdir('/tmp/.X11-unix'))
+
                         drop_caps(no_textcheck_after_dropcap=True)
-                        log('execvp sleep infinity')
+                        # log('execvp sleep infinity')
                         os.execvp('sleep', ['sleep', 'infinity'])
-                        log_warn('exec sleep 未成功')
-                        os._exit(1)
+                        errmsg = f'桥exec未成功 {bItem}'
+                        # wlog('error', errmsg=errmsg) # fd已关闭，无法wlog('error')
+                        raise_exit(errmsg, no_cleanup=True)
                     # 第一个子进程
                     # log('第一个子进程退出')
                     os._exit(0)
                 # 原最外层进程
                 # log('最外层完成桥的创建')
                 os.close(pidfd_seefrom)
+                os.close(pidfd_seefrom_userns)
+                os.close(usernsfd)
                 os.close(pidfd_seeto)
 
     @classmethod
@@ -1955,8 +1992,10 @@ class PidnsleaderListener():
         cls.oChdSkt = socket.socket(fileno=si.oSkt_fds[tlcfg.layer_name].chd)
     @classmethod
     def readmsg_from_outest(cls):
-        ready, _, _ = select.select([cls.oChdSkt], [], [], 0)
-        if ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
+        ready, _, wrong = select.select([cls.oChdSkt], [], [cls.oChdSkt], 0)
+        if wrong: raise_exit('尝试读取最外层来的信息时发生未知错误')
+        elif ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
+
 
 def get_alive() -> list:
     if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
@@ -1970,12 +2009,21 @@ def get_wdgsee() -> dict:
     if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
     else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
 
-def fork(create_socketpair=False, loghead=None, proc_dispname=None):
+def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=None,
+         close_fds=False, close_keep_fds=[] ,
+         set_fds_CLOEXEC=False, CLOEXEC_keep_fds=[]
+         ):
     sktpair = TmpSocketPair() if create_socketpair else None
     pid = os.fork()
     CHK(pid >= 0, 'fork失败')
     if pid == 0 : # 子进程
         unreg_cleanup_func()
+        if close_fds: close_3ge_fds(keep_fds=close_keep_fds)
+        if set_fds_CLOEXEC: set_3ge_fds_cloexec(keep_fds=CLOEXEC_keep_fds)
+        if cut_stdin:
+            devnull = os.open('/dev/null', os.O_RDWR)
+            os.dup2(devnull, 0)
+            os.close(devnull)
         if loghead is not None: set_loghead(loghead)
         if proc_dispname is not None: set_proc_dispname(proc_dispname)
         if create_socketpair: sktpair.i_am_chd()
@@ -1986,7 +2034,7 @@ def fork(create_socketpair=False, loghead=None, proc_dispname=None):
 whoCleanupRegister = None
 def reg_cleanup_func(cleanup_func):
     global whoCleanupRegister
-    if not whoCleanupRegister is None: log_warn('已注册过清理函数') ; os._exit(1)
+    if not whoCleanupRegister is None: raise_exit('已注册过清理函数', no_cleanup=True)
     whoCleanupRegister = (os.getpid(), get_nstypes('/proc/self/ns').pid)
     atexit.register(cleanup_func)
 def unreg_cleanup_func():
@@ -2010,9 +2058,19 @@ def cleanup_outest():
     try_pass(lambda: OutestProcsMonitor.sbx_exit_broadcast())
 
     cleanup_startat = time.monotonic()
-    while exist_childtree() and time.monotonic() <= cleanup_startat+5: time.sleep(0.1)
+    while time.monotonic() <= cleanup_startat+5:
+        time.sleep(0.1)
+        if not exist_childtree() : break
+    else: log_warn('子进程超时未退出。沙箱管理进程先结束')
 
-    # return # 如果出错需要查看log ， 就启动这个return
+    for slkItem in cleanup_symlinks_to_rm:
+        if Path(slkItem).is_symlink() :
+            linkto = os.readlink(slkItem)
+            if linkto == si.outest_sbxdir or linkto.startswith(f'{si.outest_sbxdir}/'):
+                try_showerr(lambda: Path(slkItem).unlink() )
+
+    if si.nocleanup:
+        return
 
     # NOTE 不要对那些可能挂载的目录用递归删除!  # 要删除那种目录的话只能用 rmdir （只删空的目录）
     # 因为有挂载，递归删除可能会误删重要文件。危险！ # 例如:
@@ -2036,11 +2094,6 @@ def cleanup_outest():
     # try_showerr(lambda: os.rmdir(si.CG_SBX)) # 暂时无法删除
     try_pass(lambda: os.rmdir(si.sharedir_onhost))
 
-    for slkItem in cleanup_symlinks_to_rm:
-        if Path(slkItem).is_symlink() :
-            linkto = os.readlink(slkItem)
-            if linkto == si.outest_sbxdir or linkto.startswith(f'{si.outest_sbxdir}/'):
-                try_showerr(lambda: Path(slkItem).unlink() )
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
 def cleanup_pidnsleader():
@@ -2276,29 +2329,39 @@ def read_alltext_from_fd(fd:int) -> str:
 def read_all_from_fd_then_jsonloads(fd) -> list|dict :
     return d( json.loads( read_alltext_from_fd(fd) ) )
 
-def get_important_fds():
-    result = list(si.file_fds.values()) \
-            + list(si.subp_log_fds.values()) \
-            + [fd for fd_pair in dict.values(si.oSkt_fds) for fd in dict.values(fd_pair)]
+def get_all_3ge_fds() -> list:
+    soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+    result = []
+    for fd in range(3, soft_limit):
+        try:
+            fcntl.fcntl(fd, fcntl.F_GETFD)
+            result.append(fd)
+        except OSError as e:
+            if e.errno != errno.EBADF: raise
     return result
 
-def set_important_fds_cloexec():
-    fds_to_cloexec = get_important_fds()
-    for fd in os.listdir('/proc/self/fd') :
-        if int(fd) in fds_to_cloexec: set_fd_keep_on_exec(int(fd), False)
+def set_3ge_fds_cloexec(keep_fds=[] ):
+    for fd in get_all_3ge_fds() :
+        if fd in keep_fds:
+            continue
+        # log(f'设置{fd=}为CLOEXEC')
+        try: set_fd_keep_on_exec(fd, False)
+        except OSError as e:
+            # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
+            if e.errno == 9: pass; #  log_warn(f'尝试设置{fd=}为CLOEXEC但发现刚刚已被关闭')
+            else: raise
 
 
-def close_important_fds():
-    fds_to_close = get_important_fds()
-    # log(f'要关闭fd： {fds_to_close}')
-    for fd in os.listdir('/proc/self/fd') :
-        if int(fd) in fds_to_close:
-            try:
-                os.close(int(fd))
-            except OSError as e:
-                # 本可忽略 9 错误（ EBADF 错误表示可能已关闭 （Bad file descriptor），但现在不忽略
-                if e.errno != 9:  raise_exit(f'{fd=}已经被提前关闭过，与整体设计不符')
-                else: raise
+def close_3ge_fds(keep_fds=[] ):
+    for fd in get_all_3ge_fds() :
+        if fd in keep_fds:
+            continue
+        # log(f'关闭{fd=}')
+        try: os.close(fd)
+        except OSError as e:
+            # 9 错误 EBADF 错误表示可能已关闭 （Bad file descriptor）
+            if e.errno == 9: pass; # log_warn(f'尝试关闭{fd=}但发现刚刚已被关闭')
+            else: raise
 
 
 
@@ -2651,7 +2714,8 @@ def raise_exit(err_msg, no_cleanup=False):
     print_stack()
     print(loghead + err_msg, file=sys.stderr)
     wlog('error', errmsg=err_msg)
-    if not no_cleanup: sys.exit(1)
+    if not no_cleanup:
+        sys.exit(1)
     else: os._exit(1)
 
 def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
@@ -2661,22 +2725,24 @@ def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
 
 ASK_OPEN='''\
 #!/bin/bash
-
 tried_cmd="$0"
 input_arguments="$@"
 echo "有程序试图执行 $0 $input_arguments"
-
 if [[ ! -n "$input_arguments" ]]; then exit ; fi
-
-if [[ -n "$DISPLAY" ]]; then
-    gui_result_code=255 # GUI询问结果 (0=Yes, 1=No, 255=?)
-
+if [[ ! -n "$DISPLAY" ]]; then exit ; fi
+result_code=255
+if command -v kdialog &> /dev/null; then
+    kdialog --title "有程序试图执行命令" --yesno "有程序试图执行命令\n$tried_cmd\n\n传递参数如下。是否复制以下内容？\n\n$input_arguments"
+    result_code=$?
+elif command -v zenity &> /dev/null; then
     zenity --question --title="有程序试图执行命令" --text="有程序试图执行命令\n$tried_cmd\n\n传递参数如下。是否复制以下内容？\n\n$input_arguments"
-    gui_result_code=$?
-
-    if [[ $gui_result_code -eq 0 ]]; then
-        echo -n "$input_arguments" | xsel --clipboard --input
-    fi
+    result_code=$?
+else
+    echo "未安装 kdialog 或 zenity，无法显示对话框"
+    exit
+fi
+if [[ $result_code -eq 0 ]]; then
+    echo -n "$input_arguments" | xsel --clipboard --input
 fi
 '''
 
@@ -2718,6 +2784,7 @@ if __name__ == "__main__":
     while lyrcfg_to_use:
         tlcfg = None
         OG = None
+        LG = d()
         if isinstance(lyrcfg_to_use, dict):
             log(f'子层 {lyrcfg_to_use.layer_name}')
             set_proc_dispname(lyrcfg_to_use.layer_name)
