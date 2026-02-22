@@ -391,9 +391,11 @@ def gen_layer3(si, uc, dyncfg):
             d(op='robind', src=rslvy('/var/run/cups/cups.sock'), SDS=1) if uc.cups else None,
 
             *([
-            d(op='robind', dest='/dev', src='/dev'),
+            d(op='robind', src='/dev', SDS=1),
             d(op='tmpfs',dest='/dev/shm'),
-            d(op='robind', dest='/sys', src='/sys'),
+            d(op='robind',  src='/sys/class', SDS=1),
+            d(op='robind',  src='/sys/bus', SDS=1),
+            d(op='robind',  src='/sys/devices', SDS=1),
             ] if uc.see_real_hw else [] ),
             # TODO 1. 改用dyncfg  2. layer2里也加
 
@@ -407,7 +409,7 @@ def gen_layer3(si, uc, dyncfg):
 
             *dyncfg.mnts_gui,
 
-            d(op='rofile', dest=shutil.which("xdg-open"), destmode=0o555, content=ASK_OPEN ) if uc.ask_xdg_open else None,
+            d(op='rofile', dest=shutil.which("xdg-open"), destmode='555', content=ASK_OPEN ) if uc.ask_xdg_open else None,
             *[d(op='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
             d(op='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
@@ -1369,6 +1371,8 @@ def commit_fsOpertns(fsOpertns):
         mount(si.PTMP, si.PTMP, None, MS.BIND|MS.REC|MS.RDONLY, None)
         mount(None, si.PTMP, None, MS.REMOUNT|MS.BIND|MS.REC|MS.RDONLY, None)
         CHK( os.statvfs(si.PTMP).f_flag&MS.RDONLY, "si.PTMP未成功转换为ro")
+    if not Path(f'{tlcfg.sbxdir_path0}/temp').is_mount():
+        mount('tmpfs', f'{tlcfg.sbxdir_path0}/temp', 'tmpfs', mntflag_tmpfs, None)
 
     mkdirp(target_fs_path)
     if napath(target_fs_path) != '/':
@@ -1424,9 +1428,9 @@ def commit_fsOpertns(fsOpertns):
             with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path0}/temp', mode='w', delete=False) as f:
                 f.write(opItem.content)
                 mode = None ; optn = None
-                if RO :             mode = 0o444
+                if RO :             mode = '444'
                 if opItem.destmode : mode = opItem.destmode
-                if mode is not None : os.chmod(f.name, mode) ; optn = f'mode={mode:o}'
+                if mode is not None : os.chmod(f.name, int(mode,base=8)) ; optn = f'mode={mode}'
                 make_file_exist(real_dest)
                 mount(f.name, real_dest, None, MS.BIND|(MS.RDONLY if RO else 0), optn)
                 try_pass(lambda: mount(None,real_dest, None, MS.REMOUNT|MS.BIND|MS.RDONLY, optn) if RO else None )
@@ -1539,7 +1543,7 @@ def gen_fsOpertns(): # 把fs里面的 many_op 都转成 op ,并去重、排序
                 scriptpath=$(dirname "$script")
                 env APPDIR="$scriptpath/{opItem.dirname}" "$scriptpath"/{opItem.dirname}/AppRun "$@"
             '''
-            a( d(op='rofile', dest=f'/sbxdir/apps/run_{opItem.dirname}', destmode=0o555, content=start_sh_content) )
+            a( d(op='rofile', dest=f'/sbxdir/apps/run_{opItem.dirname}', destmode='555', content=start_sh_content) )
         elif many_op == 'squashfs':
             a( d(op='sqfs-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.dirname}') )
         # 下面是 op 而不是 many_op 。因为它们两个不应同时有，所以用同一if树
