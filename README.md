@@ -6,7 +6,6 @@ A Linux sandbox tool that allows unlimited nesting. (Comes with a default nestin
 
 Kind of an alternative to Firejail, Flatpak, and Bubblewrap.
 
-> Early-stage project — free to try and read the code. Note: runtime strings and code comments are currently not in English. English comming soon...
 
 ## Dependencies
 

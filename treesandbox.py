@@ -3162,12 +3162,27 @@ def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在�
 
 
 class EnhancedFalse:
+    def _error(self):
+        raise_exit("Program tries to stringlize or compare a non-defined member of a d() dict obj")
     def __str__(self):
-        raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
+        self._error()
     def __repr__(self):
-        raise Exception(loghead + "脚本试图字符串化一个不存在的成员")
+        self._error()
     def __bool__(self):
         return False
+    def __eq__(self, other):
+        return False
+    def __ne__(self, other):
+        return True
+    def __lt__(self, other):
+        self._error()
+    def __le__(self, other):
+        self._error()
+    def __gt__(self, other):
+        self._error()
+    def __ge__(self, other):
+        self._error()
+    __hash__ = None
 FALSE = EnhancedFalse()
 
 
