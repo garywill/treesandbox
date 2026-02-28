@@ -121,7 +121,7 @@ def userconfig(si):
     ] if uc.net.iface=='tun' else None
 
     # NOTE only when uc.net.iface=tun , set_nftables can be enabled
-    uc.set_nftables = True # Enable this, then nftables rules below will be applied to sandbox
+    # uc.set_nftables = True # Enable this, then nftables rules below will be applied to sandbox
     if uc.set_nftables == True : uc.nftables_rule = '''
         define DYNAMIC_BANIP_V4 = { 224.0.0.0/4 }
         # optional blacklisting 224.0.0.0/4, (multicast)
@@ -251,16 +251,16 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             # '--talk=org.kde.StatusNotifierWatcher', org.kde.StatusNotifierItem # TODO 这两个与系统托盘图标有关， realX时可以考虑允许
 
     # 处理 /etc/resolv.conf
-    CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "此Linux上，/var/run不是指向/run, 与现代发行版的习惯不同，暂时无法处理这种情况")
+    CHK( Path('/var/run').is_symlink() and rslvn('/var/run') == '/run', "/var/run is not linked to /run on your host, which is different to most Linux distros. We can't handle this for now")
     RSLVCF_is_link = True if Path('/etc/resolv.conf').is_symlink() else False
     RSLVCF_is_file = is_file('/etc/resolv.conf')
-    CHK(RSLVCF_is_link or RSLVCF_is_file, f'/etc/resolv.conf非链接非文件，暂时无法处理这种情况')
+    CHK(RSLVCF_is_link or RSLVCF_is_file, f"/etc/resolv.conf not symlink or file. We can't handle this")
     dns_use_custom = isinstance(uc.net.custom_dns, list)
     if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.net.custom_dns])
     have_iface = uc.net.iface in ['real', 'tun']
 
     if not have_iface: uc.net.iface = 'none'
-    if uc.set_nftables: CHK(uc.net.iface=='tun', '只有uc.net.iface=tun才能设置沙箱nftables')
+    if uc.set_nftables: CHK(uc.net.iface=='tun', 'Only when uc.net.iface=tun, set_nftables can be enabled')
 
     # link/file | custom/notcustom | ifacereal 共8种情况
     # TODO nscd if use real
@@ -272,7 +272,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             else             : mnts_dns = [d(op='empty-if-exist', dest='/etc/resolv.conf')] # 清空
     else: # /etc/resolv.conf是链接
         RSLVCF_target_dir = padir(rslvn('/etc/resolv.conf'))
-        CHK(RSLVCF_target_dir.startswith('/run/'), f'/etc/resolv.conf的指向{rslvn('/etc/resolv.conf')}不是在/run/xxx/内，暂时无法处理这种情况（现代发行版一般/etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx）')
+        CHK(RSLVCF_target_dir.startswith('/run/'), f"/etc/resolv.conf target is {rslvn('/etc/resolv.conf')}, which not in /run/xxx/ , we can't handle this. (Most distros /etc/resolv.conf -> /var/run/xxxx/ -> /run/xxxxx)")
         if dns_use_custom:
             mnts_dns = [d(op='rofile', content=RSLVCF_content, dest=rslvn('/etc/resolv.conf'))]
         else:
@@ -578,7 +578,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
                 os.dup2(devnull, i)
                 if devnull != i: os.close(devnull)
     fdnull = os.open("/dev/null", os.O_PATH)
-    CHK(fdnull>=3, 'fdnull 不满足 >=3')
+    CHK(fdnull>=3, 'fdnull must >=3')
     set_fd_keep_on_exec(fdnull, False)
     si.fdnull = fdnull
 
@@ -590,16 +590,15 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     HOME = f'/home/{username}' if uid>0 else '/root'
     hostname = open("/etc/hostname").read().strip()
     outest_pid = os.getpid()
-    log(f'PID = {outest_pid}')
     startscript_on_host = scriptfilepath
     CWD = scriptdirpath
     PTMP = f'/tmp/tsbxs-{uid}'
     hash_bootsbx_py = hash_blake2b(open(scriptfilepath, 'rb').read())
 
-    CHK(uid != 0 and gid != 0, f'目前本沙箱未支持以root运行')
+    CHK(uid != 0 and gid != 0, f'Currently our sandbox tool does not support running as root')
     if not os.getenv("XDG_RUNTIME_DIR"):
         os.environ.update({"XDG_RUNTIME_DIR": f'/run/user/{uid}'})
-        log_warn(f'检测到无环境变量 XDG_RUNTIME_DIR, 将其设置为 {os.getenv("XDG_RUNTIME_DIR")}')
+        log_warn(f'Environment variable XDG_RUNTIME_DIR not set, setting it to {os.getenv("XDG_RUNTIME_DIR")}')
 
 
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
@@ -613,18 +612,18 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     uc = userconfig(si) # NOTE
 
     # 沙箱名。不是子容器层名
-    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"沙箱名只能有字母、数字、杠、下划线。此名称不合法： {uc.sandbox_name}" )
+    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"Sandbox name can only contain letters, numbers, '-', '_' . This name is invalid: {uc.sandbox_name}" )
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
-    CHK( sandbox_name not in resv_words, f"沙箱名{sandbox_name}与保留字段{resv_words}重复")
-    CHK( len(sandbox_name) < 500, f'沙箱名太长： {sandbox_name}')
+    CHK( sandbox_name not in resv_words, f"Sandbox name {sandbox_name} conflicts with reserved word {resv_words}")
+    CHK( len(sandbox_name) < 500, f'Sandbox name too long: {sandbox_name}')
 
     apps = uc.apps
     if uc.reuseInstance: reuseInstance = uc.reuseInstance
     if uc.idleKeepSbxTime: idleKeepSbxTime = uc.idleKeepSbxTime
 
     if (sharedir_prefix := uc.sharedir_prefix):
-        CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix 必须以 /tmp/ 或 /dev/shm/ 开头")
+        CHK( sharedir_prefix.startswith('/tmp/') or sharedir_prefix.startswith('/dev/shm/'), "uc.sharedir_prefix must start with '/tmp/' or '/dev/shm/'")
         sharedir_onhost = f'{sharedir_prefix}{sandbox_name}'
         si.sharedir_onhost = sharedir_onhost
     else:
@@ -648,7 +647,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
     CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
     CG_SBX = f'{CG_TSBXS}/{instance_name}'
-    CHK( os.access(CG_HOSTUSER, os.W_OK), f"将 {CG_HOSTUSER} 目录 不存在 或 不可写")
+    CHK( os.access(CG_HOSTUSER, os.W_OK), f"The directory {CG_HOSTUSER} does not exist or is not writable")
 
     BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
     pythonbin = sys.executable
@@ -673,7 +672,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         real_seefrom = get_real_layername(bItem.seefrom)
         real_seeto   = get_real_layername(bItem.seeto)
         if not (real_seefrom and real_seeto):
-            log_warn(f'根据bridge条目，未找到 {bItem} 所指示的层，忽略条目')
+            log_warn(f'The layer(s) indicated by this bridge item {bItem} not found, ignoring bridge item.')
             continue
         bridge_name = f'bridge_<{real_seefrom.removeprefix('layer')}>_<{real_seeto.removeprefix('layer')}>'
         dcp_bItem = copy.deepcopy(bItem)
@@ -695,14 +694,14 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     # 计算本层深度
     cfg.depth = parent_cfg.depth + 1 if parent_cfg is not None else 1
 
-    CHK( cfg.layer_name, "存在某层没有设置layer_name")
-    CHK( re.match(r'^[a-zA-Z0-9_-]+$', cfg.layer_name), f"layer_name只能有字母、数字、杠、下划线。此名称不合法： {cfg.layer_name}" )
-    CHK( cfg.layer_name not in resv_words, f"层名{cfg.layer_name}与保留字段{resv_words}重复")
-    CHK( cfg.layer_name.startswith('layer'), f"层名{cfg.layer_name}非以'layer'开头")
-    CHK( cfg.layer_name not in used_layer_names, f"层名称 '{cfg.layer_name}' 有重复")
+    CHK( cfg.layer_name, "Some layer has no layer_name")
+    CHK( re.match(r'^[a-zA-Z0-9_-]+$', cfg.layer_name), f"layer_name can only contain letters, numbers, '-', '_' . This name is invalid: {cfg.layer_name}" )
+    CHK( cfg.layer_name not in resv_words, f"Layer name {cfg.layer_name} conflicts with reserved word {resv_words}")
+    CHK( cfg.layer_name.startswith('layer'), f"Layer name {cfg.layer_name} does not start with 'layer'")
+    CHK( cfg.layer_name not in used_layer_names, f"Layer name '{cfg.layer_name}' is duplicated")
     used_layer_names.append(cfg.layer_name)
 
-    CHK( len(cfg.layer_name.encode()) <= 15 , f"层名称 {cfg.layer_name} 大小超过15字节")
+    CHK( len(cfg.layer_name.encode()) <= 15 , f"Layer name {cfg.layer_name} exceeds 15 bytes")
 
     # 配置中的数组类型去除None成员
     if cfg.fs:
@@ -711,12 +710,12 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
         cfg.sublayers = [sublyr for sublyr in cfg.sublayers if sublyr is not None]
     if cfg.subprocs :
         cfg.subprocs = [cmd for cmd in cfg.subprocs if cmd is not None]
-        CHK( cfg.unshare_pid and cfg.unshare_mnt, f"层{cfg.layer_name}有 subprocs 但没有启用 unshare_pid+unshare_mnt")
+        CHK( cfg.unshare_pid and cfg.unshare_mnt, f"Layer {cfg.layer_name} has subprocs but  unshare_pid + unshare_mnt  not enabled")
         for subpItem in cfg.subprocs:
             if subpItem.start_after:
                 subpItem.start_after = [item for item in subpItem.start_after if item is not None]
     if cfg.subprocs and cfg.sublayers:
-        raise_exit("不能同时有 subprocs 和 sublayers")
+        raise_exit(f"Layer {cfg.layer_name} has both subprocs and sublayers. Not valid config")
     if cfg.envs_unset:
         cfg.envs_unset = [item for item in cfg.envs_unset if item is not None]
     if cfg.envset_grps:
@@ -724,18 +723,18 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
     if cfg.start_after:
         cfg.start_after = [item for item in cfg.start_after if item is not None]
     if cfg.uid_map_as_root :
-        CHK( cfg.unshare_user, f"层{cfg.layer_name}有 uid_map_as_* 但没有启用 unshare_user")
+        CHK( cfg.unshare_user, f"Layer {cfg.layer_name} has uid_map_as_* but unshare_user not enabled")
 
     if cfg.unshare_pid and not cfg.unshare_mnt:
-        raise_exit(f"层{cfg.layer_name}启用了unshare_pid但没有启用unshare_mnt")
+        raise_exit(f"Layer {cfg.layer_name} has unshare_pid enabled, but unshare_mnt not enabled")
     if (cfg.newrootfs or cfg.fs) and not cfg.unshare_mnt:
-        raise_exit(f"层{cfg.layer_name}设置了newrootfs或fs但没有启用unshare_mnt")
+        raise_exit(f"Layer {cfg.layer_name} sets newrootfs or fs, but unshare_mnt not enabled")
     if bool(cfg.fs) != bool(cfg.newrootfs):
-        raise_exit(f"层{cfg.layer_name}: fs和newrootfs若有则应该两个都有")
+        raise_exit(f"Layer {cfg.layer_name}: fs and newrootfs must both be present or both absent")
     if cfg.is_mainlyr :
-        CHK( cfg.unshare_pid , f'主层 {cfg.layer_name} 要求启用unshare_pid=True')
+        CHK( cfg.unshare_pid , f'Main layer {cfg.layer_name} requires unshare_pid=True')
     if cfg.is_semitruCmpannLyr :
-        CHK( cfg.unshare_pid , f'半信任辅助进程层 {cfg.layer_name} 要求启用unshare_pid=True')
+        CHK( cfg.unshare_pid , f'Semi-trusted companion process layer {cfg.layer_name} requires unshare_pid=True')
 
 
     # 检查fs条目
@@ -746,38 +745,38 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 
     if len(cfg.sublayers or []) > 0 and cfg.newrootfs:
         if not any( opItem.many_op == 'sbxdir-in-newrootfs' for opItem in cfg.fs):
-            raise_exit(f"层{cfg.layer_name}设置了变根，且要创建子容器，但其fs中无 many_op = 'sbxdir-in-newrootfs' 的条目 （此情况下要求有）")
+            raise_exit(f"Layer {cfg.layer_name} sets newrootfs and wants to create sublayers, but its fs has no entry with many_op = 'sbxdir-in-newrootfs' (required in this case)")
 
     # 对第1层检查
     if cfg.depth == 1:
-        CHK( cfg.uid_map_as_root,"第1层未启用 uid_map_as_root (要求启用)")
-        CHK( cfg.unshare_pid, "第1层未启用 unshare_pid(要求启用)")
-        CHK( len(cfg.sublayers) == 1, "第1层的sublayers数组的元素个数不为1 （要求为1）")
-        CHK( not cfg.newrootfs, "第1层不可以启用newrootfs")
+        CHK( cfg.uid_map_as_root,"First layer should enable uid_map_as_root")
+        CHK( cfg.unshare_pid, "First layer should enable unshare_pid")
+        CHK( len(cfg.sublayers) == 1, "First layer's sublayers array should but does not contain exactly 1 element")
+        CHK( not cfg.newrootfs, "First layer should not enable newrootfs")
 
     if cfg.depth > 1:
-        CHK(not cfg.unshare_user, f"层{cfg.layer_name}启用了unshare_user, 但除了第一层外，后面的层不需要这个，有 userns_unpri")
+        CHK(not cfg.unshare_user, f"Layer {cfg.layer_name} has unshare_user enabled, but layers after the first layer do not need this. We have userns_unpri")
 
     # 对第2层检查
     if cfg.depth == 2:
-        CHK( cfg.unshare_mnt, "第2层未启用 unshare_mnt （要求启用）")
-        CHK( cfg.newrootfs, "第2层未启用 newrootfs （要求启用）")
-        CHK( cfg.fs, "第2层未设置 fs （要求设置）")
+        CHK( cfg.unshare_mnt, "Second layer should enable unshare_mnt")
+        CHK( cfg.newrootfs, "Second layer should enable newrootfs")
+        CHK( cfg.fs, "Second layer should have fs")
         if not any( opItem.many_op == 'dup-rootfs' for opItem in cfg.fs):
-            raise_exit("第2层的fs中无 many_op='dup-rootfs' 的条目 （要求有）")
+            raise_exit("Second layer's fs has no entry with many_op='dup-rootfs'")
         if not any( opItem.many_op == 'mask-privacy' for opItem in cfg.fs):
-            raise_exit("第2层的fs中无 many_op='mask-privacy' 的条目 （要求有）")
+            raise_exit("Second layer's fs has no entry with many_op='mask-privacy'")
 
     if cfg.layer_name == 'layer3': # 对第3层检查
         if cfg.fs and any( opItem.many_op == 'dup-rootfs' for opItem in cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}不应该在fs中使用 many_op='dup-rootfs'，因为上一层是最后一层允许看到主机文件的层")
+            raise_exit(f"Layer {cfg.layer_name} should not use many_op='dup-rootfs' in fs, because its parent layer is the last layer allowed to see host files")
         if not (cfg.unshare_mnt and cfg.unshare_cgroup and cfg.unshare_ipc and cfg.unshare_time and cfg.unshare_uts and cfg.newrootfs and cfg.fs) :
-            raise_exit(f"层{cfg.layer_name}未把 [unshare_mnt, unshare_cgroup, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] 全启用 （要求全启用）")
+            raise_exit(f"Layer {cfg.layer_name} did not enable all of [unshare_mnt, unshare_cgroup, unshare_ipc, unshare_time, unshare_uts, newrootfs, fs] (all required)")
         if not any( opItem.many_op == 'container-rootfs' for opItem in cfg.fs):
-            raise_exit(f"层{cfg.layer_name}的fs中无 many_op='container-rootfs' 的条目 （要求有）")
+            raise_exit(f"Layer {cfg.layer_name}'s fs has no entry with many_op='container-rootfs'")
 
     if cfg.layer_name in ['layer2c', 'layer4c', 'layer4']:
-        CHK( cfg.unshare_pid, f"{cfg.layer_name}未启用unshare_pid=True（要求启用）")
+        CHK( cfg.unshare_pid, f"{cfg.layer_name} did not enable unshare_pid=True (required)")
 
     if parent_cfg is None:
         pa_tree = []
@@ -795,11 +794,9 @@ def recursive_lyrs_jobs(si, cfg, parent_cfg, used_layer_names): # cfg：要处�
 
     if cfg.user_shell or cfg.dev_shell:
         if cfg.sublayers:
-            log_warn(f"{cfg.layer_name} 设置了启动dev_shell或user_shell, 将忽略其子层")
+            log_warn(f"{cfg.layer_name} is set to start dev_shell or user_shell, its sublayers will be ignored")
             cfg.sublayers = []
-        if cfg.subprocs and [x for x in cfg.subprocs if x.subp_name == 'mainApp']:
-            log_warn(f"{cfg.layer_name} 设置了启动dev_shell或user_shell, 将忽略其mainApp")
-            cfg.subprocs = [x for x in cfg.subprocs if x.subp_name != 'mainApp']
+        # if cfg.subprocs and [x for x in cfg.subprocs if x.subp_name == 'mainApp']: # 现在mainApp是由最外层发来的了
 
     for sublyr_cfg in (cfg.sublayers or []):
         recursive_lyrs_jobs(si, sublyr_cfg, cfg, used_layer_names)
@@ -811,23 +808,23 @@ def recursive_valid_lyrs(si, layer1_cfg):
     si.specialLyrs = d()
     def _recr(cfg):
         nonlocal used_proc_names
-        CHK( cfg.layer_name not in used_proc_names, f"名称 {cfg.layer_name} 有重复")
+        CHK( cfg.layer_name not in used_proc_names, f"Name {cfg.layer_name} is duplicated")
         si.all_layers.append(cfg.layer_name)
         if cfg.unshare_pid:
             used_proc_names.append(cfg.layer_name)
         if cfg.is_mainlyr:
-            CHK(not si.specialLyrs.mainLyr, '有重复的mainLyr')
+            CHK(not si.specialLyrs.mainLyr, 'Duplicate mainLyr found')
             si.specialLyrs.mainLyr = cfg.layer_name
         if cfg.is_semitruCmpannLyr:
-            CHK(not si.specialLyrs.semitruCmpannLyr, '有重复的semitruCmpannLyr')
+            CHK(not si.specialLyrs.semitruCmpannLyr, 'Duplicate semitruCmpannLyr found')
             si.specialLyrs.semitruCmpannLyr = cfg.layer_name
         for subpItem in (cfg.subprocs or [] ):
-            CHK( subpItem.subp_name, f"子进程未设置 subp_name : {subpItem}")
-            CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name只能有字母、数字、杠、下划线。此名称不合法： {subpItem.subp_name}" )
-            CHK( len(subpItem.subp_name)<=30, f"subp_name 太长，超过30字符: {subpItem}")
-            CHK( subpItem.subp_name not in used_proc_names, f"名称 {subpItem.subp_name} 有重复")
+            CHK( subpItem.subp_name, f"Subprocess has no subp_name set : {subpItem}")
+            CHK( re.match(r'^[a-zA-Z0-9_-]+$', subpItem.subp_name), f"subp_name can only contain letters, numbers, '-', '_' . This name is invalid: {subpItem.subp_name}" )
+            CHK( len(subpItem.subp_name)<=30, f"subp_name too long, exceeds 30 characters: {subpItem}")
+            CHK( subpItem.subp_name not in used_proc_names, f"Name {subpItem.subp_name} is duplicated")
             for x in resv_name_prefix:
-                CHK( not subpItem.subp_name.startswith(x), f"子进程名称 {subpItem.subp_name} 以'{x}'开头不合法 {subpItem}")
+                CHK( not subpItem.subp_name.startswith(x), f"Subprocess name {subpItem.subp_name} starting with '{x}' is invalid {subpItem}")
             used_proc_names.append(subpItem.subp_name)
 
         if cfg.user_shell: used_proc_names.append('user_shell')
@@ -838,7 +835,7 @@ def recursive_valid_lyrs(si, layer1_cfg):
     wdg_target_procs = [x for x in used_proc_names if x != 'mainApp'] # 不看主app, 只看它所属层
     si.expected_alive_procs = wdg_target_procs + ['userns_unpri']
     si.expected_alive_layers = list(set(si.expected_alive_procs) & set(si.all_layers))
-    CHK(si.specialLyrs.mainLyr, '未找到mainLyr')
+    CHK(si.specialLyrs.mainLyr, 'mainLyr not found')
 
 def recr_rm_empty_lyr(si, cfg):
     def _recr(si, cfg):
@@ -861,7 +858,7 @@ def recr_rm_empty_lyr(si, cfg):
             if _recr(si, sublyr_cfg):
                 have_rmed = True
         if not (cfg.sublayers or cfg.subprocs or cfg.daemon_tasks or cfg.user_shell or cfg.dev_shell or cfg.is_mainlyr):
-            # print('设置' , cfg.layer_name, '为disable')
+            # print('setting' , cfg.layer_name, 'to disable')
             cfg.disabled = True
             have_rmed = True
         # print(have_rmed)
@@ -1044,18 +1041,18 @@ def main(lyrcfg_in):
 
     if is_outest: # 是顶层
         arg_parser = argparse.ArgumentParser( add_help=True, usage="%(prog)s [options] [<user_cli_argv> ...]",
-            description="Tree Sandbox 沙箱入口。根据 userconfig 函数里的配置 和 本命令CLI参数，进行沙箱操作。可以根据情况启动新沙箱实例，或复用正在运行的同名沙箱的实例"
+            description="Tree Sandbox script. Do sandbox operations based on userconfig() function and CLI args. Can start new sandbox instance or reuse a running same-name instance."
         )
         arg_parser.add_argument("--nocleanup", action='store_true',
-                                help="沙箱退出后，不删除临时记录沙箱信息的目录")
+                                help="Do not delete the temporary sandbox info dir after sandbox instance quit")
         arg_parser.add_argument("--reusefg", action='store_true',
-                                help="如果将复用正在运行的实例，则使用远程shell，让新启动的沙箱内app在本终端的前台交互。否则，只发送CLI命令给正在运行的实例，然后此次命令返回（仅在沙箱配置启用了 reuseInstance 时有效）。若将启动新沙箱实例，则本选项被忽略")
+                                help="If reusing a running instance, use remote shell, letting new-started app in foreground of current terminal. Otherwise, send the new-app command to running instance then we return. (Only effective if the sandbox has reuseInstance enabled in config). If starting a new sandbox instance, this option is ignored.")
         # arg_parser.add_argument("--enter", action='store_true',
                                 # help="自动找到一个正在运行的同名沙箱实例，获得其shell。若无正在运行的实例，报错退出")
         # arg_parser.add_argument("--enter-instance", metavar="<chosen_instance_name>",
                                 # help="找到指定的正在运行的具体实例，获得其shell。可以是非同名沙箱，但沙箱版本需要一致")
         arg_parser.add_argument("--app", metavar="<chosen_appname>", default="default",
-                                help="通过已配置的appname，指定要在沙箱中启动的命令。不指定或使用 '--app default' 效果相同")
+                                help="Using a configured appname, specify the command to start in sandbox. Not specifying or using '--app default' has the same effect.")
 
         (sbx_args, # 上面列出的参数
          user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
@@ -1080,27 +1077,27 @@ def main(lyrcfg_in):
         # si =  # 不需要再加载si, 因为是fork来的
 
     if is_outest:
-        if reusefg: CHK(si.reuseInstance, '因沙箱配置中reuseInstance未启用，不能使用reusefg')
-        log(f"当前PID: {si.outest_pid}  沙箱名：{si.sandbox_name}   启动的用户为：{si.username} {si.groupname}")
+        if reusefg: CHK(si.reuseInstance, '--reusefg cannot be used because reuseInstance is not enabled in the sandbox configuration')
+        log(f"PID: {si.outest_pid}  Sandbox name: {si.sandbox_name}   Run by: {si.username} {si.groupname}")
         if not chosen_appname or chosen_appname=='default': chosen_appItem = si.apps[0]
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == chosen_appname), None)
-        CHK( chosen_appItem and chosen_appItem.cmdvec, '未找到选择的app, 或选择的app没有正确的cmdvec')
+        CHK( chosen_appItem and chosen_appItem.cmdvec, 'Selected app not found, or selected app does not have a valid cmdvec')
         OG.chosen_appItem = chosen_appItem
         OG.user_cli_argv = user_cli_argv
         OG.mainApp_cmdvec = chosen_appItem.cmdvec + user_cli_argv
-        log(f'要在沙箱内运行的app的命令: {OG.mainApp_cmdvec}')
+        log(f'App command to run in sandbox: {OG.mainApp_cmdvec}')
 
         # 判断应该 新实例 还是 发送app命令到 正在运行的实例
         if si.reuseInstance:
             question_reuse = maybe_sendto_running_instance(reusefg)
-            CHK( question_reuse=='not_reusing', '这里本应该要么得到 not_reusing 的判断结果，要么判断函数应该结束进程')
+            CHK( question_reuse=='not_reusing', 'Here either the result should be "not_reusing", or the judgment function should have ended the process')
         log('---------------------')
         if si.newXId:
-            CHK( is_XId_available(si.newXId), f"准备要用的显示编号 {si.newXId=} 被占用")
-        log(f"创建新沙箱，信息目录：{si.outest_sbxdir}")
-        log(f"cgroup：{si.CG_SBX}")
-        log(f"沙箱看门狗要轮询的进程：{si.expected_alive_procs}")
-        if si.newXId: log(f'沙箱使用的X11/WAYLAND编号 : {si.newXId}')
+            CHK( is_XId_available(si.newXId), f"The display number {si.newXId=} to be used is occupied")
+        log(f"Creating new sandbox. Info dir: {si.outest_sbxdir}")
+        log(f"cgroup: {si.CG_SBX}")
+        log(f"Procs to be polled by watchdog: {si.expected_alive_procs}")
+        if si.newXId: log(f'X11/Wayland display number used in sandbox: {si.newXId}')
 
         reg_cleanup_func(cleanup_outest) # 顶层父进程注册清理函数
 
@@ -1116,7 +1113,7 @@ def main(lyrcfg_in):
 
     # 创建主机与沙箱之间的临时共享目录
     if is_outest and si.sharedir_onhost:
-        log(f'在 {si.sharedir_onhost} 创建主机与沙箱之间的临时共享目录')
+        log(f'Create temporary shared dir between host and sandbox at {si.sharedir_onhost}')
         mkdirp(si.sharedir_onhost)
 
     # ----------------------------
@@ -1137,12 +1134,11 @@ def main(lyrcfg_in):
         os.environ.pop(env_to_unset, None)
     for envg in (tlcfg.envset_grps or [] ) :
         if len(dict.keys(envg))>0:
-            log('更新环境变量' , envg)
+            log('Update env variables' , envg)
             os.environ.update(envg)
 
     wait_for_startAfters(tlcfg.start_after)
 
-    # log(f"执行unshare")
     # TODO 用个数组储存 pid time 是fork前做，其他main2做
     unshr_cfg = lyrcfg_to_unshrcfg(tlcfg)
     unshr_cfg.mnt=False # unshare排除mnt（后面再做）
@@ -1152,7 +1148,6 @@ def main(lyrcfg_in):
     set_ps1('afterUnshare')
 
     skp_lyfk = TmpSocketPair()
-    # log(f"即将fork")
     pid = os.fork()
     if pid == 0: # 子进程
         unreg_cleanup_func()
@@ -1183,7 +1178,7 @@ def main2(skp_lyfk):
         Path('/proc/self/setgroups').write_text('deny\n')
         Path('/proc/self/uid_map').write_text(f'0 {si.uid} 1\n')
         Path('/proc/self/gid_map').write_text(f'0 {si.gid} 1\n')
-        log(f"内部当前 uid={os.getuid()} gid={os.getgid()}")
+        log(f"Internal current uid={os.getuid()} gid={os.getgid()}")
 
     if tlcfg.unshare_mnt: # 现在才做，保证不影响父进程所看到的 /proc
         os.unshare(unshrflg(d(mnt=True)))
@@ -1232,7 +1227,7 @@ def main2(skp_lyfk):
 
     # 清理函数、信号处理注册 (要在sublayer之后)
     if tlcfg.unshare_pid:
-        CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+        CHK( os.getpid() == 1, f"{tlcfg.layer_name} detected its own PID is not 1 (should be 1)")
         reg_cleanup_func(cleanup_pidnsleader)
         register_sig_handlers(pidnsleader=True)
 
@@ -1333,11 +1328,11 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
                 ),
         )
 
-        if subLayer:    startTip = f'启动子层 {subLayer}'
-        elif dev_shell: startTip = '启动 dev_shell'
-        elif user_shell:startTip = '启动 user_shell'
-        elif keep_caps: startTip = f'启动子进程（带权限） {subp_name}'
-        else:           startTip = f'启动子进程 {subp_name}'
+        if subLayer:    startTip = f'Starting sublayer {subLayer}'
+        elif dev_shell: startTip = 'Starting dev_shell'
+        elif user_shell:startTip = 'Starting user_shell'
+        elif keep_caps: startTip = f'Starting subprocess (with caps) {subp_name}'
+        else:           startTip = f'Starting subprocess {subp_name}'
         if cmdvec: log(f'{startTip} : ', cmdvec)
 
         if workdir: os.chdir(workdir)
@@ -1363,7 +1358,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
                 drop_caps()
 
             execvp(cmdvec[0], cmdvec)
-            errmsg = f"exec()启动新程序 [ {cmdvec[0]} ] 失败"
+            errmsg = f"exec() starting new program [ {cmdvec[0]} ] failed"
             # wlog('error', errmsg=errmsg) # fd 已关闭，无法wlog
             raise_exit(errmsg, no_cleanup=True)
         else: # 是subLayer
@@ -1383,8 +1378,8 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
     # NOTE 不要调用os.exec*， 用自己的安全的execvp()
 
 def execvp(*args, **kwargs):
-    CHK(not os.path.lexists('/boot') and not os.path.lexists('/srv'), 'exec前发现存在/boot或/srv, 文件系统可能未隔离')
-    CHK(is_dir_inaccessible('/zrootfs'), 'exec前发现/zrootfs可访问，文件系统未隔离好' )
+    CHK(not os.path.lexists('/boot') and not os.path.lexists('/srv'), 'Before exec, found /boot or /srv. Filesystem might not be protected')
+    CHK(is_dir_inaccessible('/zrootfs'), 'Before exec, found /zrootfs accessible. Filesystem not protected' )
     os.execvp(*args, **kwargs)
 
 def is_dir_inaccessible(path):
@@ -1421,12 +1416,12 @@ def create_netns_tun( pasta_custom_args=[] ):
             *pasta_custom_args,
             si.pythonbin, '-IBS', '-c', PYCODE
         ] )
-        warn_exit("exec成pasta失败")
+        warn_exit("exec to be pasta failed")
     else: # 原进程
         fd_fifo = os.open(f'/{tlcfg.sbxdir_path1}/temp/netns_proc_info.fifo', os.O_RDONLY|os.O_NONBLOCK)
         ready, _, wrong = select.select([fd_fifo], [], [fd_fifo], 2)
-        if wrong: raise_exit('等待netns进程传来进程信息过程中发生未知错误')
-        elif not ready: raise_exit('等待netns进程传来进程信息超时')
+        if wrong: raise_exit('Unknown error while waiting for process info from netns process')
+        elif not ready: raise_exit('Timeout while waiting for process info from netns process')
         netns_proc_info = d( json.loads( os.read(fd_fifo, 4096).decode() ) )
         os.close(fd_fifo)
         Path(f'/{tlcfg.sbxdir_path1}/temp/netns_proc_info.fifo').unlink()
@@ -1440,7 +1435,7 @@ def create_netns_tun( pasta_custom_args=[] ):
                 pid_netns = x ;
                 ns_netns_proc = ns_x
                 break
-        else: raise_exit('未找到符合的netns进程')
+        else: raise_exit('No matching netns process found')
         pidfd = os.pidfd_open(pid_netns)
         result = D(
             pid = pid_netns,
@@ -1477,7 +1472,7 @@ def create_userns_unpri():
              pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
         )
         execvp('sleep', ['sleep', 'infinity'])
-        raise_exit('exec sleep 未成功') # exec后不应该到这里
+        raise_exit('exec sleep failed') # exec后不应该到这里
     else: # 原进程
         skp.pa_recv(1, 1, BS.SetMeUidUser)
 
@@ -1496,7 +1491,7 @@ def create_userns_unpri():
         skp.pa_send(BS.SetYouUidUserDone)
         return result
 def get_userns_unpri(): # userns_unpri 是由layer2建立的，outest/layer1F 可能需要从/proc中获取其userns作为fd
-    CHK( OutestProcsMonitor.I_AM_OUTEST or (tlcfg.depth==1 and os.getpid()==1), "只有outest或layer1可以调用这个")
+    CHK( OutestProcsMonitor.I_AM_OUTEST or (tlcfg.depth==1 and os.getpid()==1), "Only outest or layer1 can call this")
     p_userns_unpri = get_procs_seen()['userns_unpri']
     if OutestProcsMonitor.I_AM_OUTEST:      pid = p_userns_unpri.NSpid[0]
     elif tlcfg.depth==1 and os.getpid()==1: pid = p_userns_unpri.NSpid[1]
@@ -1508,7 +1503,7 @@ def get_userns_unpri(): # userns_unpri 是由layer2建立的，outest/layer1F �
         usernsino = os.stat(f'/proc/{pid}/ns/user').st_ino,
     )
     inode2 = os.stat(f'/proc/{pid}').st_ino
-    CHK(inode1==inode2, 'get_userns_unpri() 过程中，user_unpri进程的inode发生了改变')
+    CHK(inode1==inode2, 'The inode of the user_unpri process changed during get_userns_unpri()')
     return result
 
 
@@ -1518,7 +1513,7 @@ def wait_for_startAfters(arr_startAfter):
         tt = time.monotonic()
         if wait_task.waittype == 'socket-listened':
             while not is_unix_socket_listened(wait_task.path):
-                CHK(time.monotonic() <= tt+10, f'等待时间过长，报出错误 （ {wait_task} ）')
+                CHK(time.monotonic() <= tt+10, f'Waited too long, reporting error ( {wait_task} )')
                 time.sleep(0.1)
 
 
@@ -1539,7 +1534,7 @@ def build_fs(cfg):
     # 在build_fs完了之后挂载/proc, 与fsOpertns那边的代码解耦
     if cfg.unshare_pid or cfg.newrootfs:
         new_proc_path = napath(cfg.newrootfs_path+'/proc')
-        # log(f'挂载proc到 {new_proc_path}')
+        # log(f'Mounting proc to {new_proc_path}')
         mkdirp(new_proc_path)
         mount('proc', new_proc_path, 'proc', mntflag_proc, 'hidepid=1')
         cfg.new_proc_dir_mnted = True
@@ -1548,21 +1543,21 @@ def build_fs(cfg):
     # 执行变根 (chroot)
     if cfg.newrootfs:
         mkdirp(f'{cfg.newrootfs_path}/oldroot')
-        # log(f'准备变根到 {cfg.newrootfs_path}')
+        # log(f'Going to pivot root to {cfg.newrootfs_path}')
         pivot_root(cfg.newrootfs_path, f'{cfg.newrootfs_path}/oldroot')
         os.chdir('/')
         umount('/oldroot', MNT.DETACH)
         os.rmdir('/oldroot') # 必须为空目录才能删除，这也保证已经缷载，未缷载则报错退出
         os.chmod('/', 0o555)
         rmt_ro('/', mntflag_newrootfs)
-        # log(f'本层文件系统就绪 {os.listdir('/')}')
+        # log(f'This layer filesystem ready {os.listdir('/')}')
     del cfg.newrootfs_path
     del cfg.sbxdir_path0
 
 
 def commit_fsOpertns(cfg, fsOpertns):
     target_fs_path = cfg.newrootfs_path
-    # log(f'准备实际建立(挂载、创建)本层的文件系统，以此作根： {target_fs_path}')
+    # log(f'Going to build (mount/create) this layer filesystem, will use this as root: {target_fs_path}')
     remountPlans = []
     def z(rmtItem):
         remountPlans.append(rmtItem)
@@ -1570,7 +1565,7 @@ def commit_fsOpertns(cfg, fsOpertns):
     if target_fs_path.startswith(si.PTMP):
         mount(si.PTMP, si.PTMP, None, mntflag_binddir|MS.RDONLY, None)
         rmt_ro(si.PTMP, mntflag_binddir)
-        CHK( os.statvfs(si.PTMP).f_flag&MS.RDONLY, "si.PTMP未成功转换为ro")
+        CHK( os.statvfs(si.PTMP).f_flag&MS.RDONLY, "PTMP failed to made ro")
     if not Path(f'{cfg.sbxdir_path0}/temp').is_mount():
         mount('tmpfs', f'{cfg.sbxdir_path0}/temp', 'tmpfs', mntflag_tmpfs, None)
 
@@ -1580,7 +1575,7 @@ def commit_fsOpertns(cfg, fsOpertns):
         mount(None, target_fs_path, None, MS.REC | MS.SLAVE, None)
         # # 用了slave它还是private,不知原因
     os.chdir(target_fs_path)
-    CHK( Path(target_fs_path).is_mount() , f"{target_fs_path} 不是挂载点")
+    CHK( Path(target_fs_path).is_mount() , f"{target_fs_path} is not a mount point")
     mkdirp(f'{target_fs_path}/proc') # proc不在这里做，预留个目录
 
     for opItem in fsOpertns:
@@ -1589,7 +1584,7 @@ def commit_fsOpertns(cfg, fsOpertns):
         dest = opItem.dest
         real_dest = napath(f'{target_fs_path}/{dest}')
         if op in ['same', 'rosame', 'bind', 'robind'] : # TODO bindfs 它才可以设置destmode
-            CHK( os.path.lexists(src) , f"来源{src}不存在")
+            CHK( os.path.lexists(src) , f"Source {src} does not exist")
             if op in ['bind', 'robind'] :
                 src = rslvy(src)
             RO = True if op in ['rosame', 'robind'] else False
@@ -1608,8 +1603,7 @@ def commit_fsOpertns(cfg, fsOpertns):
             elif is_socket(src): # 已知socket不能remount成ro
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
-            else:
-                raise_exit(f"原路径{src}所属文件类型暂未实现处理方式")
+            else: raise_exit(f"Type of source {src} is not yet supported")
         elif op in ['tmpfs', 'rotmpfs']:
             RO = True if op == 'rotmpfs' else False
             mkdirp(real_dest)
@@ -1641,7 +1635,7 @@ def commit_fsOpertns(cfg, fsOpertns):
             if not os.path.lexists(real_dest): continue
             optn='mode=0000'
             if Path(real_dest).is_symlink(): # 软链 (一定要把 symlink 放在最先判断)
-                raise_exit(f"要保证为空的路径{real_dest}所属文件类型为symlink，暂未实现处理方式")
+                raise_exit(f"Path {real_dest} to be emptied is a symlink, handling not yet implemented")
             elif is_dir(real_dest): # 文件夹
                 mount('tmpfs', real_dest, 'tmpfs', MS.RDONLY|MS.NODEV|MS.NOEXEC|MS.NOSUID, optn)
             elif is_dev(real_dest): # 设备文件
@@ -1651,7 +1645,7 @@ def commit_fsOpertns(cfg, fsOpertns):
                 mount(f'{cfg.sbxdir_path0}/empty', real_dest,  None, MS.BIND|MS.RDONLY, optn)
                 try_pass(lambda: rmt_ro(real_dest, mntflag_binddir, optn) )
         elif op == 'sbxdir-in-newrootfs':
-            CHK(dest == '/sbxdir', "sbxdir-in-newrootfs的dest必须为/sbxdir")
+            CHK(dest == '/sbxdir', "dest for sbxdir-in-newrootfs must be /sbxdir")
             make_mnt_fill_sbxdir(si,  cfg, call_at_buildfs=True)
         elif op == 'devpts':
             mkdirp(real_dest)
@@ -1667,7 +1661,7 @@ def commit_fsOpertns(cfg, fsOpertns):
         elif op == 'final-rmt-ro':
             z(d(dirpath=real_dest, flag=opItem.flag or 0))
         else:
-            raise_exit(f"无法识别的fsOp条目 {opItem}")
+            raise_exit(f"Unrecognized fsOp item {opItem}")
 
     return remountPlans
 
@@ -1683,8 +1677,8 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
         if many_op == 'dup-rootfs': # 把前一个rootfs复制到子层。包含dev
             destbase = opItem.destbase or '/'
             srcbase = opItem.srcbase or '/'
-            CHK( destbase in ['/', '/zrootfs'], "dup-rootfs要求destbase必须为'/'或'/zrootfs'")
-            CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs要求srcbase 必须为'/'或'/zrootfs'")
+            CHK( destbase in ['/', '/zrootfs'], "dup-rootfs requires destbase to be '/' or '/zrootfs'")
+            CHK( srcbase in ['/', '/zrootfs'],  "dup-rootfs requires srcbase to be '/' or '/zrootfs'")
             if destbase != '/':
                 a( d( op='rotmpfs', dest=destbase , flag=mntflag_newrootfs) )
             for x in os.listdir(srcbase):
@@ -1728,14 +1722,14 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
             a( d( op='symlink', dest='/var/lock', linkto='/run/lock' ) )
         elif many_op == 'mask-privacy':
             destbase = opItem.destbase
-            CHK( destbase in ['/', '/zrootfs'], "mask-privacy要求destbase必须为'/'或'/zrootfs'")
+            CHK( destbase in ['/', '/zrootfs'], "mask-privacy requires destbase to be '/' or '/zrootfs'")
             path_maskfile = f'{si.HOME}/.config/treesandbox/paths_never_access.txt'
             maskfile = Path(path_maskfile)
             paths_to_mask = maskfile.read_text().splitlines() if maskfile.exists() else []
             paths_to_mask = [path.strip() for path in paths_to_mask if path.strip()]
-            log(f'从{path_maskfile}读出{len(paths_to_mask)}个路径要屏蔽')
+            log(f'Need to mask {len(paths_to_mask)} paths, from {path_maskfile}')
             for path in paths_to_mask:
-                CHK( path.startswith('/'), "paths_never_access.txt中有不是以'/'的条目")
+                CHK( path.startswith('/'), "Entry in paths_never_access.txt does not start with '/'")
                 path = napath(path)
                 if os.path.lexists(path):
                     a( d( op='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
@@ -1753,14 +1747,14 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
         elif op:
             a( opItem )
         else:
-            raise_exit(f"无法识别的fs条目 {opItem}")
+            raise_exit(f"Unrecognized fs item {opItem}")
 
     for i, opItem in enumerate(fsOpertns):
         if opItem.SDS:
             if   opItem.src and not opItem.dest: opItem.dest = opItem.src
             elif opItem.dest and not opItem.src: opItem.src = opItem.dest
-            elif not opItem.src and not opItem.dest:        raise_exit(f"{opItem} 既无 src 也无 dest")
-            elif napath(opItem.src) != napath(opItem.dest): raise_exit(f"{opItem}设置了SDS，但src与dest不一致")
+            elif not opItem.src and not opItem.dest:        raise_exit(f"{opItem} has neither src nor dest")
+            elif napath(opItem.src) != napath(opItem.dest): raise_exit(f"{opItem} has SDS set, but src and dest are inconsistent")
             del opItem.SDS
         dcp_pItem = copy.deepcopy(opItem)
         dcp_pItem = d({'op': dict.pop(dcp_pItem, 'op'), **dcp_pItem})
@@ -1773,7 +1767,7 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
             opItem = fsOpertns[i]
             if opItem.op in ['rmt-ro', 'final-rmt-ro']: continue
             if opItem.dest in used_dest:
-                log(f"debug:因dest重复(={opItem.dest})，移除{opItem}")
+                log(f"debug: due to duplicate dest (={opItem.dest}), removing {opItem}")
                 fsOpertns[i] = d(removed=True)
             used_dest.add(opItem.dest)
     # TODO 分为 普通、remount、overlay 几个组来去重
@@ -1800,7 +1794,7 @@ def rmt_ro(path, flag=0, optn=''):
 
 
 def maybe_sendto_running_instance(reusefg):
-    log('检查有无正在运行的同名沙箱')
+    log('Looking for running same-name instance...')
     MATCH_SI_K = ["hash_bootsbx_py", "hostname", "uid", "gid", "username", "groupname", "PTMP", "pythonbin",  ]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
@@ -1823,7 +1817,7 @@ def maybe_sendto_running_instance(reusefg):
                 break
             time.sleep(0.1)
         else: # 那个实例2s都没有设置socket文件
-            log_warn(f"忽略一个可能异常的旧实例 {dirname}")
+            log_warn(f"Ignoring a possibly abnormal old instance {dirname}")
             continue
 
         # 再检查一次 是否无 xxx_exit 退出标记
@@ -1839,7 +1833,7 @@ def maybe_sendto_running_instance(reusefg):
             except ConnectionRefusedError:
                 time.sleep(0.05)
         else:
-            log(f"忽略一个可能异常的旧实例(OServ.socket无响应): {dirname}")
+            log(f"Ignoring a possibly abnormal old instance (OServ.socket unresponsive): {dirname}")
             continue
 
 
@@ -1850,7 +1844,7 @@ def maybe_sendto_running_instance(reusefg):
         if sock_estb : sock_estb.close()
         return "not_reusing"
 
-    log(f'找到实例 {chosen_instance}, 尝试向该实例发送app命令 ')
+    log(f'Found instance {chosen_instance}, attempting to send app command to it ')
     msgObj = d()
     msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
     msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
@@ -1864,44 +1858,44 @@ def maybe_sendto_running_instance(reusefg):
     try:
         sock_estb.send( json.dumps(msgObj).encode() )
     except Exception as err:
-        warn_exit(f'错误：向找到的实例发送消息失败 {err}')
+        warn_exit(f'Error: Failed to send message to found instance {err}')
 
     ready, _, wrong = select.select([sock_estb], [], [sock_estb], 3)  # 阻塞检查
     if wrong:
-        warn_exit(f'等待回复时出错，可能超时或未知错误')
+        warn_exit(f'Error while waiting for reply, possibly timeout or unknown error')
     elif not ready:
-        warn_exit(f'未收到正在运行的实例的成功回复')
+        warn_exit(f'Did not receive a successful reply from the running instance')
     elif ready:
         try: data = sock_estb.recv(300_000)
-        except Exception as err: warn_exit(f'读取socket收到的数据时出错:{err}')
+        except Exception as err: warn_exit(f'Error receiving data from socket:{err}')
         finally: sock_estb.close()
         if data:
             try: msgObj = d( json.loads( data.decode() ) )
-            except Exception as err: warn_exit(f'无法正确解析收到的消息:{err}')
-            if msgObj.message: log(f'回复中的附加消息：{msgObj.message}')
+            except Exception as err: warn_exit(f'Cannot parse received message correctly:{err}')
+            if msgObj.message: log(f'Additional message in reply: {msgObj.message}')
             if msgObj.reuseSucceeded:
-                if not reusefg: log('成功发送app命令给该实例')
+                if not reusefg: log('Successfully sent app command to the instance')
                 else: # reusefg==True
                     shareShellSubpName = msgObj.message
                     if not shareShellSubpName.startswith('shareshell_'):
-                        warn_exit('未收到shareshell_进程名')
+                        warn_exit('Did not receive shareshell_ process name')
                     linkfile = f'{si.PTMP}/{chosen_instance}/into.{shareShellSubpName}.shellsocket.link'
                     t0 = time.monotonic()
                     while time.monotonic() <= t0 + 2:
                         if os.path.exists(linkfile) : break
-                    else: warn_exit(f'长时间未等到 {linkfile} 目标')
+                    else: warn_exit(f'Timeout waiting for target of link file {linkfile}')
                     print('...\n' * os.get_terminal_size().lines)
                     try: os.execvp('dtach', ['dtach', '-a', os.readlink(linkfile) ] ) # NOTE 不能用Path来解析，可能因为跨root
                     except Exception as err: warn_exit(err)
                 sys.exit(0)
             else:
-                log_warn(f'该正在运行的实例未回复成功')
+                log_warn(f'Reply of running instance was not success')
                 if msgObj.youStartNewInstance:
-                    log('该正在运行的实例返回的结果表示应该我们现在创建新实例来运行app')
+                    log('Reply of the running instance indicates we should create new instance to run app')
                     return "not_reusing"
                 sys.exit(1)
-        else: warn_exit(f'收到空回复')
-    else: raise_exit('未知错误，未预料的逻辑分支')
+        else: warn_exit(f'Received empty reply')
+    else: raise_exit('Unknown error, unexpected logic branch')
 
 class OutsideServ():
     conns = []
@@ -1918,50 +1912,50 @@ class OutsideServ():
             connItem = cls.conns[i]
             ready, _, wrong = select.select([connItem.skt_conn], [], [connItem.skt_conn], 0)  # 非阻塞检查
             if wrong:
-                log_warn('OutsideServ的一个连接出现异常')
+                log_warn('An OutsideServ connection encountered an error')
                 cls.close_conn(connItem)
                 continue
             elif ready:
                 try: data = connItem.skt_conn.recv(300_000)
                 except Exception as err:
-                    log_warn(f'读取socket收到的数据时出错:{err}')
+                    log_warn(f'Error reading data received from socket:{err}')
                     cls.close_conn(connItem)
 
                 if data:
                     connItem.last_tick = time.monotonic()
-                    # log(f"收到外部消息: {data!r}")
+                    # log(f"Received external message: {data!r}")
                     try: cls.onDataRecved(data, connItem )
                     except Exception as err:
-                        log_warn(f'处理收到的消息过程中出错:{err}')
+                        log_warn(f'Error processing received message:{err}')
                         cls.close_conn(connItem)
                 else:
-                    # log("外部连接已断开（recv 返回空）") # 发完消息正常断开
+                    # log("External connection closed (recv returned empty)") # 发完消息正常断开
                     cls.close_conn(connItem)
             else: # 无消息
                 if connItem.last_tick + 60 < time.monotonic():
-                    log_warn("外部连接超时（连续无消息），关闭")
+                    log_warn("External connection timed out (no messages), closing")
                     cls.close_conn(connItem)
 
 
         # 有没有新的外部连接
         ready, _, wrong = select.select([cls.skt_OServLsn], [], [cls.skt_OServLsn], 0)
-        if wrong: raise_exit('等待新的外部连接时发生未知错误')
+        if wrong: raise_exit('Unknown error while waiting for new external connections')
         elif ready:
             conn, client_addr = cls.skt_OServLsn.accept()
             cls.cnt_recvmsg += 1
-            # log(f'新的外部连接{cls.cnt_recvmsg}', conn)
+            # log(f'New external connection {cls.cnt_recvmsg}', conn)
             cls.conns.append( d(skt_conn=conn, last_tick=time.monotonic() , index=cls.cnt_recvmsg) )
     @classmethod
     def onDataRecved(cls, data, connItem):
         try: msgObj = d( json.loads( data.decode() ) )
         except Exception as err:
-            errmsg = f'无法正确解析收到的消息:{err}'
+            errmsg = f'Cannot parse received message correctly:{err}'
             log_warn(f'{errmsg}')
             cls.response_close(connItem, message=errmsg)
             return False
         for k,v in dict.items(msgObj.si_should_match or {}):
             if not eq_ignore_order(si[k], v):
-                errmsg = f'si[{k}]不一致。\n正在运行的沙箱的值：{si[k]}\n消息中的值：{v}\n（如果修改过沙箱配置，可能需要先中止正在运行的沙箱）'
+                errmsg = f'si[{k}] inconsistent.\nValue in running sandbox: {si[k]}\nValue in message: {v}\n(If you modified the sandbox configuration, you may need to terminate the running sandbox first)'
                 log_warn(f'{errmsg}')
                 cls.response_close(connItem, message=errmsg)
                 return False
@@ -1991,7 +1985,7 @@ class OutsideServ():
             connItem.skt_conn.send( json.dumps(responseObj).encode() )
             return True
         except Exception as err:
-            log_warn(f'向外部连接回复失败 {err}')
+            log_warn(f'Failed to reply to external connection {err}')
             return False
         finally:
             cls.close_conn(connItem)
@@ -2000,7 +1994,7 @@ class OutsideServ():
     def close_conn(cls, connItem):
         connItem.skt_conn.close()
         try: cls.conns.remove(connItem)
-        except Exception as err: log_warn(f'关闭外部来的连接时发生错误（可能已被关闭过）: {err}')
+        except Exception as err: log_warn(f'Error while closing external connection (might already be closed): {err}')
 
 # 「self_see_pid, start_tick, pidns(inode) = 必备认证3要素」 。仅那些能从主机读出ns目录的可以认证
 class OutestProcsMonitor:
@@ -2025,7 +2019,7 @@ class OutestProcsMonitor:
         OutsideServ.init()
     @classmethod
     def get_alive_new_sshot_from_cg(cls) -> list:
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         ps_sshot = []
         for pid in Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines():
             if ( p_full_info := get_pinfo_by_pidpath(f'/proc/{pid}') ):
@@ -2033,7 +2027,7 @@ class OutestProcsMonitor:
         return ps_sshot
     @classmethod
     def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         alive_new_sshot = cls.get_alive_new_sshot_from_cg()
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
         cls.procs_alive = alive_new_sshot # 写cls内部
@@ -2066,37 +2060,37 @@ class OutestProcsMonitor:
         )
     @classmethod
     def sbx_exit_broadcast(cls):
-        CHK( cls.I_AM_OUTEST, "在无I_AM_OUTEST的情况下调用了sbx_exit_broadcast()", 'warn') # 可能会在初始化之前被调用
+        CHK( cls.I_AM_OUTEST, "Called sbx_exit_broadcast() without I_AM_OUTEST set", 'warn') # 可能会在初始化之前被调用
         for lyrname in si.expected_alive_layers:
             cls.sendmsg_to_lyr(lyrname, d(action='sbx_exit'), loose=True)
     @classmethod
     def sendmsg_to_lyr(cls, lyrname, msgobj, loose=False):
-        CHK( cls.I_AM_OUTEST, "在无I_AM_OUTEST的情况下调用了sendmsg_to_lyr()", 'warn' if loose else 'raise_exit')
+        CHK( cls.I_AM_OUTEST, "Called sendmsg_to_lyr() without I_AM_OUTEST set", 'warn' if loose else 'raise_exit')
         try:
             cls.oPaSkts[lyrname].send(json.dumps(msgobj).encode())
         except Exception as err:
-            if loose: log_warn(f"发送消息给{lyrname}未成功: {err}")
+            if loose: log_warn(f"Sending message to {lyrname} was not successful: {err}")
             else: raise
     @classmethod
     def tell_lyr_runsubp(cls, lyrname, subpItem):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         cls.sendmsg_to_lyr(lyrname, d(action='run_subp', subpItem=subpItem) )
     @classmethod
     def symlink_into_sbxdir(cls, dest, file_in_sbxdir): # 创建软链，从外部，链到本沙箱实例目录内的文件
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         linkto = napath(f'{si.outest_sbxdir}/{file_in_sbxdir}')
-        CHK( not Path(linkto).is_dir(), f'为了安全，不允许链接到目录')
+        CHK( not Path(linkto).is_dir(), f'For safety, linking to directories is not allowed')
         symlink(linkto, dest)
     @classmethod
     def symlink_from_sbxdir_to_in_proc_rootfs(cls, slk_name, to_proc_name, target_in_proc_rootfs): # 创建软链，从本沙箱实例目录内, 链到本沙箱的进程的 rootfs 里的某文件
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         pid = get_procs_seen()[to_proc_name].NSpid[0]
         real_linkto = napath(f'/proc/{pid}/root/{target_in_proc_rootfs}')
-        CHK( not Path(real_linkto).is_dir(), f'为了安全，不允许链接到目录')
+        CHK( not Path(real_linkto).is_dir(), f'For safety, linking to directories is not allowed')
         symlink(real_linkto, f'{si.outest_sbxdir}/into.{to_proc_name}.{slk_name}.link')
     @classmethod
     def custom_action_when_procname_seen(cls, proc_name):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         if proc_name == 'userns_unpri':
             OG.userns_unpri = get_userns_unpri()
         if proc_name in ['xephyr', 'xwayland', 'xpraserver']:
@@ -2120,7 +2114,7 @@ class OutestProcsMonitor:
         condition = ['userns_unpri',  seefrom, seeto]
         if proc_name in condition:
             if set(condition).issubset(set(dict.keys( get_procs_seen() ))):
-                log(f'创建桥 {bridge_name}')
+                log(f'Creating bridge {bridge_name}')
                 seefrom_pid         = get_procs_seen()[seefrom].NSpid[0]
                 seeto_pid   = get_procs_seen()[seeto].NSpid[0]
                 pidfd_seefrom        = os.pidfd_open(seefrom_pid)
@@ -2166,11 +2160,11 @@ class OutestProcsMonitor:
                         drop_caps(no_textcheck_after_dropcap=True)
                         # log('execvp sleep infinity')
                         execvp('sleep', ['sleep', 'infinity'])
-                        errmsg = f'桥exec未成功 {bItem}'
+                        errmsg = f'Bridge exec unsuccessful {bItem}'
                         # wlog('error', errmsg=errmsg) # fd已关闭，无法wlog('error')
                         raise_exit(errmsg, no_cleanup=True)
                     # 第一个子进程
-                    # log('第一个子进程退出')
+                    # log('First child process exiting')
                     os._exit(0)
                 # 原最外层进程
                 # log('最外层完成桥的创建')
@@ -2184,8 +2178,8 @@ class OutestProcsMonitor:
                 return proc
     @classmethod
     def add_keyval_to_procs_record(cls, procsType, key, val): # dict, 不包括alive
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        CHK(procsType in ['seen', 'heared', 'wdgsee'], 'procsType未知')
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
+        CHK(procsType in ['seen', 'heared', 'wdgsee'], 'Unknown procsType')
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
         getattr(cls, 'procs_'+procsType) [key] = val
         cls.write_procs_info_to_file(procsType)
@@ -2193,7 +2187,7 @@ class OutestProcsMonitor:
     def put_proc_into_seenlist(cls, proc_name, seenProc, logItem):
         cls.add_keyval_to_procs_record('seen', proc_name, seenProc)
         if logItem in cls.logs_should_match_soon: # 上次已经加入了注意名单，现在可以移出注意名单
-            log(f'把这条消息从未识别的消息列表中删除 {logItem}')
+            log(f'Removing this log from the unrecognized log list {logItem}')
             cls.logs_should_match_soon.remove(logItem)
         if proc_name in si.expected_alive_procs:
             cls.add_keyval_to_procs_record('wdgsee', proc_name, seenProc)
@@ -2210,10 +2204,10 @@ class OutestProcsMonitor:
             if proc_name not in si.expected_alive_procs : # 看门狗不用管这个进程
                 return
             if logItem not in cls.logs_should_match_soon: # 可能暂时来不及出现，允许等下个周期再出现
-                log(f'把此消息加入未识别的列表 {logItem}')
+                log(f'Adding this log to the unrecognized log list {logItem}')
                 cls.logs_should_match_soon.append(logItem)
             else: # 已经不是第1个周期，则判断进程死亡
-                log(f'收到过{proc_name}的启动消息，但一直未发现过存活，判断进程已死')
+                log(f'Received message for {proc_name} start, but never found alive. Assume it died')
                 sys.exit()
     @classmethod
     def get_and_parse_new_wlog(cls):
@@ -2222,20 +2216,20 @@ class OutestProcsMonitor:
             logItem = dn(logItem)
 
             if logItem.event == 'error':
-                log(f'收到来自 {logItem.logger} 的错误消息 {logItem.errmsg}')
+                log(f'Received error message from {logItem.logger}: {logItem.errmsg}')
                 sys.exit(1)
 
             if logItem.ready_proc_name :
                 cls.got_a_ready_proc_log(logItem)
     @classmethod
     def write_procs_info_to_file(cls, procsType):
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        CHK(procsType in ['alive', 'seen', 'heared', 'wdgsee'], 'procsType未知')
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
+        CHK(procsType in ['alive', 'seen', 'heared', 'wdgsee'], 'Unknown procsType')
         write_to_fd_override( getattr(cls, 'fd_wr_'+procsType),
             jsondumps_mycompat(getattr(cls, 'procs_'+procsType) ) )
     @classmethod
     def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
-        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         cls.update_procsalive()
         cls.get_and_parse_new_wlog()
         for proc_name,psn in dict.items(get_procs_wdgsee()):
@@ -2243,7 +2237,7 @@ class OutestProcsMonitor:
                 if cls.aliveproc_and_seenproc_equal(plv, psn):
                     break
             else:
-                log(f'{proc_name} 已不再存活，看门狗结束沙箱')
+                log(f'{proc_name} is no longer alive, watchdog terminating sandbox')
                 sys.exit()
         OutsideServ.one_loop_task()
 
@@ -2264,7 +2258,7 @@ def daemon_outest():
             A = set(dict.keys(get_procs_heared() ))
             B = set(si.expected_alive_procs) # TODO 区分expected_heared_procs , 应用 noWdg=1选项给subprocs
             if not B.issubset(A):
-                warn_exit(f'长时间未等到{list(B-A)}进程启动消息，认为沙箱启动未完全成功')
+                warn_exit(f'Did not receive startup messages for {list(B-A)} processes within the timeout, assuming sandbox startup was not completely successful')
 
         if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
 
@@ -2278,7 +2272,7 @@ lasttick_havechd = 0
 lasttick_clipbd = 0
 def daemon_pidnsleader():
     global lasttick_havechd , lasttick_clipbd
-    CHK( os.getpid() == 1, f"{tlcfg.layer_name} 检测到的自身PID不为1 （应该为1才正确）")
+    CHK( os.getpid() == 1, f"{tlcfg.layer_name} detected its own PID is not 1 (should be 1)")
     PidnsleaderListener.i_am_pidnsleader()
     PERIOD = 0.2
     while True:
@@ -2301,7 +2295,7 @@ def daemon_pidnsleader():
                     lasttick_havechd = time.monotonic()
                 else:
                     tick_diff = time.monotonic() - lasttick_havechd
-                    if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} 主层空闲，若长时间空闲则结束沙箱')
+                    if tick_diff%1 <= PERIOD: log(f'{int(tick_diff)}/{si.idleKeepSbxTime} Main layer idle, will terminate sandbox if idle for long')
                     if time.monotonic() > lasttick_havechd+si.idleKeepSbxTime: sys.exit()
 
         for taskItem in (tlcfg.daemon_tasks or []):
@@ -2321,7 +2315,7 @@ class PidnsleaderListener():
     @classmethod
     def readmsg_from_outest(cls):
         ready, _, wrong = select.select([cls.oChdSkt], [], [cls.oChdSkt], 0)
-        if wrong: raise_exit('尝试读取最外层来的信息时发生未知错误')
+        if wrong: raise_exit('Unknown error while trying to read message from outest')
         elif ready: return d(json.loads( cls.oChdSkt.recv(300_000).decode() ) )
 
 class ClipboardSyncer():
@@ -2330,7 +2324,7 @@ class ClipboardSyncer():
     LAST_CONTENT_F = '/sbxdir/temp/ClipboardLastContent.data'
     @classmethod
     def init(cls):
-        log(f'ClipboardSyncer 初始化')
+        log(f'ClipboardSyncer initializing')
         cls.socket_fromHostLsn = socket.socket(fileno=si.fd_clipbdWriterFromHostLsn)
         cls.socket_fromHostLsn.setblocking(False) # 设置为非阻塞
         cls.socket_fromHostLsn.listen(1)
@@ -2341,10 +2335,10 @@ class ClipboardSyncer():
         if not is_unix_socket_listened(f'/tmp/.X11-unix/X{si.newXId}'): return
         # 从主机来的 tcp socket 是否要往沙箱写剪贴板内容
         ready, _, wrong = select.select([cls.socket_fromHostLsn], [], [cls.socket_fromHostLsn], 0) # 非阻塞
-        if wrong: log_warn('监听来自主机的写沙箱剪贴板请求时发生未知错误')
+        if wrong: log_warn('Unknown error while listening for host write requests to sandbox clipboard')
         elif ready:
-            log(f'主机有新连接来要往沙箱写剪贴板')
-            pid , _ = fork(loghead=f'{loghead}主机要写沙箱剪贴板', proc_dispname='clipbd write',
+            log(f'New connection from host to write to sandbox clipboard')
+            pid , _ = fork(loghead=f'{loghead}HostWriteSbxClipbd', proc_dispname='clipbd write',
                            close_fds=True, cut_stdin=True,
                            close_keep_fds=[cls.socket_fromHostLsn.fileno(), OG.userns_unpri.usernsfd],
                            )
@@ -2352,13 +2346,13 @@ class ClipboardSyncer():
                 os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
                 try: cls.handle_client_clipbdFromHostSocket()
                 except Exception as err: log_warn(err)
-                finally: warn_exit('handle_client_clipbdFromHostSocket本应结束所属进程但没有') #若到这,说明上面未成功退出
+                finally: warn_exit('handle_client_clipbdFromHostSocket should have ended its process but did not') #若到这,说明上面未成功退出
             return
 
         # 如果上面没有return ， 才执行这里
         if not si.sync_clipbd_from_sandbox:
             return
-        pid , _ = fork(loghead=f'{loghead}探测沙箱剪贴板有无新', proc_dispname='clipbd read',
+        pid , _ = fork(loghead=f'{loghead}CheckSbxClipbdNewCont', proc_dispname='clipbd read',
                     close_fds=True, cut_stdin=True,
                     close_keep_fds=[OG.userns_unpri.usernsfd ],
                     )
@@ -2366,12 +2360,12 @@ class ClipboardSyncer():
             os.setns(OG.userns_unpri.usernsfd, unshrflg(d(user=1)))
             try: cls.sync_from_sandbox_to_host()
             except Exception as err: log_warn(err)
-            finally: warn_exit('sync_from_sandbox_to_host 本应结束所属进程但没有')  #若到这,说明上面未成功退出
+            finally: warn_exit('sync_from_sandbox_to_host should have ended its process but did not')  #若到这,说明上面未成功退出
     @classmethod
     def sync_from_sandbox_to_host(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
-        if os.getpid() == 1: log_warn('在pid=1时 sync_from_sandbox_to_host()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
+        if os.getpid() == 1: log_warn('sync_from_sandbox_to_host() called with pid=1, this should not happen') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            warn_exit(f'探测沙箱剪贴板同步到主机的过程中超时放弃')
+            warn_exit(f'Timeout while syncing sandbox clipboard to host, giving up')
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
 
@@ -2383,19 +2377,19 @@ class ClipboardSyncer():
 
 
         if is_file(cls.LAST_CONTENT_F): # 有上次的剪贴板内容
-            # log('有上次剪贴板内容文件')
+            # log('Previous clipboard content file exists')
             if len(sandbox_clipbd_data) == os.path.getsize(cls.LAST_CONTENT_F) \
             and sandbox_clipbd_data == Path(cls.LAST_CONTENT_F).read_bytes():
-                # log('与上次一样，忽略')
+                # log('Same as last time, ignoring')
                 os._exit(0) # 与上次一样
         # 到这里是的确应该 从沙箱 往主机 写剪贴板
-        log(f'沙箱剪贴板内容有更新，往主机同步 {sandbox_clipbd_data[:20]}')
+        log(f'Sandbox clipboard content updated, syncing to host {sandbox_clipbd_data[:20]}')
         Path(cls.LAST_CONTENT_F).write_bytes(sandbox_clipbd_data)
         cls.write_clipboard(os.getenv("DISPLAY").lstrip(':'), sandbox_clipbd_data)
         os._exit(0)
     @classmethod
     def read_clipboard(cls, XId) ->bytes|bool: # 这个只应该在fork出一个子进程后调用。它不os._exit, 只返回False或数据
-        if os.getpid() == 1: log_warn('在pid=1时read_clipboard()被调用，这不应该发生') ; print_stack(); return False
+        if os.getpid() == 1: log_warn('read_clipboard() called with pid=1, this should not happen') ; print_stack(); return False
         try:
             proc = subprocess.Popen(
                 ['env', f'DISPLAY=:{XId}', 'xsel', '-b', '--output'], bufsize=0,
@@ -2405,14 +2399,14 @@ class ClipboardSyncer():
             ba = bytearray()
             while True:
                 ready, _, wrong = select.select([proc.stdout], [], [proc.stdout], 99) # 超时由之前的signal设置
-                if wrong: log_warn('从xsel管道stdout读的过程中发生未知错误'); return False
+                if wrong: log_warn('Unknown error while reading from xsel pipe stdout'); return False
                 elif ready:
                     try: data = proc.stdout.read(8192)
                     except Exception as err: try_showerr(lambda: proc.kill() ) ; log_warn(err) ; return False
                     if not data: # 已读完
                         try: proc.wait(timeout=1)
                         except subprocess.TimeoutExpired:
-                            log_warn('管道已经结束，但等待xsel进程退出时超时'); return False
+                            log_warn('Pipe ended, but timeout while waiting for xsel process to exit'); return False
                         if proc.returncode == 0:
                             break
                         else:
@@ -2428,8 +2422,8 @@ class ClipboardSyncer():
             return False
     @classmethod
     def write_clipboard(cls, XId, data) ->bool : # 这个只应该在fork出一个子进程后调用。它不os._exit, 只返回真假
-        if os.getpid() == 1: log_warn('在pid=1时write_clipboard()被调用，这不应该发生') ; print_stack(); return False
-        log(f'准备将{len(data)}字节数据传给 :{XId} 的剪贴板')
+        if os.getpid() == 1: log_warn('write_clipboard() called with pid=1, this should not happen') ; print_stack(); return False
+        log(f'Send {len(data)} bytes to clipboard :{XId}')
         try:
             proc = subprocess.Popen(
                 ['env', f'DISPLAY=:{XId}', 'xsel', '-b', '--input'],
@@ -2447,9 +2441,9 @@ class ClipboardSyncer():
             return False
     @classmethod
     def handle_client_clipbdFromHostSocket(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
-        if os.getpid() == 1: log_warn('在pid=1时handle_client_clipbdFromHostSocket()被调用，这不应该发生') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
+        if os.getpid() == 1: log_warn('handle_client_clipbdFromHostSocket() called with pid=1, this should not happen') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            warn_exit(f'接收数据的过程中超时放弃')
+            warn_exit(f'Timeout while receiving data, giving up')
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
         client_sock, _ = cls.socket_fromHostLsn.accept()
@@ -2459,11 +2453,11 @@ class ClipboardSyncer():
                 chunk = client_sock.recv(4096)
                 if not chunk: break
                 data += chunk
-                if len(data) > 1_000_000: log_warn('强制截断过长的剪贴板数据'); break # 超过 1MB
+                if len(data) > 1_000_000: log_warn('Truncating overly long clipboard data'); break # 超过 1MB
         except Exception as err: warn_exit(err)
         finally: client_sock.close()
         if data:
-            log(f'将主机发来的剪贴板内容往沙箱同步 {data[:20]}')
+            log(f'Syncing clipboard content from host to sandbox {data[:20]}')
             Path(cls.LAST_CONTENT_F).write_bytes(data)
             os._exit(0 if cls.write_clipboard(si.newXId, data) is True else 1)
 
@@ -2500,7 +2494,7 @@ def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=N
         set_fd_keep_on_exec(sktpair._skt_chd.fileno(), False)
         set_fd_keep_on_exec(sktpair._skt_pa .fileno(), False)
     pid = os.fork()
-    CHK(pid >= 0, 'fork失败')
+    CHK(pid >= 0, 'fork failed')
     if pid == 0 : # 子进程
         unreg_cleanup_func()
         unregister_sig_handlers()
@@ -2522,7 +2516,7 @@ def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=N
 whoCleanupRegister = None
 def reg_cleanup_func(cleanup_func):
     global whoCleanupRegister
-    if not whoCleanupRegister is None: raise_exit('已注册过清理函数', no_cleanup=True)
+    if not whoCleanupRegister is None: raise_exit('Cleanup function already registered', no_cleanup=True)
     whoCleanupRegister = (os.getpid(), get_nstypes('/proc/self/ns').pid)
     atexit.register(cleanup_func)
 def unreg_cleanup_func():
@@ -2531,14 +2525,14 @@ def unreg_cleanup_func():
     whoCleanupRegister = None
 def isMeThatRegedCleanup(): # TODO 把stat里的时间也加入要素
     if (os.getpid(), get_nstypes('/proc/self/ns').pid) == whoCleanupRegister : return True
-    else: log_warn('不是本进程注册的清理函数。可能出现清理函数未及时清理'); return False
+    else: log_warn('I am not the process that registered cleanup function. Cleanup function might not unregistered in time'); return False
 
 cleanup_symlinks_to_rm = []
 def cleanup_outest():
     atexit._clear()
     if not isMeThatRegedCleanup(): return
     if os.getpid() == 1: return
-    log(f"准备退出，等待所有子进程结束后执行清理...")
+    log(f"About to exit, waiting for all child processes to finish, before cleanup...")
     try_showerr(lambda: Path(f'{si.outest_sbxdir}_exit').touch() ) # 设个正在退出的标记
     try_showerr(lambda: Path(f'{si.outest_sbxdir}/EXITING').touch() )
     try_pass(lambda: OutsideServ.skt_OServLsn.close() )
@@ -2549,7 +2543,7 @@ def cleanup_outest():
     while time.monotonic() <= cleanup_startat+5:
         time.sleep(0.1)
         if not exist_childtree() : break
-    else: log_warn('子进程超时未退出。沙箱管理进程先结束')
+    else: log_warn('Child processes did not exit within timeout. Sandbox management process exiting first')
 
     for slkItem in cleanup_symlinks_to_rm:
         if Path(slkItem).is_symlink() :
@@ -2579,7 +2573,7 @@ def cleanup_outest():
                 try_showerr(lambda: f.unlink() )
         try_showerr(lambda: os.rmdir(dirpath) )
 
-    if exist_childtree(): log_warn('本沙箱实例的cgroup目录未清理')
+    if exist_childtree(): log_warn('cgroup directory for this sandbox instance not cleaned up')
     else:
         try:
             Path(f'{si.CG_TSBXS}/cgroup.procs').write_text(str(os.getpid()))
@@ -2593,7 +2587,7 @@ def cleanup_outest():
 def cleanup_pidnsleader():
     atexit._clear()
     if not isMeThatRegedCleanup(): return
-    if os.getpid() != 1 : log_warn("pid != 1 。应该只有领头进程运行此清理函数"); return
+    if os.getpid() != 1 : log_warn("pid != 1. Only the leader process should run this cleanup function"); return
     for u in range(3):
         if not exist_childtree(): break
         os.kill(-1, signal.SIGTERM)
@@ -2685,7 +2679,7 @@ def log(*args, **kwargs):
     print(*new_args, **kwargs)
 def log_warn(*args, **kwargs):
     if 'file' not in kwargs: kwargs['file'] = sys.stderr
-    log('警告: ',  *args, **kwargs)
+    log('WARNING: ',  *args, **kwargs)
 
 def wlog(event, me_proc_info=False, **kw_args) :
     if not (si and si.file_fds and si.file_fds.layerslog_a): return False
@@ -2784,7 +2778,7 @@ def set_ps1(status):
 UNSHR_MAP = types.SimpleNamespace( pid='PID', mnt='NS', user='USER', cgroup='CGROUP', ipc='IPC', time='TIME', uts='UTS', net='NET', )
 def lyrcfg_to_unshrcfg(lyrcfg):
     unshr_cfg = d({k.removeprefix('unshare_'):v for k,v in dict.items(lyrcfg) if k.startswith('unshare_')})
-    for x in dict.keys(unshr_cfg): CHK(x in UNSHR_MAP.__dict__.keys(), f'此unshare flag 未知：{x}')
+    for x in dict.keys(unshr_cfg): CHK(x in UNSHR_MAP.__dict__.keys(), f'This unshare flag is unknown: {x}')
     return unshr_cfg
 def unshrflg(unshr_cfg):
     unshr_flg = 0
@@ -2800,30 +2794,30 @@ class TmpSocketPair:
         set_fd_keep_on_exec(self._skt_pa.fileno(), False)
         self.I_AM_PA = False ; self.I_AM_CHD = False
     def i_am_pa(self):
-        CHK(not self.I_AM_CHD, "已设置为是fork的子进程端")
+        CHK(not self.I_AM_CHD, "Already set as child's end of pipe")
         self._skt_chd.close() ; self.I_AM_PA = True
     def i_am_chd(self):
-        CHK(not self.I_AM_PA, "已设置为是fork的父进程端")
+        CHK(not self.I_AM_PA, "Already set as parent's end of pipe")
         self._skt_pa.close() ; self.I_AM_CHD = True
     def pa_send(self, data):
-        CHK(self.I_AM_PA, "非fork的父进程调用了此函数")
+        CHK(self.I_AM_PA, "Called not by the parent process of fork")
         if isinstance(data, BS): data = data.value
         self._skt_pa.send(data)
     def chd_send(self, data):
-        CHK(self.I_AM_CHD, "非fork的子进程调用了此函数")
+        CHK(self.I_AM_CHD, "Called not by the child process of fork")
         if isinstance(data, BS): data = data.value
         self._skt_chd.send(data)
     def pa_recv(self, byte_cnt, timeout, expect_data=None):
-        CHK(select.select([self._skt_pa], [], [], timeout)[0], "fork的父进程等待子进程的信号超时了")
+        CHK(select.select([self._skt_pa], [], [], timeout)[0], "Parent process of fork timed out waiting for signal from child")
         if isinstance(expect_data, BS): expect_data = expect_data.value
         data = self._skt_pa.recv(byte_cnt)
-        if expect_data is not None: CHK(data == expect_data, f"fork的父进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        if expect_data is not None: CHK(data == expect_data, f"Parent process of fork received an unexpected signal: got {data!r}, expect {expect_data!r}")
         return data
     def chd_recv(self, byte_cnt, timeout, expect_data=None):
-        CHK(select.select([self._skt_chd], [], [], timeout)[0], "fork的子进程等待父进程的信号超时了")
+        CHK(select.select([self._skt_chd], [], [], timeout)[0], "Child process of fork timed out waiting for signal from parent")
         if isinstance(expect_data, BS): expect_data = expect_data.value
         data = self._skt_chd.recv(byte_cnt)
-        if expect_data is not None: CHK(data == expect_data, f"fork的子进程收到的信号不符合预期: got {data!r}, expected {expect_data!r}")
+        if expect_data is not None: CHK(data == expect_data, f"Child process of fork received an unexpected signal: got {data!r}, expect {expect_data!r}")
         return data
     def close(self):
         if self.I_AM_PA  and self._skt_pa:  self._skt_pa.close() ;  self._skt_pa = None
@@ -2869,8 +2863,8 @@ def write_to_fd_override(fd:int, text:str):
         fcntl.flock(fd,  fcntl.LOCK_UN)
 
 def get_all_3ge_fds() -> list:
-    CHK( os.fstat(si.fdnull).st_ino == os.stat('/dev/null').st_ino, 'si.fdnull的st_ino与/dev/null不符合')
-    CHK( os.fstat(si.fdnull).st_dev == os.stat('/dev/null').st_dev, 'si.fdnull的st_dev与/dev/null不符合')
+    CHK( os.fstat(si.fdnull).st_ino == os.stat('/dev/null').st_ino, 'si.fdnull st_ino does not match /dev/null')
+    CHK( os.fstat(si.fdnull).st_dev == os.stat('/dev/null').st_dev, 'si.fdnull st_dev does not match /dev/null')
     soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
     result = []
     for fd in range(3, soft_limit): # 可以包括fdnull自己，因为dup2自己也没问题
@@ -2898,7 +2892,7 @@ def close_3ge_fds(keep_fds=[] ):
     for fd in get_all_3ge_fds() :
         if fd in keep_fds:
             continue
-        # log(f'关闭{fd=}')
+        # log(f'Closing {fd=}')
         try:
             os.dup2(si.fdnull, fd) # 不用os.close
             set_fd_keep_on_exec(fd, False)
@@ -2919,7 +2913,7 @@ def run_a_cmd(cmdv, print_output=False):
     stdout_data, _ = prc.communicate()
     # prc.wait()
     if print_output: log(stdout_data)
-    if prc.returncode != 0: raise_exit(f"命令运行未成功（{prc.returncode}） {stdout_data}")
+    if prc.returncode != 0: raise_exit(f"Command was not successful (return code {prc.returncode}) {stdout_data}")
 
 def subprocess_preexec():
     unreg_cleanup_func()
@@ -2933,7 +2927,7 @@ def set_nonewpriv(doprint=False):
     ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
     errno = ctypes.get_errno() if ret != 0 else None
     errstr = os.strerror(errno) if ret != 0 else None
-    log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
+    log('Setting noNewPrivs', (ret, errno, errstr)) if doprint else None
     return (ret, errno, errstr)
 
 def drop_caps(no_textcheck_after_dropcap=False):
@@ -2969,14 +2963,14 @@ def drop_caps(no_textcheck_after_dropcap=False):
         ret = libc.capset(ctypes.byref(cap_hdr), ctypes.byref(cap_data) )
         errno = ctypes.get_errno() if ret != 0 else None
         errstr = os.strerror(errno) if ret != 0 else None
-        log(f"清除能力集 {eff=} {prm=} {inh=}", (ret, errno, errstr)) if doprint else None
+        log(f"Clearing capability sets {eff=} {prm=} {inh=}", (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
     def amb_clear(doprint=False):
         ret = libc.prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)
         errno = ctypes.get_errno() if ret != 0 else None
         errstr = os.strerror(errno) if ret != 0 else None
-        log('清除amb', (ret, errno, errstr)) if doprint else None
+        log('Clearing amb', (ret, errno, errstr)) if doprint else None
         return (ret, errno, errstr)
 
     def bnd_clear(maxid, doprint=False):
@@ -2986,7 +2980,7 @@ def drop_caps(no_textcheck_after_dropcap=False):
             errno = ctypes.get_errno() if ret != 0 else None
             errstr = os.strerror(errno) if ret != 0 else None
             results.append((ret, errno, errstr))
-        log('清除bnd', results) if doprint else None
+        log('Clearing bnd', results) if doprint else None
         return results
 
 
@@ -3001,18 +2995,18 @@ def drop_caps(no_textcheck_after_dropcap=False):
     # ------验证------------
 
     # libc验证 no_new_privs
-    CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs清除验证失败')
+    CHK( libc.prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1, 'noNewPrivs clear verification failed')
     # libc验证 bounding set
     for cap_id in range(si.BND_MAX +1): # 内核只支持0~40
-        CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} 降权失败')
+        CHK( libc.prctl(PR_CAPBSET_READ, cap_id, 0, 0, 0) == 0, f'cap_id {cap_id} capability drop failed')
 
     if no_textcheck_after_dropcap:
         return
 
     # 验证 /proc/self/status 中所有能力字段为 0
     caps_dict = get_caps_dict()
-    CHK( caps_dict.pop('NoNewPrivs') == '1' , "在/proc里显示NoNewPrivs未成功设置" ) # 用pop不用get
-    for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"在/proc里显示未清除 {k} ")
+    CHK( caps_dict.pop('NoNewPrivs') == '1' , "NoNewPrivs not successfully set as shown in /proc" ) # 用pop不用get
+    for k,v in caps_dict.items(): CHK( re.search(rf"^0+$", v), f"Clearing failed for {k} as shown in /proc ")
 
 
 def pivot_root(new_root, put_old):
@@ -3026,15 +3020,15 @@ MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  R
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
     allowed_nonabs = ['tmpfs', 'proc', 'devpts']
     if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
-        raise_exit(f"mount的来源{source}不是绝对路径，且不在允许的{allowed_nonabs}之内")
+        raise_exit(f"Mount source {source} is not an absolute path, and not in allowed {allowed_nonabs}")
     if isinstance(source, str) and source.startswith('/'):
         source = napath(source)
     target = napath(target)
     if source and source.startswith('/') and rslvy(source) != source:
-        raise_exit(f"挂载来源路径{source}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
+        raise_exit(f"Mount source path {source} or one of its parent directories is currently a symlink. Handling for this case not yet implemented")
     if rslvy(target) != target:
-        raise_exit(f"挂载目标路径{target}或其某级父路径当前是个symlink。暂未实现对这种情况的处理方式")
-    # log(f"执行挂载 {source} --> {target}")
+        raise_exit(f"Mount target path {target} or one of its parent directories is currently a symlink. Handling for this case not yet implemented")
+    # log(f"Executing mount {source} --> {target}")
     ret = libc.mount(
         source.encode() if source else None,
         target.encode(),
@@ -3043,7 +3037,7 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
         data.encode() if data else None
     )
     if ret != 0:
-        log(f"挂载时发生错误 {source} -> {target} | {fstype=} {flags=} {data=}")
+        log(f"Error during mount {source} -> {target} | {fstype=} {flags=} {data=}")
         errno = ctypes.get_errno()
         raise OSError(errno, os.strerror(errno), target)
 
@@ -3072,7 +3066,7 @@ def set_pdeathsig(sig): # 由layer1的fork出来的子进程调用, 让真实父
 
 def set_proc_dispname(dispname):
     PR_SET_NAME = 15
-    CHK( len(name_bytes := dispname.encode("utf-8")) <= 15 , f"进程名 {dispname} 大小超过15")
+    CHK( len(name_bytes := dispname.encode("utf-8")) <= 15 , f"Process name {dispname} exceeds 15 bytes")
     libc.prctl(PR_SET_NAME, name_bytes, 0, 0, 0)
 
 
@@ -3089,7 +3083,7 @@ def get_appimg_sqoffset(appimg_path):
 
 def napath(pstr):
     pstr = str(pstr)
-    if not str(pstr.startswith('/')): raise_exit(f"不是绝对路径： {pstr}")
+    if not str(pstr.startswith('/')): raise_exit(f"Not an absolute path: {pstr}")
     return  ''.join( [ '/' , os.path.normpath(pstr).strip('/') ] )
 
 def which_and_resolve_exist(cmd):
@@ -3108,7 +3102,7 @@ def rslvy(path):
     return str(Path(napath(path)).resolve(strict=True))
 
 def padir(path):
-    if napath(path) == '/': raise_exit(f"{path}已是根路径，无法再取得上级目录")
+    if napath(path) == '/': raise_exit(f"{path} is already the root path, cannot get parent directory")
     return str(Path(path).parent)
 
 def is_file(path):
@@ -3156,7 +3150,7 @@ def mkdirp(dirpath):
     os.makedirs(dirpath, exist_ok=True)
 
 def make_file_exist(path): # 路径不能已有目录
-    if is_dir(path): raise_exit(f"{path}已是文件夹")
+    if is_dir(path): raise_exit(f"{path} is already a directory")
     if not os.path.exists(path):
         mkdirp(Path(path).parent)
         Path(path).touch()
@@ -3270,7 +3264,7 @@ def raise_exit(err_msg, no_cleanup=False):
     print_stack()
     warn_exit(err_msg, no_cleanup)
 
-def CHK( condition, errmsg='某项检查失败', action='raise_exit'):
+def CHK( condition, errmsg='Some check failed', action='raise_exit'):
     if not condition:
         if action == 'raise_exit': raise_exit(errmsg)
         elif action == 'warn': log_warn(f"{errmsg}")
@@ -3279,18 +3273,18 @@ ASK_OPEN='''\
 #!/bin/bash
 tried_cmd="$0"
 input_arguments="$@"
-echo "有程序试图执行 $0 $input_arguments"
+echo "A program is trying to execute $0 $input_arguments"
 if [[ ! -n "$input_arguments" ]]; then exit ; fi
 if [[ ! -n "$DISPLAY" ]]; then exit ; fi
 result_code=255
 if command -v kdialog &> /dev/null; then
-    kdialog --title "有程序试图执行命令" --yesno "有程序试图执行命令\n$tried_cmd\n\n传递参数如下。是否复制以下内容？\n\n$input_arguments"
+    kdialog --title "A program is trying to execute a command" --yesno "A program is trying to execute a command\n$tried_cmd\n\nArguments passed as follows. Copy the following content?\n\n$input_arguments"
     result_code=$?
 elif command -v zenity &> /dev/null; then
-    zenity --question --title="有程序试图执行命令" --text="有程序试图执行命令\n$tried_cmd\n\n传递参数如下。是否复制以下内容？\n\n$input_arguments"
+    zenity --question --title="A program is trying to execute a command" --text="A program is trying to execute a command\n$tried_cmd\n\nArguments passed as follows. Copy the following content?\n\n$input_arguments"
     result_code=$?
 else
-    echo "未安装 kdialog 或 zenity，无法显示对话框"
+    echo "Neither kdialog nor zenity is installed, cannot show dialog"
     exit
 fi
 if [[ $result_code -eq 0 ]]; then
@@ -3338,7 +3332,7 @@ if __name__ == "__main__":
         tlcfg = None
         LG = d()
         if isinstance(lyrcfg_to_use, dict):
-            log(f'子层 {lyrcfg_to_use.layer_name}')
+            log(f'Sublayer {lyrcfg_to_use.layer_name}')
             set_proc_dispname(lyrcfg_to_use.layer_name)
         try:
             lyrcfg_to_use = main(lyrcfg_to_use)
