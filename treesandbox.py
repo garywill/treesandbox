@@ -2920,8 +2920,15 @@ def subprocess_preexec():
 
 libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
 
-def drop_caps(no_textcheck_after_dropcap=False):
+def set_nonewpriv(doprint=False):
     PR_SET_NO_NEW_PRIVS = 38
+    ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    errno = ctypes.get_errno() if ret != 0 else None
+    errstr = os.strerror(errno) if ret != 0 else None
+    log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
+    return (ret, errno, errstr)
+
+def drop_caps(no_textcheck_after_dropcap=False):
     PR_GET_NO_NEW_PRIVS = 39
     PR_CAPBSET_DROP = 24
     PR_CAPBSET_READ = 23
@@ -2974,12 +2981,7 @@ def drop_caps(no_textcheck_after_dropcap=False):
         log('清除bnd', results) if doprint else None
         return results
 
-    def set_nonewpriv(doprint=False):
-        ret = libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
-        errno = ctypes.get_errno() if ret != 0 else None
-        errstr = os.strerror(errno) if ret != 0 else None
-        log('设置noNewPriv', (ret, errno, errstr)) if doprint else None
-        return (ret, errno, errstr)
+
 
     show_clear_result = False
     capset_clear(eff=False , prm=True, inh=True,  doprint=show_clear_result)
@@ -3322,6 +3324,7 @@ LimitSize=1
 '''
 
 if __name__ == "__main__":
+    set_nonewpriv()
     lyrcfg_to_use = 'notready'
     while lyrcfg_to_use:
         tlcfg = None
