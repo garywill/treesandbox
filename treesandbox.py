@@ -10,18 +10,21 @@ from glob import glob
 shutil.rmtree = None
 
 # === USER_CONFIG BEGIN === NOTE: Don't change this line ===
-# 普通用户设置这里
-def userconfig(si): # 这个只在顶层解析一次
+# You can use this userconfig() code below as example or template.
+# Real userconfig() function code of your sandboxes
+# are in 'my-custom-sandboxes/uc.xxxxx.py',
+# and write the 'xxxxx' into 'my-sandboxes.toml'.
+def userconfig(si):
     uc = d()
 
-    uc.sandbox_name='' # 沙箱名称
+    uc.sandbox_name='' # NOTE You should give a name to your sandbox
 
-    # uc.reuseInstance=True # 复用正在运行的同名沙箱实例（即，单实例沙箱，否则为多实例沙箱）
+    # uc.reuseInstance=True # Reuse running same-name sandbox instance if there is one. (Enabling this makes this sandbox single-instance, otherwise multi-instance)
     uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # 允许在无app的情况下保持沙箱存活多久（秒）
 
     uc.apps = [
         # 第一个是默认app,可不设appname
-        d(cmdvec=['bash'], appname='bash'), # 建议保留这个,可用于从主机随时获取容器shell
+        d(cmdvec=['bash'], appname='bash'), # 建议保留这个,以便于需要时从主机随时获取容器shell
         d(cmdvec=['sleep', 'infinity'], appname='sleep'),
     ]
     # 命令cmdvec是shell命令以空格分割成的数组
@@ -252,7 +255,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.set_nftables: CHK(uc.net.iface=='tun', '只有uc.net.iface=tun才能设置沙箱nftables')
 
     # link/file | custom/notcustom | ifacereal 共8种情况
-    # TODO nscd
+    # TODO nscd if use real
     if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
         if dns_use_custom:
             mnts_dns = [d(op='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
@@ -940,14 +943,14 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
 
             # RDONLY是因为沙箱内只fd读，仅最外层用路径写
             procs_alive = make_file_get_fd('procs.alive.json', os.O_RDONLY|os.O_CREAT, 0o644),
-            procs_histseen = make_file_get_fd('procs.histseen.json', os.O_RDONLY|os.O_CREAT, 0o644),
-            procs_histheared = make_file_get_fd('procs.histheared.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_seen = make_file_get_fd('procs.seen.json', os.O_RDONLY|os.O_CREAT, 0o644),
+            procs_heared = make_file_get_fd('procs.heared.json', os.O_RDONLY|os.O_CREAT, 0o644),
             procs_wdgsee = make_file_get_fd('procs.wdgsee.json', os.O_RDONLY|os.O_CREAT, 0o644),
         ) )
 
         Path(f'{si.outest_sbxdir}/procs.alive.json').write_text("[]")
-        Path(f'{si.outest_sbxdir}/procs.histseen.json').write_text("{}")
-        Path(f'{si.outest_sbxdir}/procs.histheared.json').write_text("{}")
+        Path(f'{si.outest_sbxdir}/procs.seen.json').write_text("{}")
+        Path(f'{si.outest_sbxdir}/procs.heared.json').write_text("{}")
         Path(f'{si.outest_sbxdir}/procs.wdgsee.json').write_text("{}")
 
         si.subp_log_fds = D()
@@ -1484,17 +1487,20 @@ def create_userns_unpri():
 
         skp.pa_send(BS.SetYouUidUserDone)
         return result
-def get_userns_unpri():
-    CHK( OutestProcsMonitor.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-    p_userns_unpri = OutestProcsMonitor.procs_histseen['userns_unpri']
-    pid = p_userns_unpri.NSpid[0]
+def get_userns_unpri(): # userns_unpri 是由layer2建立的，outest/layer1F 可能需要从/proc中获取其userns作为fd
+    CHK( OutestProcsMonitor.I_AM_OUTEST or (tlcfg.depth==1 and os.getpid()==1), "只有outest或layer1可以调用这个")
+    p_userns_unpri = get_procs_seen()['userns_unpri']
+    if OutestProcsMonitor.I_AM_OUTEST:      pid = p_userns_unpri.NSpid[0]
+    elif tlcfg.depth==1 and os.getpid()==1: pid = p_userns_unpri.NSpid[1]
+    inode1 = os.stat(f'/proc/{pid}').st_ino
     result = D(
         pidns_tree = p_userns_unpri.pidns_tree,
         pidfd = os.pidfd_open(pid),
         usernsfd = os.open(f'/proc/{pid}/ns/user', os.O_RDONLY),
         usernsino = os.stat(f'/proc/{pid}/ns/user').st_ino,
     )
-    # TODO 最外层在获取userns_unpri进程过程中要保证不发生竞争
+    inode2 = os.stat(f'/proc/{pid}').st_ino
+    CHK(inode1==inode2, 'get_userns_unpri() 过程中，user_unpri进程的inode发生了改变')
     return result
 
 
@@ -1995,13 +2001,13 @@ class OutestProcsMonitor:
     def i_am_outest(cls):
         cls.I_AM_OUTEST=True
         cls.procs_alive = [] # 最外层从主机/proc中读出的。NSpid, start_tick, ns(含各类，但可能无)， cmdvec
-        cls.procs_histheared = D() # 收到过WLOG且WLOG带ready_proc_name, 但由于可能太快结束，不一定被alive捉到，那样就不进入histseen. 格式为WLOG的内容
-        cls.procs_histseen = D() # WLOG收到信息并与alive对比上后的，NSpid(来自alive), 「self_see_pid, start_tick, pidns(inode) = 必备认证3要素」。可能来自WLOG的pidns_tree, pidns_depth
-        cls.procs_wdgsee = D() # 格式同histseen, 但只收录需要保活的
+        cls.procs_heared = D() # 收到过WLOG且WLOG带ready_proc_name, 但由于可能太快结束，不一定被alive捉到，那样就不进入seen. 格式为WLOG的内容
+        cls.procs_seen = D() # WLOG收到信息并与alive对比上后的，NSpid(来自alive), 「self_see_pid, start_tick, pidns(inode) = 必备认证3要素」。可能来自WLOG的pidns_tree, pidns_depth
+        cls.procs_wdgsee = D() # 格式同seen, 但只收录需要保活的
         cls.logs_should_match_soon = []
         cls.fd_wr_alive = os.open(f'{si.outest_sbxdir}/procs.alive.json', os.O_WRONLY)
-        cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.histseen.json', os.O_WRONLY)
-        cls.fd_wr_heared = os.open(f'{si.outest_sbxdir}/procs.histheared.json', os.O_WRONLY)
+        cls.fd_wr_seen = os.open(f'{si.outest_sbxdir}/procs.seen.json', os.O_WRONLY)
+        cls.fd_wr_heared = os.open(f'{si.outest_sbxdir}/procs.heared.json', os.O_WRONLY)
         cls.fd_wr_wdgsee = os.open(f'{si.outest_sbxdir}/procs.wdgsee.json', os.O_WRONLY)
 
         cls.oPaSkts = d()
@@ -2010,34 +2016,20 @@ class OutestProcsMonitor:
         cls.tell_lyr_runsubp(si.specialLyrs.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
         OutsideServ.init()
     @classmethod
-    def get_procsalive_arr_from_cg(cls) -> list:
+    def get_alive_new_sshot_from_cg(cls) -> list:
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        result = []
+        ps_sshot = []
         for pid in Path(f'{si.CG_SBX}/cgroup.procs').read_text().splitlines():
-            try:
-                inode1 = os.stat(f'/proc/{pid}').st_ino
-
-                comm = Path(f'/proc/{pid}/comm').read_text().strip()
-                NSpid = get_NSpid_arr(f'/proc/{pid}/status')
-                start_tick = get_start_tick(f'/proc/{pid}/stat')
-                try: ns = get_nstypes(f'/proc/{pid}/ns')
-                except: ns = dn()
-                cmdvec = Path(f'/proc/{pid}/cmdline').read_text().strip('\x00').split('\x00')
-
-                inode2 = os.stat(f'/proc/{pid}').st_ino
-                if inode1 != inode2: continue
-            except:
-                continue
-            result.append(dn( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
-        return result
+            if ( p_full_info := get_pinfo_by_pidpath(f'/proc/{pid}') ):
+                ps_sshot.append(p_full_info)
+        return ps_sshot
     @classmethod
     def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        procsalive_arr = cls.get_procsalive_arr_from_cg()
+        alive_new_sshot = cls.get_alive_new_sshot_from_cg()
         # NOTE 必须 既写本cls内部变量，也更新路径文件内容
-        cls.procs_alive = procsalive_arr # 写cls内部
-        json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in procsalive_arr]) ,']'])
-        write_to_fd_override(cls.fd_wr_alive, json_str)
+        cls.procs_alive = alive_new_sshot # 写cls内部
+        cls.write_procs_info_to_file('alive')
     @classmethod
     def aliveproc_and_elproc_equal(cls, plv, pel): #plv="proc alive" | pel="proc from event log"
         if not plv.ns or not plv.ns.pid or not pel.ns or not pel.ns.pid : return False
@@ -2090,7 +2082,7 @@ class OutestProcsMonitor:
     @classmethod
     def symlink_from_sbxdir_to_in_proc_rootfs(cls, slk_name, to_proc_name, target_in_proc_rootfs): # 创建软链，从本沙箱实例目录内, 链到本沙箱的进程的 rootfs 里的某文件
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        pid = cls.procs_histseen[to_proc_name].NSpid[0]
+        pid = get_procs_seen()[to_proc_name].NSpid[0]
         real_linkto = napath(f'/proc/{pid}/root/{target_in_proc_rootfs}')
         CHK( not Path(real_linkto).is_dir(), f'为了安全，不允许链接到目录')
         symlink(real_linkto, f'{si.outest_sbxdir}/into.{to_proc_name}.{slk_name}.link')
@@ -2119,10 +2111,10 @@ class OutestProcsMonitor:
         bridge_name = bItem.bridge_name
         condition = ['userns_unpri',  seefrom, seeto]
         if proc_name in condition:
-            if set(condition).issubset(set(dict.keys( cls.procs_histseen ))):
+            if set(condition).issubset(set(dict.keys( get_procs_seen() ))):
                 log(f'创建桥 {bridge_name}')
-                seefrom_pid         = cls.procs_histseen[seefrom].NSpid[0]
-                seeto_pid   = cls.procs_histseen[seeto].NSpid[0]
+                seefrom_pid         = get_procs_seen()[seefrom].NSpid[0]
+                seeto_pid   = get_procs_seen()[seeto].NSpid[0]
                 pidfd_seefrom        = os.pidfd_open(seefrom_pid)
                 pidfd_seeto   = os.pidfd_open(seeto_pid)
                 ns_seefrom        = get_nstypes(f'/proc/{seefrom_pid}/ns')
@@ -2179,22 +2171,29 @@ class OutestProcsMonitor:
 
     @classmethod
     def find_alive_proc_matching_logitem(cls, elp):
-        for proc in cls.procs_alive: # 在存在进程列表中查找，看有没有这个
+        for proc in get_procs_alive(): # 在存在进程列表中查找，看有没有这个
             if cls.aliveproc_and_elproc_equal(proc, elp):
                 return proc
     @classmethod
+    def add_keyval_to_procs_record(cls, procsType, key, val): # dict, 不包括alive
+        CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
+        CHK(procsType in ['seen', 'heared', 'wdgsee'], 'procsType未知')
+        # NOTE 必须 既写本cls内部变量，也更新路径文件内容
+        getattr(cls, 'procs_'+procsType) [key] = val
+        cls.write_procs_info_to_file(procsType)
+    @classmethod
     def put_proc_into_seenlist(cls, proc_name, seenProc, logItem):
-        cls.procs_histseen[proc_name] = seenProc
+        cls.add_keyval_to_procs_record('seen', proc_name, seenProc)
         if logItem in cls.logs_should_match_soon: # 上次已经加入了注意名单，现在可以移出注意名单
             log(f'把这条消息从未识别的消息列表中删除 {logItem}')
             cls.logs_should_match_soon.remove(logItem)
         if proc_name in si.expected_alive_procs:
-            cls.procs_wdgsee[proc_name] = seenProc
+            cls.add_keyval_to_procs_record('wdgsee', proc_name, seenProc)
         cls.custom_action_when_procname_seen(proc_name)
     @classmethod
     def got_a_ready_proc_log(cls, logItem): # 被调用时，说明一个进程有了logItem出现
         proc_name = logItem.ready_proc_name
-        cls.procs_histheared[proc_name] = logItem
+        cls.add_keyval_to_procs_record('heared', proc_name, logItem)
         # 判断这个进程是否已经在aliveProcs的列表里
         if (aliveProc := cls.find_alive_proc_matching_logitem(logItem) ):
             seenProc = cls.conv_to_seenproc(aliveProc, logItem)
@@ -2220,29 +2219,26 @@ class OutestProcsMonitor:
 
             if logItem.ready_proc_name :
                 cls.got_a_ready_proc_log(logItem)
-        cls.write_dict_to_fd_myformat(cls.procs_histseen, cls.fd_wr_seen) #写文件procs.histseen.json
-        cls.write_dict_to_fd_myformat(cls.procs_histheared, cls.fd_wr_heared) #写文件procs.histheared.json
-        cls.write_dict_to_fd_myformat(cls.procs_wdgsee, cls.fd_wr_wdgsee) # procs.wdgsee.json
     @classmethod
-    def write_dict_to_fd_myformat(cls, procs_seen_obj, fd):
+    def write_procs_info_to_file(cls, procsType):
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
-        json_str = '\n'.join(['{',
-            '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(procs_seen_obj) ]) ,
-            '}'])
-        write_to_fd_override(fd, json_str)
+        CHK(procsType in ['alive', 'seen', 'heared', 'wdgsee'], 'procsType未知')
+        write_to_fd_override( getattr(cls, 'fd_wr_'+procsType),
+            jsondumps_mycompat(getattr(cls, 'procs_'+procsType) ) )
     @classmethod
     def wdg(cls): # 看看那些已经在 procs_wdgsee 列表中的进程还存活吗
         CHK( cls.I_AM_OUTEST, "只有outest可以调用这个，但 I_AM_OUTEST 未设置")
         cls.update_procsalive()
         cls.get_and_parse_new_wlog()
-        for proc_name,psn in dict.items(cls.procs_wdgsee):
-            for plv in cls.procs_alive:
+        for proc_name,psn in dict.items(get_procs_wdgsee()):
+            for plv in get_procs_alive():
                 if cls.aliveproc_and_seenproc_equal(plv, psn):
                     break
             else:
                 log(f'{proc_name} 已不再存活，看门狗结束沙箱')
                 sys.exit()
         OutsideServ.one_loop_task()
+
 
 def daemon_outest():
     # TODO 等待5秒，等待主app启动的信号，否则退出
@@ -2257,7 +2253,7 @@ def daemon_outest():
         OutestProcsMonitor.wdg()
 
         if time.monotonic() >= t0 + 10:
-            A = set(dict.keys(OutestProcsMonitor.procs_histheared))
+            A = set(dict.keys(get_procs_heared() ))
             B = set(si.expected_alive_procs) # TODO 区分expected_heared_procs , 应用 noWdg=1选项给subprocs
             if not B.issubset(A):
                 warn_exit(f'长时间未等到{list(B-A)}进程启动消息，认为沙箱启动未完全成功')
@@ -2463,18 +2459,28 @@ class ClipboardSyncer():
             Path(cls.LAST_CONTENT_F).write_bytes(data)
             os._exit(0 if cls.write_clipboard(si.newXId, data) is True else 1)
 
+def D_cont_dn(obj):
+    result = D()
+    for key,val in enumerate(obj): result[key] = dn(val)
+    return result
 
-def get_alive() -> list:
-    if OutestProcsMonitor.I_AM_OUTEST:   return OutestProcsMonitor.procs_alive
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_alive)
+def get_procs_alive() -> list:
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_alive
+    else: return [dn(x) in read_all_from_fd_then_jsonloads(si.file_fds.procs_alive) ]
 
-def get_histseen() -> dict:
-    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_histseen
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_histseen)
+def get_procs_seen():
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_seen
+    else: return D_cont_dn(read_all_from_fd_then_jsonloads(si.file_fds.procs_seen) )
 
-def get_wdgsee() -> dict:
+def get_procs_heared():
+    if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_heared
+    else: return D_cont_dn(read_all_from_fd_then_jsonloads(si.file_fds.procs_heared) )
+
+def get_procs_wdgsee():
     if OutestProcsMonitor.I_AM_OUTEST:  return OutestProcsMonitor.procs_wdgsee
-    else:   return read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee)
+    else: return D_cont_dn(read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee) )
+
+
 
 def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=None,
          close_fds=False, close_keep_fds=[] ,
@@ -2715,6 +2721,16 @@ class WlogReader():
             new_logs.append(json.loads(line))
         return new_logs
 
+def jsondumps_mycompat(obj):
+    if isinstance(obj, dict):
+        json_str = '\n'.join(['{',
+            '\n,\n'.join([f'"{k}" : {json.dumps(v)}' for k,v in dict.items(obj) ]) ,
+            '}'])
+    elif isinstance(obj, list):
+        json_str = '\n'.join(['[', '\n,\n'.join([json.dumps(x) for x in obj]) ,']'])
+    else: json_str = json.dumps(obj)
+    return json_str
+
 
 # TODO def get_pUniqId()
 def get_nstypes(nsdir_path):
@@ -2728,6 +2744,20 @@ def get_NSpid_arr(status_file_path) -> list:
         if line.startswith("NSpid:"):
             return [int(x) for x in line.split()[1:]]
 
+def get_pinfo_by_pidpath(pidpath):
+    try:
+        res = D()
+        inode1 = os.stat(pidpath).st_ino
+        res.comm = Path(f'{pidpath}/comm').read_text().strip()
+        res.NSpid = get_NSpid_arr(f'{pidpath}/status')
+        res.start_tick = get_start_tick(f'{pidpath}/stat')
+        try:    res.ns = get_nstypes(f'{pidpath}/ns')
+        except: res.ns = dn()
+        res.cmdvec = Path(f'{pidpath}/cmdline').read_text().strip('\x00').split('\x00')
+        inode2 = os.stat(pidpath).st_ino
+        if inode1 != inode2: return None
+        return res
+    except: return None
 
 ps1 = ">"
 def set_ps1(status):
@@ -2820,7 +2850,7 @@ def read_alltext_from_fd(fd:int) -> str:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 def read_all_from_fd_then_jsonloads(fd) -> list|dict :
-    return d( json.loads( read_alltext_from_fd(fd) ) )
+    return json.loads( read_alltext_from_fd(fd) )
 
 def write_to_fd_override(fd:int, text:str):
     try:
