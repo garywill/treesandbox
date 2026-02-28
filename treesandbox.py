@@ -21,7 +21,7 @@ def userconfig(si): # 这个只在顶层解析一次
 
     uc.apps = [
         # 第一个是默认app,可不设appname
-        d(cmdvec=['bash'], appname='bash'),
+        d(cmdvec=['bash'], appname='bash'), # 建议保留这个,可用于从主机随时获取容器shell
         d(cmdvec=['sleep', 'infinity'], appname='sleep'),
     ]
     # 命令cmdvec是shell命令以空格分割成的数组
@@ -94,7 +94,7 @@ def userconfig(si): # 这个只在顶层解析一次
     uc.net=d(
         # iface='real', # 使用真实的网络介面。不unshare net ns
         iface='tun', # 用 pasta 创建新的 net ns 和管理网络介面
-        custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
+        # custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
     )
     uc.pasta_custom_args = [ # NOTE 只有uc.net.iface=tun才有用
         # NOTE （注意如果去省略这则允许全部）不允许沙箱访问主机localhost任何端口
@@ -550,7 +550,7 @@ resv_name_prefix = ['bridge_', 'layer', 'shareshell_', 'mainApp']
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun', 'bridge', 'shareshell', 'mainApp']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
     # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
-    scriptfilepath = os.path.abspath(__file__)
+    scriptfilepath = rslvy(os.path.abspath(__file__))
     scriptdirpath = os.path.dirname(scriptfilepath)  # 获取脚本所在目录
     scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
     scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
@@ -2028,7 +2028,7 @@ class OutestProcsMonitor:
                 if inode1 != inode2: continue
             except:
                 continue
-            result.append(D( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
+            result.append(dn( comm=comm, NSpid=NSpid, start_tick=start_tick,  ns=ns , cmdvec=cmdvec))
         return result
     @classmethod
     def update_procsalive(cls): # 只有 最外层 原进程 调用这个函数
@@ -2048,6 +2048,7 @@ class OutestProcsMonitor:
         else: return False
     @classmethod
     def aliveproc_and_seenproc_equal(cls, plv, psn): # plv="proc alive" | psn="proc seen"
+        if not plv.ns or not plv.ns.pid: return False
         if plv.NSpid[-1] == psn.self_see_pid \
         and plv.start_tick == psn.start_tick \
         and plv.ns.pid == psn.pidns :
