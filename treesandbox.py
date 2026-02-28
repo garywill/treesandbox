@@ -20,21 +20,23 @@ def userconfig(si):
     uc.sandbox_name='' # NOTE You should give a name to your sandbox
 
     # uc.reuseInstance=True # Reuse running same-name sandbox instance if there is one. (Enabling this makes this sandbox single-instance, otherwise multi-instance)
-    uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # 允许在无app的情况下保持沙箱存活多久（秒）
+    uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # Keep sandbox alive for a time (second), even if idle (no user app alive)
 
     uc.apps = [
-        # 第一个是默认app,可不设appname
-        d(cmdvec=['bash'], appname='bash'), # 建议保留这个,以便于需要时从主机随时获取容器shell
+        # The first item is default app, which can omit appname
+        d(cmdvec=['bash'], appname='bash'), # Recommend to keep this item, so host can get sandbox shell easily if needed
         d(cmdvec=['sleep', 'infinity'], appname='sleep'),
     ]
-    # 命令cmdvec是shell命令以空格分割成的数组
-    # 启动沙箱时，可以用'--app <appname>'，也可以不用（选择默认app）
+    # cmdvec is array, elements are shell args ( shell command string splitted )
+    # When starting sandbox, you can use '--app <appname>'. If not, default app is chosen
 
     uc.user_mnts = [
-        # AppImage例子，挂载目标为沙箱内的 /sbxdir/apps/xxxx
+        # AppImage example. Will do :
+        #    AppImage mounted at /sbxdir/apps/xxxx/ in sandbox
+        #    Script /sbxdir/apps/run_xxxx is created
         # d(many_op='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
 
-        # 用当前目录下的 fakehome 目录，作为沙箱内 HOME 的永久储存（否则tmpfs作HOME）
+        # For persistant storage, use 'fakehome' dir in CWD (your sandbox start script dir) as sandbox's HOME . Otherwise, tmpfs is used as HOME
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
         # HOME/bin
@@ -52,75 +54,81 @@ def userconfig(si):
 
 
 
-    # 若不设置gui则内部无任何X11
-    # uc.gui="realX" # 使用真实的 X11
-    uc.gui="weston" # 用的是weston里的Xwayland
+
+    # Without uc.gui, no X11 in sandbox
+    # uc.gui="realX" # Use host's real X11
+    # uc.gui="weston" # A Xwayland in Weson is used
     # uc.gui="xephyr"
     # uc.gui='xpra'
 
-    # uc.newXId='50' # 使用内部隔离X11时，X11的显示编号，字符串。如果不指定，则随机
+    # uc.newXId='50' # When an sandbox-managed new X11 server used , the DISPLAY id. String. Otherwise random
 
-    uc.windowed_size = (800, 600)
+    uc.windowed_size = (800, 600) # When an windowed sandbox-managed new X11 server used
 
-    uc.sync_clipbd_from_sandbox = True # 同步沙箱内剪贴板往主机（如果有内部X11）
+    uc.sync_clipbd_from_sandbox = True # Auto sync clipboard from sandbox to host, if an sandbox-managed new X11 server used
 
     uc.gpus     =      True if uc.gui else False
     uc.see_userfonts = True if uc.gui else False
 
-    # uc.see_real_hw=True # 看见真实/dev和/sys
+    # uc.see_real_hw=True # Sandbox see host's real /dev and /sys
 
 
 
-    # 用户(session) DBUS 如何处理 （输入法等通信需要dbus）
-    # uc.dbus_session="allow" # 允许与主机的用户dbus全部通信
-    # uc.dbus_session="filter" # 用dbusproxy来过滤。默认过滤规则:允许输入法和通知（还可以自己在 uc.dbusproxy_extra 中加）
+    # User (session) DBUS (things like IME needs DBUS)
+    # uc.dbus_session="allow" # Allow all DBUS communication
+    # uc.dbus_session="filter" # DBUS communication filtered by xdg-dbus-proxy. Default rule is allowing IME and notifications (you can add more to uc.dbusproxy_extra also)
     if uc.gui: uc.dbus_session="filter"
 
-    # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (来自flatpak) 的额外参数
+    # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (by Flatpak) extra args
 
-    uc.sharedir_prefix='/tmp/tsbx-share_' # 在主机的这个位置以这个前缀创建临时共享目录，挂载到沙箱内的 同一路径 和 /tmp/share
+
+    # Create a path in host as share dir. Dir will be accessable (r/w) by sandbox too.
+    # In sandbox, both same path and a '/tmp/share' is to this dir (r/w)
+    # This is a prefix. Sandbox name will be added to the dir name
+    uc.sharedir_prefix='/tmp/tsbx-share_'
+
 
     # uc.pulseaudio=True,
-    # uc.cups=True, # CUPS打印服务 NOTE 注意 CUPS-PDF 沙箱内的输出位置是否已暴露给主机
+    # uc.cups=True, # CUPS print NOTE You should check if CUPS-PDF's output dir is accessable by host
 
-    uc.ask_xdg_open=True # 把 xdg-open 替换成一个询问脚本，不允许直接打开
-    uc.forbid_browsers=True # 容器内部不能使用系统的 firefox, chromium 等
-    # uc.allow_opt=True # 允许访问真实/opt
-    # uc.mask_osrelease=True # 不可访问/etc/os-release
-    uc.machineid='zero' # 把/etc/machine-id填0
+    uc.ask_xdg_open=True # Replace 'xdg-open' by an asking script
+    uc.forbid_browsers=True # Ban system firefox/chromium/... in sandbox
+    # uc.allow_opt=True # Mount host's /opt into sandbox
+    # uc.mask_osrelease=True # Ban /etc/os-release
+    uc.machineid='zero' # Write zeros to /etc/machine-id
 
-    uc.setenvs = d( # 要给 主app 的环境变量 ，值必须是字符串
+    uc.setenvs = d( # Env vars seen by main apps in sandbox. Values must be string
         # ENV_VAR_NAME1 = 'ENV_VAR_VAL1',
         # ENV_VAR_NAME2 = 'ENV_VAR_VAL2',
     )
 
     uc.net=d(
-        # iface='real', # 使用真实的网络介面。不unshare net ns
-        iface='tun', # 用 pasta 创建新的 net ns 和管理网络介面
-        # custom_dns=['127.0.0.1'], # 自定义dns (会改/etc/resolv.conf) ，如果不自定义，且iface为real则允许真实的resolv.conf
+        iface='real', # Use host's real net ifaces. Won't unshare net ns
+        # iface='tun', # Use pasta to create new net ns and manage net iface
+        # custom_dns=['127.0.0.1'], # Custom DNS (/etc/resolv.conf). If no custom and iface=real, host's real resolv.conf will be used
     )
-    uc.pasta_custom_args = [ # NOTE 只有uc.net.iface=tun才有用
-        # NOTE （注意如果去省略这则允许全部）不允许沙箱访问主机localhost任何端口
-        '-T', 'none', '-U', 'none',
+    uc.pasta_custom_args = [ # NOTE only when uc.net.iface=tun , this is used
+        # NOTE （no '-T' or no '-U' will allow all local ports seen by sandbox）
+        # '-T', 'none', '-U', 'none', # Forbid to access any port of host localhost
 
         '--config-net', '--host-lo-to-ns-lo',
 
-        # '--no-map-gw',  # 如果不设置内部地址，则内部地址与主机地址相同 ，则可以考虑开启这个
+        # '--no-map-gw',  # If sandbox ip not configured, its internal ip will be looked same as host. In this case you should consider enabling this --no-map-gw
         '-a', '172.16.1.2', '-n', '30',  '-g', '172.16.1.1', '-a', 'fd00::2',  '-g', 'fd00::1',
-        # '--ns-mac-addr', '00:00:00:00:00:04', # 若无则为随机MAC
+        # '--ns-mac-addr', '00:00:00:00:00:04', # No this = random MAC
 
         # '--debug', '--trace',
     ] if uc.net.iface=='tun' else None
 
-    # NOTE 只有 uc.net.iface=tun 时，才可以启用 set_nftables
-    uc.set_nftables = True # 启用这个则会在沙箱内部应用下面的nftables规则
+    # NOTE only when uc.net.iface=tun , set_nftables can be enabled
+    uc.set_nftables = True # Enable this, then nftables rules below will be applied to sandbox
     if uc.set_nftables == True : uc.nftables_rule = '''
         define DYNAMIC_BANIP_V4 = { 224.0.0.0/4 }
-        # 可选阻止 224.0.0.0/4,  组播
-        # 可选阻止 127.0.0.0/8,  回环
+        # optional blacklisting 224.0.0.0/4, (multicast)
+        # optional blacklisting 127.0.0.0/8,  (loopback)
         define DYNAMIC_BANIP_V6 = { ff00::/8 }
-        # 可选阻止 ff00::/8,  组播
-        # 可选阻止 ::1, 回环
+        # optional blacklisting ff00::/8,  (multicast)
+        # optional blacklisting ::1, (loopback)
         table inet myfiltertable {
             set banip_v4 { type ipv4_addr; flags interval
                 elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 255.255.255.255, $DYNAMIC_BANIP_V4  }
