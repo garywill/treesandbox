@@ -42,6 +42,7 @@ def userconfig(si):
     uc.user_mnts = [
         # The term "CWD" here is the path where you put this sandbox start script.
         # `si` is dict-like object,  means "sandbox info".
+        # 'SDS' means "src and dest have same value".
 
         # For persistant storage, use 'fakehome' dir as sandbox's HOME dir. Otherwise, tmpfs is used as HOME
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
@@ -56,7 +57,7 @@ def userconfig(si):
         # /home/linuxbrew
         # d(op='robind', src='/home/linuxbrew', SDS=1),
 
-        # d(many_op='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
+        # d(many_op='appimage', name='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
         # AppImage mounting example. Will do :
         #   - AppImage mounted at /sbxdir/apps/xxxx/ in sandbox
         #   - Script /sbxdir/apps/run_xxxx is created
@@ -1756,15 +1757,15 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
                 if os.path.lexists(path):
                     a( d( op='empty-if-exist', dest=napath(f'{destbase}/{path}' ) ) )
         elif many_op == 'appimage':
-            a( d(op='appimg-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.dirname}') )
+            a( d(op='appimg-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.name}') )
             start_sh_content = f'''#!/bin/bash
                 script=$(readlink -f "$0")
                 scriptpath=$(dirname "$script")
-                env APPDIR="$scriptpath/{opItem.dirname}" "$scriptpath"/{opItem.dirname}/AppRun "$@"
+                env APPDIR="$scriptpath/{opItem.name}" "$scriptpath"/{opItem.name}/AppRun "$@"
             '''
-            a( d(op='rofile', dest=f'/sbxdir/apps/run_{opItem.dirname}', destmode='555', content=start_sh_content) )
+            a( d(op='rofile', dest=f'/sbxdir/apps/run_{opItem.name}', destmode='555', content=start_sh_content) )
         elif many_op == 'squashfs':
-            a( d(op='sqfs-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.dirname}') )
+            a( d(op='sqfs-mount', src=opItem.src, dest=f'/sbxdir/apps/{opItem.name}') )
         # 下面是 op 而不是 many_op 。因为它们两个不应同时有，所以用同一if树
         elif op:
             a( opItem )
