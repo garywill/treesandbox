@@ -1,7 +1,7 @@
 #!/usr/bin/env -S python3 -IBS
 
 # Tree Sandbox for Linux
-# Licensed under GPL.  https://github.com/garywill
+# Licensed under GPL.  https://github.com/garywill/treesandbox
 # This project comes with no warranty. Use on your own risk.
 
 import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource, string, platform
@@ -22,8 +22,8 @@ def userconfig(si):
     uc.sandbox_name='' # NOTE You should give a name to your sandbox
 
     # ---- Reuse Or Not ----
-    # uc.reuseInstance=True # Reuse running same-name sandbox instance if there is one alive. (Enabling this makes your sandbox single-instance, otherwise multi-instance)
-    uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # Keep sandbox alive for a time (second), even if idle (no user app alive)
+    # uc.reuseful=True   # Reuse running same-name sandbox instance if there is one alive. (Enabling this makes your sandbox single-instance, otherwise multi-instance)
+    uc.idleKeepSbxTime = 2 if uc.reuseful else 0 # Keep sandbox alive for a time (second), even if idle (no user app alive)
     # ---- ---- ----
 
     uc.apps = [
@@ -112,7 +112,7 @@ def userconfig(si):
     # uc.cups=True, # CUPS print
 
     uc.ask_xdg_open=True # Replace 'xdg-open' by an asking script.
-    uc.forbid_browsers=True # Ban system's firefox/chromium/... in sandbox.
+    uc.forbid_browsers=True # Ban system's firefox/chromium/... in sandbox. (Experimental)
     # uc.mask_osrelease=True # Ban /etc/os-release
     uc.machineid='zero' # Write zeros to /etc/machine-id
 
@@ -125,6 +125,7 @@ def userconfig(si):
 
     uc.net_iface='real' # Use host's real net ifaces. Won't unshare net ns
     # uc.net_iface='tuntap-pasta' # Use pasta to create new net ns and manage net iface
+    # uc.net_iface='none' # Omitting net_iface means 'none' also
 
     # uc.dns_custom=['127.0.0.1'] # Custom /etc/resolv.conf . If not custom and net_iface=real, host's real resolv.conf will be used
 
@@ -640,7 +641,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     CHK( len(sandbox_name) < 500, f'Sandbox name too long: {sandbox_name}')
 
     apps = uc.apps
-    if uc.reuseInstance: reuseInstance = uc.reuseInstance
+    if uc.reuseful: reuseful = uc.reuseful
     if uc.idleKeepSbxTime: idleKeepSbxTime = uc.idleKeepSbxTime
 
     if (sharedir_prefix := uc.sharedir_prefix):
@@ -674,7 +675,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     pythonbin = sys.executable
 
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'reuseInstance', 'idleKeepSbxTime',  'outest_sbxdir',
+        ['sandbox_name', 'instance_name', 'reuseful', 'idleKeepSbxTime',  'outest_sbxdir',
          'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin',
          'sync_clipbd_from_sandbox' ]
     } )
@@ -1067,7 +1068,7 @@ def main(lyrcfg_in):
         arg_parser.add_argument("--nocleanup", action='store_true',
                                 help="Do not delete the temporary sandbox info dir after sandbox instance quit")
         arg_parser.add_argument("--reusefg", action='store_true',
-                                help="If reusing a running instance, use remote shell, letting new-started app in foreground of current terminal. Otherwise, send the new-app command to running instance then we return. (Only effective if the sandbox has reuseInstance enabled in config). If starting a new sandbox instance, this option is ignored.")
+                                help="If reusing a running instance, use remote shell, letting new-started app in foreground of current terminal. Otherwise, send the new-app command to running instance then we return. (Only effective if the sandbox has reuseful enabled in config). If starting a new sandbox instance, this option is ignored.")
         # arg_parser.add_argument("--enter", action='store_true',
                                 # help="自动找到一个正在运行的同名沙箱实例，获得其shell。若无正在运行的实例，报错退出")
         # arg_parser.add_argument("--enter-instance", metavar="<chosen_instance_name>",
@@ -1098,7 +1099,7 @@ def main(lyrcfg_in):
         # si =  # 不需要再加载si, 因为是fork来的
 
     if is_outest:
-        if reusefg: CHK(si.reuseInstance, '--reusefg cannot be used because reuseInstance is not enabled in the sandbox configuration')
+        if reusefg: CHK(si.reuseful, '--reusefg cannot be used because reuseful is not enabled in the sandbox configuration')
         log(f"PID: {si.outest_pid}  Sandbox name: {si.sandbox_name}   Run by: {si.username} {si.groupname}")
         if not chosen_appname or chosen_appname=='default': chosen_appItem = si.apps[0]
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == chosen_appname), None)
@@ -1109,7 +1110,7 @@ def main(lyrcfg_in):
         log(f'App command to run in sandbox: {OG.mainApp_cmdvec}')
 
         # 判断应该 新实例 还是 发送app命令到 正在运行的实例
-        if si.reuseInstance:
+        if si.reuseful:
             question_reuse = maybe_sendto_running_instance(reusefg)
             CHK( question_reuse=='not_reusing', 'Here either the result should be "not_reusing", or the judgment function should have ended the process')
         log('---------------------')
