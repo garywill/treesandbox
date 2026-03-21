@@ -1,26 +1,30 @@
 #!/usr/bin/env -S python3 -IBS
 
 # Tree Sandbox for Linux
-# Licensed under GPL
-# https://github.com/garywill
+# Licensed under GPL.  https://github.com/garywill
+# This project comes with no warranty. Use on your own risk.
 
-import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource, string
+import os, sys, shutil, subprocess, pwd, grp, time, pty, ctypes, ctypes.util, atexit, json, copy, tempfile, struct, re, socket, signal, asyncio, datetime , types, select, fcntl, traceback, random , errno, shlex, enum, argparse, hashlib, io, resource, string, platform
 from pathlib import Path
 from glob import glob
 shutil.rmtree = None
 
 # === USER_CONFIG BEGIN === NOTE: Don't change this line ===
-# You can use this userconfig() code below as example or template.
-# Real userconfig() function code of your sandboxes
-# are in 'my-custom-sandboxes/uc.xxxxx.py',
-# and write the 'xxxxx' into 'my-sandboxes.toml'.
+
+# You can use our default userconfig() code as example / template / tutorial.
+# Config your sandbox by enabling / modifying / commenting out these options.
+
+# Notice TreeSandbox is in early stage. We try to keep userconfig options stably, but no promise.
+
 def userconfig(si):
-    uc = d()
+    uc = d() # dict-like object
 
     uc.sandbox_name='' # NOTE You should give a name to your sandbox
 
-    # uc.reuseInstance=True # Reuse running same-name sandbox instance if there is one. (Enabling this makes this sandbox single-instance, otherwise multi-instance)
+    # ---- Reuse Or Not ----
+    # uc.reuseInstance=True # Reuse running same-name sandbox instance if there is one alive. (Enabling this makes your sandbox single-instance, otherwise multi-instance)
     uc.idleKeepSbxTime = 2 if uc.reuseInstance else 0 # Keep sandbox alive for a time (second), even if idle (no user app alive)
+    # ---- ---- ----
 
     uc.apps = [
         # The first item is default app, which can omit appname
@@ -28,15 +32,18 @@ def userconfig(si):
         d(cmdvec=['sleep', 'infinity'], appname='sleep'),
     ]
     # cmdvec is array, elements are shell args ( shell command string splitted )
-    # When starting sandbox, you can use '--app <appname>'. If not, default app is chosen
+    # When starting sandbox, you can use cli '--app <appname>'. If not, default app is chosen
 
+
+    # ---- User Mounts -----
+
+    # Linux basic system dirs (/bin, /lib, ...) are auto mounted.
+    # uc.user_mnts are what you want to add.
     uc.user_mnts = [
-        # AppImage example. Will do :
-        #    AppImage mounted at /sbxdir/apps/xxxx/ in sandbox
-        #    Script /sbxdir/apps/run_xxxx is created
-        # d(many_op='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
+        # The term "CWD" here is the path where you put this sandbox start script.
+        # `si` is dict-like object,  means "sandbox info".
 
-        # For persistant storage, use 'fakehome' dir in CWD (your sandbox start script dir) as sandbox's HOME . Otherwise, tmpfs is used as HOME
+        # For persistant storage, use 'fakehome' dir as sandbox's HOME dir. Otherwise, tmpfs is used as HOME
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
         # HOME/bin
@@ -49,30 +56,42 @@ def userconfig(si):
         # /home/linuxbrew
         # d(op='robind', src='/home/linuxbrew', SDS=1),
 
+        # d(many_op='appimage', dirname='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
+        # AppImage mounting example. Will do :
+        #   - AppImage mounted at /sbxdir/apps/xxxx/ in sandbox
+        #   - Script /sbxdir/apps/run_xxxx is created
+
     ]
 
 
 
 
 
-    # Without uc.gui, no X11 in sandbox
+    # --- GUI ----
+
+    # Without uc.gui, no DISPLAY in sandbox
+    # When uc.gui has value and is not "realX", a sandbox-managed new DISPLAY is used inside.
     # uc.gui="realX" # Use host's real X11
-    # uc.gui="weston" # A Xwayland in Weson is used
+    # uc.gui="weston-xwayland" # A Xwayland in Weson is used
     # uc.gui="xephyr"
     # uc.gui='xpra'
 
-    # uc.newXId='50' # When an sandbox-managed new X11 server used , the DISPLAY id. String. Otherwise random
+    # uc.newXId='50' # When internel DISPLAY used , the DISPLAY id. String. Otherwise random
 
-    uc.windowed_size = (800, 600) # When an windowed sandbox-managed new X11 server used
+    uc.windowed_size = (800, 600) # Take effects when gui uses weston/xephyr
 
-    uc.sync_clipbd_from_sandbox = True # Auto sync clipboard from sandbox to host, if an sandbox-managed new X11 server used
+    uc.sync_clipbd_from_sandbox = True # Auto sync clipboard from sandbox to host (take effect if internel DISPLAY used)
 
-    uc.gpus     =      True if uc.gui else False
-    uc.see_userfonts = True if uc.gui else False
+    uc.gpus     =      True if uc.gui else False # Sandbox can see /dev/dri and needed GPU's PCI paths in /sys .
+    uc.see_userfonts = True if uc.gui else False # Sandbox can see ~/.fonts and so on.
+
+    # --- ---- ----
+
 
     # uc.see_real_hw=True # Sandbox see host's real /dev and /sys
 
 
+    # --- DBus ----
 
     # User (session) DBUS (things like IME needs DBUS)
     # uc.dbus_session="allow" # Allow all DBUS communication
@@ -81,19 +100,19 @@ def userconfig(si):
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (by Flatpak) extra args
 
+    # --- ---- ----
 
     # Create a path in host as share dir. Dir will be accessable (r/w) by sandbox too.
-    # In sandbox, both same path and a '/tmp/share' is to this dir (r/w)
-    # This is a prefix. Sandbox name will be added to the dir name
+    # In sandbox, both same path and a '/tmp/share' is to this dir (r/w).
+    # This is a prefix. Sandbox name will be added to the dir name.
     uc.sharedir_prefix='/tmp/tsbx-share_'
 
 
     # uc.pulseaudio=True,
-    # uc.cups=True, # CUPS print NOTE You should check if CUPS-PDF's output dir is accessable by host
+    # uc.cups=True, # CUPS print
 
-    uc.ask_xdg_open=True # Replace 'xdg-open' by an asking script
-    uc.forbid_browsers=True # Ban system firefox/chromium/... in sandbox
-    # uc.allow_opt=True # Mount host's /opt into sandbox
+    uc.ask_xdg_open=True # Replace 'xdg-open' by an asking script.
+    uc.forbid_browsers=True # Ban system's firefox/chromium/... in sandbox.
     # uc.mask_osrelease=True # Ban /etc/os-release
     uc.machineid='zero' # Write zeros to /etc/machine-id
 
@@ -102,14 +121,16 @@ def userconfig(si):
         # ENV_VAR_NAME2 = 'ENV_VAR_VAL2',
     )
 
-    uc.net=d(
-        iface='real', # Use host's real net ifaces. Won't unshare net ns
-        # iface='tun', # Use pasta to create new net ns and manage net iface
-        # custom_dns=['127.0.0.1'], # Custom DNS (/etc/resolv.conf). If no custom and iface=real, host's real resolv.conf will be used
-    )
-    uc.pasta_custom_args = [ # NOTE only when uc.net.iface=tun , this is used
+    # --- Network ----
+
+    uc.net_iface='real' # Use host's real net ifaces. Won't unshare net ns
+    # uc.net_iface='tuntap-pasta' # Use pasta to create new net ns and manage net iface
+
+    # uc.dns_custom=['127.0.0.1'] # Custom /etc/resolv.conf . If not custom and net_iface=real, host's real resolv.conf will be used
+
+    uc.pasta_custom_args = [ # NOTE Takes effect when uc.net_iface=tuntap-pasta .
         # NOTE （no '-T' or no '-U' will allow all local ports seen by sandbox）
-        # '-T', 'none', '-U', 'none', # Forbid to access any port of host localhost
+        '-T', 'none', '-U', 'none', # Forbid to access any port of host localhost
 
         '--config-net', '--host-lo-to-ns-lo',
 
@@ -118,9 +139,9 @@ def userconfig(si):
         # '--ns-mac-addr', '00:00:00:00:00:04', # No this = random MAC
 
         # '--debug', '--trace',
-    ] if uc.net.iface=='tun' else None
+    ] if uc.net_iface=='tuntap-pasta' else None
 
-    # NOTE only when uc.net.iface=tun , set_nftables can be enabled
+    # NOTE Only when uc.net_iface=tuntap-pasta , set_nftables can be enabled
     # uc.set_nftables = True # Enable this, then nftables rules below will be applied to sandbox
     if uc.set_nftables == True : uc.nftables_rule = '''
         define DYNAMIC_BANIP_V4 = { 224.0.0.0/4 }
@@ -162,7 +183,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     bridges = []
     #-------------------------
 
-    icewm = True if uc.gui in ['xephyr','weston'] else False
+    icewm = True if uc.gui in ['xephyr','weston-xwayland'] else False
 
     if uc.see_userfonts: mnts_gui += [
         d(op='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
@@ -222,11 +243,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             '--microphone=disabled',
             #--title=VALUE
             #--border=yellow,10.
+            '--clipboard-direction=disabled', # 用xpra的好像对ASK_OPEN不灵
         ]
-
-        if not uc.sync_clipbd_from_sandbox:
-            xpra_extra_args +=   ['--clipboard-direction=disabled']
-        else: xpra_extra_args += ['--clipboard-direction=to-client']
 
         xpra_server_extra_args += [f'--xvfb=Xorg -ac -noreset -novtswitch -nolisten tcp  -nolisten local +extension GLX +extension RANDR +extension RENDER   -config /etc/xpra/xorg.conf  -depth 24 :{newXId}' ]
         # xpra_server_extra_args += [f'--xvfb=Xwayland :{newXId}']
@@ -235,7 +253,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.windowed_size:
         if uc.gui == 'xephyr':
             xephyr_extra_args = ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
-        elif uc.gui == 'weston' :
+        elif uc.gui == 'weston-xwayland' :
             weston_extra_args = [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
             xwayland_extra_args = ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
 
@@ -255,12 +273,12 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     RSLVCF_is_link = True if Path('/etc/resolv.conf').is_symlink() else False
     RSLVCF_is_file = is_file('/etc/resolv.conf')
     CHK(RSLVCF_is_link or RSLVCF_is_file, f"/etc/resolv.conf not symlink or file. We can't handle this")
-    dns_use_custom = isinstance(uc.net.custom_dns, list)
-    if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.net.custom_dns])
-    have_iface = uc.net.iface in ['real', 'tun']
+    dns_use_custom = isinstance(uc.dns_custom, list)
+    if dns_use_custom: RSLVCF_content = ''.join([f'nameserver {ip}\n' for ip in uc.dns_custom])
+    have_iface = uc.net_iface in ['real', 'tuntap-pasta']
 
-    if not have_iface: uc.net.iface = 'none'
-    if uc.set_nftables: CHK(uc.net.iface=='tun', 'Only when uc.net.iface=tun, set_nftables can be enabled')
+    if not have_iface: uc.net_iface = 'none'
+    if uc.set_nftables: CHK(uc.net_iface=='tuntap-pasta', 'Only when uc.net_iface=tuntap-pasta, set_nftables can be enabled')
 
     # link/file | custom/notcustom | ifacereal 共8种情况
     # TODO nscd if use real
@@ -299,7 +317,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     # bridge seefrom是从哪层可看见这个桥进程 seeto是通过这个桥进程看到哪个层的fs
-    if uc.gui in ['weston','xpra']:
+    if uc.gui in ['weston-xwayland','xpra']:
         bItem = d(seefrom='semitruCmpannLyr', seeto='mainLyr')
         bItem.create_links = []
         bItem.create_links += [f'/tmp/.X11-unix/X{newXId}']
@@ -347,7 +365,7 @@ def gen_layer2(si, uc, dyncfg):
             # 第2层是首次 unshare mnt 。先复制一次真实host的rootfs环境
             d(many_op='container-rootfs'),
             d(many_op='basic-dev'),
-            d(op='rosame', src='/dev/net/tun', SDS=1) if uc.net.iface=='tun' else None,
+            d(op='rosame', src='/dev/net/tun', SDS=1) if uc.net_iface=='tuntap-pasta' else None,
             d(many_op='mask-privacy', destbase='/'),
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
@@ -371,8 +389,8 @@ def gen_layer2(si, uc, dyncfg):
 
         create_userns_unpri=True,
 
-        unshare_net=True if uc.net.iface == 'none' else False,
-        pasta_args = uc.pasta_custom_args if uc.net.iface=='tun' else None, # 运行pasta, 并把自身加入其新netns
+        unshare_net=True if uc.net_iface == 'none' else False,
+        pasta_args = uc.pasta_custom_args if uc.net_iface=='tuntap-pasta' else None, # 运行pasta, 并把自身加入其新netns
         nftables_rule = uc.nftables_rule if uc.set_nftables else None,
 
         sublayers = [
@@ -393,21 +411,23 @@ def gen_layer2c(si, uc, dyncfg):
         ],
         is_semitruCmpannLyr=True, # 设layer2c（而非2）为semitruCmpannLyr,因为2c才有unshare_pid
         subprocs=[
-            d( cmdvec=["Xephyr",  f":{si.newXId}", '-nolisten', 'local', "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args] , subp_name='xephyr') if uc.gui=='xephyr' else None,
-            d( cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args] , subp_name='weston') if uc.gui=='weston' else None,
+            d( subp_name='xephyr', cmdvec=["Xephyr",  f":{si.newXId}", '-nolisten', 'local', "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args]
+            ) if uc.gui=='xephyr' else None,
 
-            d(
-                cmdvec=['xpra', *dyncfg.xpra_extra_args, 'attach',f':{si.newXId}'], subp_name='xpraclient',
+            d( subp_name='weston', cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args]
+            ) if uc.gui=='weston-xwayland' else None,
+
+            d( subp_name='xpraclient', cmdvec=['xpra', *dyncfg.xpra_extra_args, 'attach',f':{si.newXId}'],
                 start_after = [
                     d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ,
                     d(waittype='socket-listened', path=f'/run/xpra/{si.hostname}-{si.newXId}')
-                    ]
-            ) if uc.gui=='xpra' else None,
+            ] ) if uc.gui=='xpra' else None,
 
-            d( cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv], subp_name='dbusproxy') if uc.dbus_session=='filter' else None,
+            d( subp_name='dbusproxy',  cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv]
+            ) if uc.dbus_session=='filter' else None,
         ],
         daemon_tasks = [
-            d(task='sync_clipbd') if uc.gui in ['weston', 'xephyr'] else None,
+            d(task='sync_clipbd') if uc.gui in ['weston-xwayland', 'xephyr', 'xpra'] else None,
         ],
     )
 
@@ -417,7 +437,7 @@ def gen_layer2z(si, uc, dyncfg):
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(waittype='socket-listened', path=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston' else None,
+            d(waittype='socket-listened', path=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
         ],
         newrootfs=True,
         fs=[
@@ -425,7 +445,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(op='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston' else None,
+            d(op='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
             d(op='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -448,8 +468,6 @@ def gen_layer3(si, uc, dyncfg):
 
             # ---- 以上是不变条目 ----
 
-            d(op='robind', dest='/opt', src='/opt') if uc.allow_opt else None,
-
             d(many_op='basic-dev') if not uc.see_real_hw else None, # 创建新的容器最小的/dev
 
             d(op='robind', src=f'/run/user/{si.uid}/pulse/native', SDS=1) if uc.pulseaudio else None,
@@ -470,7 +488,7 @@ def gen_layer3(si, uc, dyncfg):
             ] if uc.gui=='realX' else [] ),
 
             d(op='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston' else None,
+            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
 
             *dyncfg.mnts_gui,
 
@@ -511,8 +529,8 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envset_grps=[
             d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston','xpra'] else None,
-            # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
+            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra'] else None,
+            # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
         sublayers=[
@@ -528,12 +546,15 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_net=True, # NOTE 内部xpra所带出来的dbus可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
         subprocs=[
             *([
-            d( cmdvec=["icewm"] , subp_name='icewm', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
-            d( cmdvec=["icewmtray"] , subp_name='icewmtray', start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            d( subp_name='icewm', cmdvec=["icewm"] , start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            d( subp_name='icewmtray', cmdvec=["icewmtray"] ,  start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
             ] if dyncfg.icewm else [] ) ,
 
-            d( cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ] , subp_name='xwayland') if uc.gui=='weston' else None,
-            d( cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], subp_name='xpraserver' ) if uc.gui=='xpra' else None,
+            d( subp_name='xwayland',  cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ]
+            ) if uc.gui=='weston-xwayland' else None,
+
+            d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}']
+            ) if uc.gui=='xpra' else None,
         ],
     )
 
@@ -549,7 +570,7 @@ def gen_layer4(si, uc, dyncfg):
         ],
 
         start_after = [
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston','xpra'] else None,
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston-xwayland','xpra'] else None,
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
@@ -661,7 +682,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     layer1_cfg = gen_layer1(si, uc, dyncfg)
     start_lyrs_recursive_jobs(si, layer1_cfg)
 
-    if uc.net.iface == 'tun': si.expected_alive_procs += [ 'netns_tun'] # 'pasta_runner'因为无法获取ns所以不放其中
+    if uc.net_iface == 'tuntap-pasta': si.expected_alive_procs += [ 'netns_tun'] # 'pasta_runner'因为无法获取ns所以不放其中
 
     bridges = []
     for bItem in (dyncfg.bridges or []):
@@ -1094,7 +1115,7 @@ def main(lyrcfg_in):
         log('---------------------')
         if si.newXId:
             CHK( is_XId_available(si.newXId), f"The display number {si.newXId=} to be used is occupied")
-        log(f"Creating new sandbox. Info dir: {si.outest_sbxdir}")
+        log(f"Creating new instance of sandbox. Info dir: {si.outest_sbxdir}")
         log(f"cgroup: {si.CG_SBX}")
         log(f"Procs to be polled by watchdog: {si.expected_alive_procs}")
         if si.newXId: log(f'X11/Wayland display number used in sandbox: {si.newXId}')
@@ -1513,7 +1534,7 @@ def wait_for_startAfters(arr_startAfter):
         tt = time.monotonic()
         if wait_task.waittype == 'socket-listened':
             while not is_unix_socket_listened(wait_task.path):
-                CHK(time.monotonic() <= tt+10, f'Waited too long, reporting error ( {wait_task} )')
+                CHK(time.monotonic() <= tt+(6 if OG.uc.gui!='xpra' else 40), f'Waited too long, reporting error ( {wait_task} )')
                 time.sleep(0.1)
 
 
@@ -1794,7 +1815,7 @@ def rmt_ro(path, flag=0, optn=''):
 
 
 def maybe_sendto_running_instance(reusefg):
-    log('Looking for running same-name instance...')
+    log('Looking for running instance of same-name sandbox ...')
     MATCH_SI_K = ["hash_bootsbx_py", "hostname", "uid", "gid", "username", "groupname", "PTMP", "pythonbin",  ]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
@@ -2254,7 +2275,7 @@ def daemon_outest():
     while True:
         OutestProcsMonitor.wdg()
 
-        if time.monotonic() >= t0 + 10:
+        if time.monotonic() >= t0 + (10 if OG.uc.gui!='xpra' else 60):
             A = set(dict.keys(get_procs_heared() ))
             B = set(si.expected_alive_procs) # TODO 区分expected_heared_procs , 应用 noWdg=1选项给subprocs
             if not B.issubset(A):
@@ -2365,7 +2386,7 @@ class ClipboardSyncer():
     def sync_from_sandbox_to_host(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
         if os.getpid() == 1: log_warn('sync_from_sandbox_to_host() called with pid=1, this should not happen') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            warn_exit(f'Timeout while syncing sandbox clipboard to host, giving up')
+            warn_exit(f'Timeout while syncing sandbox clipboard to host, giving up', no_cleanup=True)
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
 
@@ -2443,7 +2464,7 @@ class ClipboardSyncer():
     def handle_client_clipbdFromHostSocket(cls): # 只有fork出一个子进程后会调用这个. 这个不返回，只结束自己的进程
         if os.getpid() == 1: log_warn('handle_client_clipbdFromHostSocket() called with pid=1, this should not happen') ; print_stack(); return #由于探测到pid=1, 这里返回，不exit
         def timeout_handler(signum, frame):
-            warn_exit(f'Timeout while receiving data, giving up')
+            warn_exit(f'Timeout while receiving data, giving up', no_cleanup=True)
         signal.signal(signal.SIGALRM, timeout_handler)
         signal.setitimer(signal.ITIMER_REAL, 0.5) # 设置超时
         client_sock, _ = cls.socket_fromHostLsn.accept()
@@ -3243,9 +3264,9 @@ class DictNone(EnhancedDictTempl):
         try: return super().__getitem__(key)
         except KeyError:
             return None
-D = Dict # 试图访问不存在的键时, 报错
-d = DictFALSE # 试图访问不存在的键时，会返回EnhancedFalse
-dn = DictNone #试图访问不存在的键时， 返回None
+D = Dict  # Raises an error when trying to access a non-existent key.
+d = DictFALSE  # Returns EnhancedFalse when trying to access a non-existent key.
+dn = DictNone  # Returns None when trying to access a non-existent key.
 
 
 def eq_ignore_order(v1, v2):
@@ -3271,12 +3292,12 @@ def try_showerr(func):
 
 def warn_exit(err_msg, no_cleanup=False):
     print(loghead + err_msg, file=sys.stderr)
-    try_pass(lambda: wlog('error', errmsg=err_msg) )
     if not no_cleanup:
         sys.exit(1)
     else: os._exit(1)
 def raise_exit(err_msg, no_cleanup=False):
     print_stack()
+    try_pass(lambda: wlog('error', errmsg=err_msg) )
     warn_exit(err_msg, no_cleanup)
 
 def CHK( condition, errmsg='Some check failed', action='raise_exit'):
@@ -3288,22 +3309,17 @@ ASK_OPEN='''\
 #!/bin/bash
 tried_cmd="$0"
 input_arguments="$@"
-echo "A program is trying to execute $0 $input_arguments"
+title_text="Some program tried to execute"
+message_text="Some program tried to execute a command:\n$tried_cmd\nwith arguments passed as follows:"
+echo "$title_text $0 $input_arguments"
 if [[ ! -n "$input_arguments" ]]; then exit ; fi
 if [[ ! -n "$DISPLAY" ]]; then exit ; fi
-result_code=255
 if command -v kdialog &> /dev/null; then
-    kdialog --title "A program is trying to execute a command" --yesno "A program is trying to execute a command\n$tried_cmd\n\nArguments passed as follows. Copy the following content?\n\n$input_arguments"
-    result_code=$?
-elif command -v zenity &> /dev/null; then
-    zenity --question --title="A program is trying to execute a command" --text="A program is trying to execute a command\n$tried_cmd\n\nArguments passed as follows. Copy the following content?\n\n$input_arguments"
-    result_code=$?
+    kdialog --title "$title_text" --textinputbox "$message_text" "$input_arguments"
+elif command -v zenity &> /dev/null; then # zenity --text-info or --entry
+    echo -e "$message_text\n\n$input_arguments" | zenity --text-info --title "$title_text" --editable --filename=/dev/stdin
 else
-    echo "Neither kdialog nor zenity is installed, cannot show dialog"
-    exit
-fi
-if [[ $result_code -eq 0 ]]; then
-    echo -n "$input_arguments" | xsel --clipboard --input
+    echo "Neither kdialog nor zenity installed, cannot show dialog"
 fi
 '''
 
@@ -3341,6 +3357,7 @@ LimitSize=1
 '''
 
 if __name__ == "__main__":
+    CHK( platform.system() == 'Linux' and tuple(map(int, platform.release().split('.')[:2])) >= (6, 3) , 'Require Linux >= 6.3')
     set_nonewpriv()
     lyrcfg_to_use = 'notready'
     while lyrcfg_to_use:
