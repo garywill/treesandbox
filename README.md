@@ -24,7 +24,7 @@ Tree Sandbox is another Linux sandbox tool.
 | No traces in host HOME dir | ● | ● | ✘ |
 | Able to open in host when in-sandbox calls xdg-open | ● Can replace xdg-open by asking script. User can copy url/path/args | ✘ | ● Managed by portal |
 | Dynamically change accessable file/hardware list | ✘ Pre-configured mount list | ✘ Pre-configured mount list | ● Portal can do dynamically change, but in-sandbox see unpredictable file path |
-| unshare net ns with host. Sandbox has Internet. Choosily "merge" host's and sandbox's allowed localhost ports | ● tun/tap + nftables. Fine-grained control | ◐ | ◐ |
+| unshare net ns with host. Sandbox has Internet. Choosily "merge" host's and sandbox's allowed localhost ports | ● tun/tap + nftables (rootless). Fine-grained control | ◐ | ◐ |
 
 ### Compare with Bubblewrap
 
@@ -65,7 +65,7 @@ Tree Sandbox is another Linux sandbox tool.
   - [x] Optional don't manage network (don't unshare net ns)
   - [x] Optional network control
     - [x] Bidirectional / unidirectional port-range exposure between host and sandbox (tun managed by pasta; mutual access via localhost:port).
-    - [x] Custom nftables rules inside the sandbox.
+    - [x] Custom nftables rules (rootless) in sandbox.
 
 - [x] Mount AppImage and squashfs internally to access their contents inside the sandbox.
 
@@ -76,9 +76,9 @@ Tree Sandbox is another Linux sandbox tool.
 - For the same-name sandbox: single-app/multi-app; single-instance/multi-instance (app selection at startup, instance management, and cmd/args passing)
 
   Note: the user-configured `sandbox_name` is used to identify a “same-name sandbox”.
-  - [x] One sandbox can configure multiple apps; you can choose the app at startup (e.g., put multiple apps from the <u> same vendor </u> into one sandbox for their easier interaction).
+  - [x] One sandbox can configure multiple apps; you can choose the app at startup (e.g., put multiple apps from the <ins><u> same vendor </u></ins> into one sandbox for their easier interaction).
   - [x] Multi-instance mode: starting the sandbox multiple times creates multiple isolated independent instances.
-  - [x] Single-instance mode: after starting one sandbox, starting the same sandbox again passes command arguments to the <u>already-running</u> sandbox.
+  - [x] Single-instance mode: after starting one sandbox, starting the same sandbox again passes command arguments to the <ins><u>already-running</u></ins> sandbox.
 
 - [x] “Containers tree” internally can do:
   - [x] Per-layer control of whether a type of ns is `unshare`d or not from parent layer.
@@ -126,7 +126,7 @@ Here is an example of what a sandbox container tree might look like:
             DBus proxy and filtering proc
 ```
 
-With the “containers tree” model, we can **isolate** procs of different "classes" inside the sandbox  <u> without requiring host subuid/subgid </u>.
+With the “containers tree” model, we can **isolate** procs of different "classes" inside the sandbox  <ins><u> without requiring host subuid/subgid </u></ins>.
 
 The way it works allow finely controlling the isolation degree and filesystem visibility for each layer. If you want, you can even play with unlimited nesting.
 
@@ -165,7 +165,7 @@ Let's see some examples to get to know about Tree Sandbox. A few words cannot co
 
 Suppose you have two apps, VSCode and MSEdge, which come from **same vendor**, so you want them run in same sandbox **called `ms`**, to enable their better **interaction** (assuming they will interact with each other).
 
-Tree Sandbox supports <u>placing **multiple different apps in same sandbox** and provides **choose-and-launch** method</u>.
+Tree Sandbox supports <ins><u>placing **multiple different apps in same sandbox** and provides **choose-and-launch** method</u></ins>.
 
 Assume that after proper configuration, our host can call MSEdge browser using following command to open GitHub:
 
@@ -186,7 +186,7 @@ tsbxrun_ms.py --app vscode app.js  # 3
 That’s 3 calls already. Next, assume host calls the **in-sandbox** browser again to open Linux website **in new tab**:
 
 ```sh
-tsbxrun_ms.py --app msedge https://www.kernel.com   # 4
+tsbxrun_ms.py --app msedge https://www.kernel.org   # 4
 ```
 
 Above has assumed the host has made **multiple calls** to `tsbxrun_ms.py`. To tell subsequent calls to **reuse** the sandbox instance started on the first call, we configure the sandbox as **"reuseful"**.
@@ -221,46 +221,69 @@ uc.pasta_custom_args = [
 
 That achieves a "partial merge" of localhost between host and sandbox.
 
-Other sandbox tools have similar feature, while we using pasta having **<u>advantages </u>** :
+Other sandbox tools have similar feature, while we using pasta having **<ins><u>advantages </u></ins>** :
 
 - pasta uses tun/tap, and does not involve host root at all.
 - Host won't spawn an extra interface like `docker0`.
-- Both IP and MAC of sandbox can be configured. IP can even be looked same as host's  without conflict, while still allowing the sandbox to access the internet.
+- Both IP and MAC of sandbox can be configured. Even, <ins><u>IP can be looked same as host's  without conflict</u></ins>. 
 
-Furthermore, once we've been managing net interface, we can set custom nftables rules in sandbox. That opens up a lot of possibilities.
+Furthermore, since we've been able to manage network interface, we can set custom nftables rules in sandbox (rootlessly). That opens up a lot of possibilities.
 
 ### Example - Use AppImage in Sandbox
 
 You may have encountered before: Trying to run a downloaded AppImage file inside a sandbox, it failed because sandbox disables `CAP_SYS_ADMIN`, stopping fuse.
 
-Tree Sandbox can **<u>do the mounting work so no need to give AppImage fuse permission</u>**. A typical configuration is like:
+Tree Sandbox can **<ins><u>do the mounting work, so no need to give AppImage fuse permission</u></ins>**. A typical configuration is like:
 
 ```python
 uc.user_mnts = [ 
-  d(many_op='appimage', name='SOMENAME', src=f'/path/xxxx.AppImage') 
+  d(many_op='appimage', name='SomeName', src=f'/path/xxxx.AppImage') 
 ]
 ```
 
 The squashfs in AppImage will be mounted to an in-sandbox path, and a start script for it will be created:
 
 ```
-/sbxdir/apps/SOMENAME/  # squashfs (AppImage) mounted
-/sbxdir/apps/run_SOMENAME  # Start script for it
+/sbxdir/apps/SomeName/  # squashfs (AppImage) mounted
+/sbxdir/apps/run_SomeName  # Start script for it
 ```
 
 You should also include in your configuration:
 
 ```python
 uc.apps = [
-    d(cmdvec=['/sbxdir/apps/run_SOMENAME'])
+    d(cmdvec=['/sbxdir/apps/run_SomeName'])
 ]
 ```
 
 or, more simply: (because `/sbxdir/apps` automatically added to `PATH`)
 
 ```python
-    d(cmdvec=['run_SOMENAME'])
+    d(cmdvec=['run_SomeName'])
 ```
+
+### Example - From Host Get Multiple Shells
+
+If you have a sandbox where you frequently need to <ins><u>from host connect to multiple shell sessions inside the sandbox simultaneously</u></ins>, you can configure :
+
+```python
+uc.reuseful=True
+uc.apps = [
+    ...
+    d(cmdvec=['bash'], appname='bash'), 
+    ...
+]
+```
+
+("reuseful" explained before)
+
+When to launch this sandbox, or when host to connect to a new inner shell session, <ins><u>host</u></ins> can use command:
+
+```sh
+tsbxrun_mysandbox.py --reusefg --app bash
+```
+
+`--reusefg` means "reuse in foreground".
 
 ## Some Terms
 
@@ -272,9 +295,9 @@ or, more simply: (because `/sbxdir/apps` automatically added to `PATH`)
 
   the “connection relationship” between a container and its parent .
 
-<u>Above</u> are what you've already knew.
+<ins><u>Above</u></ins> are what you've already knew.
 
-<u>Following</u> are Tree Sandbox's concepts:
+<ins><u>Following</u></ins> are Tree Sandbox's concepts:
 
 - Main layer:
 
@@ -290,7 +313,7 @@ or, more simply: (because `/sbxdir/apps` automatically added to `PATH`)
 
 - “Same-name sandbox” and "reuse" 
 
-  You have an app to run isolated in sandbox. When you want sandbox for this <u>same app</u> act as <u>single-instance sandbox</u>  (i.e., cmd/args sent to the <u>running</u> instance instead of starting sandbox multiple times),  "same-name" is the basis for identification. After finding a live same-name sandbox instance, "reuse" can take off. (Similar to Firejail's `--join=name`)
+  You have an app to run isolated in sandbox. When you want sandbox for this <ins><u>same app</u></ins> act as <ins><u>single-instance sandbox</u></ins>  (i.e., cmd/args sent to the <ins><u>running</u></ins> instance instead of starting sandbox multiple times),  "same-name" is the basis for identification. After finding a live same-name sandbox instance, "reuse" can take off. (Similar to Firejail's `--join=name`)
 
 ## Dependencies
 
@@ -365,7 +388,7 @@ Starting an instance of a sandbox named `ms`, info about this instance will be t
 
 (`ms-NNNN-NNNN-N` is the name of this sandbox instance.  N is number. Assuming your UID is 1000. )
 
-An additional feature: If the sandbox uses isolated internal X11/Wayland, temporary symlink(s) will be created on host at the following location, to allow <u> user to record sandbox screen easily </u> from host: (assume sandbox uses DISPLAY 500)
+An additional feature: If the sandbox uses isolated internal X11/Wayland, temporary symlink(s) will be created on host at the following location, to allow <ins><u> user to record sandbox screen easily </u></ins> from host: (assume sandbox uses DISPLAY 500)
 
 ```
 /tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
@@ -377,7 +400,7 @@ When sandbox exits, temporary symlinks cleaned up.
 
 ### Sandbox layering structure of our default template
 
-"Containers tree" design makes it a fully internally nestable sandbox. A default nesting template is provided, which <u>suits 95% uses, so no need to know how it nests</u>.
+"Containers tree" design makes it a fully internally nestable sandbox. A default nesting template is provided, which <ins><u>suits 95% uses, so no need to know how it nests</u></ins>.
 
 But, if you want to unlock more possibilities, you need to understand the internals and how the default template define the "layers" of "containers tree". (It's pretty mind-bending)
 

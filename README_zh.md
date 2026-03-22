@@ -21,7 +21,7 @@ Tree Sandbox 是又一 Linux沙箱工具，可作为它们的补充。
 | 不在真实家目录产生文件 | ● | ● | ✘ |
 | 沙箱内部调用xdg-open时在外部打开 | ● 可替换xdg-open为弹出询问，用户复制url/路径/参数 | ✘ | ● 由门户管理 |
 | 动态决定沙箱内可访问哪些文件或硬件 | ✘ 固定的事先配置好的挂载表 | ✘ 固定的事先配置好的挂载表 | ● 门户做动态临时挂载/授权，但沙箱内得到的文件路径不确定 |
-| 主与机 unshare net ns ，沙箱可以连接互联网，选择性“融合”主机和沙箱的localhost端口 | ● tun/tap + nftables 细粒度控制 | ◐ | ◐ |
+| 主与机 unshare net ns ，沙箱可以连接互联网，选择性“融合”主机和沙箱的localhost端口 | ● tun/tap + nftables (免root) 细粒度控制 | ◐ | ◐ |
 
 ### 与 Bubblewrap 对比
 
@@ -62,7 +62,7 @@ Tree Sandbox 是又一 Linux沙箱工具，可作为它们的补充。
   - [x] 可选的不管理沙箱网络（不 unshare net ns）
   - [x] 可选的网络控制
       - [x] 主机与沙箱之间双向、单向端口范围暴露（tun，由pasta管理。可通过 localhost:端口号 互访）
-      - [x] 内部nftbles规则自定义
+      - [x] 内部nftbles规则(免root)自定义
 
 - [x] 可挂载 AppImage、squashfs 在内部访问其内容
 
@@ -73,9 +73,9 @@ Tree Sandbox 是又一 Linux沙箱工具，可作为它们的补充。
 - 同名沙箱的：单App/多App；单实例/多实例 （启动时的App选择、实例管理、命令参数的传递）
 
     说明：以用户设置的 `sandbox_name` 来识别 “同名沙箱”
-    - [x] 一个沙箱可设置多个app，启动时可指定app（例如 我们可把<u>同一厂商</u>出品的不同app可以放同一沙箱里，便于它们之间交互）
+    - [x] 一个沙箱可设置多个app，启动时可指定app（例如 我们可把<ins><u>同一厂商</u></ins>出品的不同app可以放同一沙箱里，便于它们之间交互）
     - [x] 同名沙箱多实例（从主机多次启动沙箱，会运行多个实例，互相隔离、互相独立)
-    - [x] 同名沙箱单实例（从主机启动一种沙箱后，再次启动这种沙箱，则传递命令参数至</u>已运行</u>的沙箱）
+    - [x] 同名沙箱单实例（从主机启动一种沙箱后，再次启动这种沙箱，则传递命令参数至</u></ins>已运行</u></ins>的沙箱）
 
 - [x] “树形容器”内部原理实现了:
     - [x] 每层与其上层之间的每种 ns 的隔离与否 (是否unshare) 选项控制
@@ -123,7 +123,7 @@ Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵�
             DBUS通信代理和过滤进程
 ```
 
-我们用了“容器树”后，在 <u>无需主机 subuid / subgid </u> 的情况下实现沙箱内部的不同“级别”的进程之间的**互相隔离**。
+我们用了“容器树”后，在 <ins><u>无需主机 subuid / subgid </u></ins> 的情况下实现沙箱内部的不同“级别”的进程之间的**互相隔离**。
 
 内部实现可精细控制每层隔离程度、每层可见文件范围。如果你愿意，也可以玩无限嵌套。
 
@@ -162,7 +162,7 @@ python3 -IBS ./treesandbox.py
 
 假设你有两个App, 叫 VSCode 和 MSEdge , 它们来自**同一厂商**，因此你想要把它们放入一个**叫 `ms`** 的沙箱内运行，以让它们两之间更好地**交互**（假设它们是会互相交互的吧）。
 
-Tree Sandbox 支持<u>将**多个不同App放同一沙箱里**，并提供“**选择-启动**”方式</u>。
+Tree Sandbox 支持<ins><u>将**多个不同App放同一沙箱里**，并提供“**选择-启动**”方式</u></ins>。
 
 假设在经过正确的配置后，主机可以通过以下命令来调用 MSEdge 浏览器，打开 Github：
 
@@ -183,10 +183,10 @@ tsbxrun_ms.py --app vscode app.js  # 3
 已经发生了3次调用了。然后，假设主机又要调用**沙箱里的**浏览器，用**新标签**打开Linux官网:
 
 ```sh
-tsbxrun_ms.py --app msedge https://www.kernel.com   # 4
+tsbxrun_ms.py --app msedge https://www.kernel.org   # 4
 ```
 
-以上已经假设主机进行了**多次调用** `tsbxrun_ms.py` 。为了让后面的调用**复用**第一次打开的沙箱，我们需要把沙箱配置成**“复用型”**的。
+以上已经假设主机进行了**多次调用** `tsbxrun_ms.py` 。为了让后面的调用**复用**第一次打开的沙箱，我们需要把沙箱配置成“**复用型**”的。
 
 本例的 userconfig 配置如下（简略）：
 
@@ -218,46 +218,69 @@ uc.pasta_custom_args = [
 
 这样实现了对主机与沙箱的 localhost 的“部分融合”。
 
-其他沙箱工具也有类似功能，但我们使用 pasta **<u>优势在于</u>**：
+其他沙箱工具也有类似功能，但我们使用 pasta **<ins><u>优势在于</u></ins>**：
 
 - pasta使用的是 tun/tap ，整个过程不涉及主机的root
 - 主机不会多出一个像`docker0`那样的介面
-- 沙箱自身看到的 IP 和 MAC 都可以设置，IP也可设置成与主机的某个介面一样，而不冲突，也不耽误沙箱的互联网访问
+- 沙箱自身看到的 IP 和 MAC 都可以设置，甚至可让<ins><u>IP与主机的看起来一样，而不冲突</u></ins>
 
-此外，像这样用了自己管理的网络介面，也可设置沙箱内 nftables 规则，玩法就很多了，相信不必多说nftables的强大。
+此外，像这样用了自己管理的网络介面，也可设置沙箱内 nftables 规则（免root），玩法就很多了，相信不必多说nftables的强大。
 
 ### 例 - 在沙箱里用 AppImage
 
 你可能遇到过，从网上下载 AppImage文件 后，尝试放进某沙箱里跑，因沙箱禁止了 `CAP_SYS_ADMIN` ，fuse无法工作，而跑不起来的情况。
 
-Tree Sandbox 可以**<u>替 AppImage 完成挂载工作，不需要给它 fuse 权限</u>**。用法一般是（配置）：
+Tree Sandbox 可以<ins><u>**替 AppImage 完成挂载工作，不需要给它 fuse 权限**</u></ins>。用法一般是（配置）：
 
 ```python
 uc.user_mnts = [ 
-  d(many_op='appimage', name='SOMENAME', src=f'/path/xxxx.AppImage') 
+  d(many_op='appimage', name='SomeName', src=f'/path/xxxx.AppImage') 
 ]
 ```
 
 AppImage 里的 squashfs 会挂载到沙箱内的路径，并创建一个对应的启动脚本：
 
 ```
-/sbxdir/apps/SOMENAME/  # squashfs (AppImage) mounted
-/sbxdir/apps/run_SOMENAME  # Start script for it
+/sbxdir/apps/SomeName/  # squashfs (AppImage) mounted
+/sbxdir/apps/run_SomeName  # Start script for it
 ```
 
 你还应该在配置中加上：
 
 ```python
 uc.apps = [
-    d(cmdvec=['/sbxdir/apps/run_SOMENAME'])
+    d(cmdvec=['/sbxdir/apps/run_SomeName'])
 ]
 ```
 
 或者更简单的： （因为 `/sbxdir/apps` 会被自动加入到 PATH）
 
 ```python
-    d(cmdvec=['run_SOMENAME'])
+    d(cmdvec=['run_SomeName'])
 ```
+
+### 例 - 主机同时操作多个 shell
+
+若你有某个沙箱，经常要从<ins><u>主机同时连接沙箱内多个 shell 会话</u></ins>，那么可以这样配置：
+
+```python
+uc.reuseful=True
+uc.apps = [
+    ...
+    d(cmdvec=['bash'], appname='bash'), 
+    ...
+]
+```
+
+（“reuseful”的含意之前解释过）
+
+要 启动此沙箱 时，或 主机要连接沙箱内新 shell session 时，<ins><u>主机</u></ins>可以用命令：
+
+```sh
+tsbxrun_mysandbox.py --reusefg --app bash
+```
+
+`--reusefg` 意思是 “reuse in foreground”。
 
 ## 一些术语
 
@@ -269,9 +292,9 @@ uc.apps = [
 
   是 容器 与其 父容器 之间的 “连接关系”
 
-<u>以上</u>相信你早就理解。
+<ins><u>以上</u></ins>相信你早就理解。
 
-<u>以下</u>是 Tree Sandbox 的概念：
+<ins><u>以下</u></ins>是 Tree Sandbox 的概念：
 
 - 主层：
 
@@ -287,7 +310,7 @@ uc.apps = [
 
 - “同名沙箱” 和 “复用”
 
-    你有一个要跑在沙箱里隔离的App。当你想让此 <u>相同App</u> 的沙箱 <u>单实例</u> 运行 (即，多次发送命令参数到<u>运行中</u>的沙箱，而不要启动沙箱多次) 时，“同名沙箱”是用于判断的依据。找到同名沙箱后，即可“复用”。（类似 Firejail 的 `--join=name` ）
+    你有一个要跑在沙箱里隔离的App。当你想让此 <ins><u>相同App</u></ins> 的沙箱 <ins><u>单实例</u></ins> 运行 (即，多次发送命令参数到<ins><u>运行中</u></ins>的沙箱，而不要启动沙箱多次) 时，“同名沙箱”是用于判断的依据。找到同名沙箱后，即可“复用”。（类似 Firejail 的 `--join=name` ）
 
 ## 依赖
 
@@ -362,7 +385,7 @@ User Advanced Manual 与 User Manual 是不同的。95%的情况下不需要看 
 
 （`ms-NNNN-NNNN-N` 是这个沙箱实例的名称。N是数字。假设你的 uid 是 1000。）
 
-另外有个附加功能：如果沙箱使用的内部的隔离的 X11/Wayland，那么还会在主机的以下位置创建临时symlink，以<u>便于从主机给沙箱录屏</u>： (假设沙箱使用 DISPLAY 500 )
+另外有个附加功能：如果沙箱使用的内部的隔离的 X11/Wayland，那么还会在主机的以下位置创建临时symlink，以<ins><u>便于从主机给沙箱录屏</u></ins>： (假设沙箱使用 DISPLAY 500 )
 
 ```
 /tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
@@ -374,7 +397,7 @@ $XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/wayl
 
 ### 默认模板的沙箱分层结构
 
-“容器树”的实现决定了这是个内部可以自由嵌套的沙箱。已设置有默认的嵌套模板，<u>满足95%的使用，不需了解它是如何嵌套的</u>。
+“容器树”的实现决定了这是个内部可以自由嵌套的沙箱。已设置有默认的嵌套模板，<ins><u>满足95%的使用，不需了解它是如何嵌套的</u></ins>。
 
 但，如果想发掘更多可能性，那么要了解一下内部实现，了解默认模板是如何给容器树划分“层”的。（挺费脑的哦）
 
