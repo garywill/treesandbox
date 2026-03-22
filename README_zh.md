@@ -2,7 +2,7 @@
 
 你一定玩过 Podman、Firejail、Flatpak、Bubblewrap ...
 
-Tree Sandbox 是又一 Linux沙箱工具，可作为它们的补充。
+Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充。
 
 “树形”沙箱，多层容器嵌套、分枝，像由多个子容器组成的“树”。
 
@@ -41,7 +41,7 @@ Tree Sandbox 是又一 Linux沙箱工具，可作为它们的补充。
 
 - 沙箱内使用 GUI
     - [x] 可选暴露真实 X11 接口给沙箱
-    - [x] 可选使用 Weston + Xwayland 隔离 X11（配icewm）
+    - [x] 可选使用 Weston + Xwayland 隔离 X11（GPU可用）（配icewm）
     - [x] 可选使用 Xephyr 隔离 X11（配icewm）
     - [x] 可选使用 Xpra 隔离的 无缝X11 代理
     - [ ] 可选暴露 wayland 接口给沙箱
@@ -201,6 +201,8 @@ uc.apps = [
 
 ### 例 - localhost的“部分融合”
 
+其他沙箱也有网络方面的类似功能，但我们目前有一点小优势。
+
 假设主机有程序监听本地22、53、8000。不想暴露 22 给沙箱，但 53 和 8000 希望沙箱能访问，而且沙箱 直接通过`127.0.0.1` 访问， 省去 子网网关IP配置 等。
 
 沙箱内也运行程序，它监听端口 1080 。同时又希望主机能访问沙箱的 1080 ，也是 直接通过`127.0.0.1` ，省去 子网客户端IP配置 等。
@@ -212,6 +214,7 @@ uc.net_iface='tuntap-pasta'
 uc.pasta_custom_args = [ 
     '-T', '53,8000', '-U', '53,8000' ,
     '-t', '1080', '-u', '1080', 
+#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
     ...
 ]
 ```
@@ -221,7 +224,7 @@ uc.pasta_custom_args = [
 其他沙箱工具也有类似功能，但我们使用 pasta **<ins><u>优势在于</u></ins>**：
 
 - pasta使用的是 tun/tap ，整个过程不涉及主机的root
-- 主机不会多出一个像`docker0`那样的介面
+- 主机**不会**多出一个像`docker0`那样的介面
 - 沙箱自身看到的 IP 和 MAC 都可以设置，甚至可让<ins><u>IP与主机的看起来一样，而不冲突</u></ins>
 
 此外，像这样用了自己管理的网络介面，也可设置沙箱内 nftables 规则（免root），玩法就很多了，相信不必多说nftables的强大。
@@ -302,7 +305,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
 - 辅助进程：
 
-  一个沙箱正常运行需要用到的，但又不是用户的目标app的进程，这种进程叫 辅助进程 。 例如 xpra、xdg-dbus-proxy 等。辅助进程 在 主层以外 的层 运行。
+  一个沙箱正常运行需要用到的，但又不是用户的目标app的进程，这种进程叫 辅助进程 。 例如 Xpra、xdg-dbus-proxy 等。辅助进程 在 主层以外 的层 运行。
 
 - “不信任” 与 “半信任”：
 
@@ -322,6 +325,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 - glibc
 - Python >= 3.12
 - bash
+- sleep
 
 (虽然是Python脚本，但通过libc直接调用Linux内核功能，不需第三方Python库)
 
@@ -331,7 +335,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 - xdg-dbus-proxy (过滤DBUS通信)
 - [pasta (passt)](https://passt.top) (网络介面tun/tap)
 - nftables (网络流量控制)
-- xpra (隔离X11。无缝显示)
+- Xpra (隔离X11。无缝显示)
 - Weston + Xwayland + icewm (隔离X11)
 - Xephyr + icewm (隔离X11)
 - xsel (同步剪贴板)
@@ -431,9 +435,9 @@ Linux Host
 
 ## 声名
 
-本项目概不承保，用户自担风险，自负吉凶。
-
-This project comes with no warranty. Use on your own risk.
+1. 本项目概不承保，用户自担风险，自负吉凶。
+1. 所用之场、所带之器、所载之物、所作之事，法理之宜，用户自判自决自断自承，好坏责任，咸归用户。
+1. 请用户遵守要运行的App的使用条款，若因用户违反产生的纠纷与本项目无关。
 
 ## License
 

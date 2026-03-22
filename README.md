@@ -5,7 +5,7 @@ English | [中文](README_zh.md)
 
 You’ve played with Podman, Firejail, Flatpak, Bubblewrap, ...
 
-Tree Sandbox is another Linux sandbox tool.
+Tree Sandbox is another rootless Linux sandbox tool.
 
 "Tree-shaped" sandbox: multi-layer nesting and branching, like a “tree” composed of multiple sub-containers.
 
@@ -44,7 +44,7 @@ Tree Sandbox is another Linux sandbox tool.
 
 - GUI in sandbox
   - [x] Optionally expose host X11 to the sandbox.
-  - [x] Optional isolated X11 using Weston + Xwayland ( with icewm).
+  - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
   - [x] Optional isolated X11 using Xephyr ( with icewm).
   - [x] Optional seamless isolated X11 proxy via Xpra.
   - [ ] Optional expose Wayland to the sandbox.
@@ -204,6 +204,8 @@ uc.apps = [
 
 ### Example - Partially "Merge" localhost
 
+Other sandboxes offer similar network feature, while we currently have slight advantage.
+
 Assume programs on host listen on local ports 22, 53, and 8000. You do not want to expose 22 to sandbox, but you want sandbox able to access 53 and 8000, and you want the sandbox to access them directly via `127.0.0.1` to avoid configuring subnet gateway IP.
 
 Assume also a program in sandbox listening on port 1080. You want host able to access sandbox's 1080, directly via `127.0.0.1` too, to avoid configuring subnet client IPs.
@@ -215,6 +217,7 @@ uc.net_iface='tuntap-pasta'
 uc.pasta_custom_args = [ 
     '-T', '53,8000', '-U', '53,8000' ,
     '-t', '1080', '-u', '1080', 
+#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
     ...
 ]
 ```
@@ -224,7 +227,7 @@ That achieves a "partial merge" of localhost between host and sandbox.
 Other sandbox tools have similar feature, while we using pasta having **<ins><u>advantages </u></ins>** :
 
 - pasta uses tun/tap, and does not involve host root at all.
-- Host won't spawn an extra interface like `docker0`.
+- Host **won't** spawn an extra interface like `docker0`.
 - Both IP and MAC of sandbox can be configured. Even, <ins><u>IP can be looked same as host's  without conflict</u></ins>. 
 
 Furthermore, since we've been able to manage network interface, we can set custom nftables rules in sandbox (rootlessly). That opens up a lot of possibilities.
@@ -305,7 +308,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
 - Companion Process:
 
-  Processes that are needed for a sandbox to function but are not the user's target app. Such as xpra, xdg-dbus-proxy, etc. Companion processes run on layers other than the main layer.
+  Processes that are needed for a sandbox to function but are not the user's target app. Such as Xpra, xdg-dbus-proxy, etc. Companion processes run on layers other than the main layer.
 
 - "Untrusted" and "semi-trusted":
 
@@ -320,11 +323,12 @@ tsbxrun_mysandbox.py --reusefg --app bash
 Required:
 
 - Linux Kernel >= 6.3
-  - user namespace
-  - cgroup v2
+    - user namespace
+    - cgroup v2
 - glibc
 - Python >= 3.12
 - bash
+- sleep
 
 (Although Python script it is, it directly talks to Linux kernel via libc, no third-party Python library.)
 
@@ -334,7 +338,7 @@ Optional:
 - xdg-dbus-proxy (filter DBus communication)
 - [pasta (passt)](https://passt.top) (tun/tap networking)
 - nftables (network traffic control)
-- xpra (isolated X11, seamless)
+- Xpra (isolated X11, seamless)
 - Weston + Xwayland + icewm (isolated X11)
 - Xephyr + icewm (isolated X11)
 - xsel (clipboard sync)
@@ -434,7 +438,8 @@ After the sandbox starts, the user’s app runs in layer4. layer4 is "main layer
 
 ## Disclaimer
 
-This project comes with no warranty. Use on your own risk.
+1. This project comes with no warranty. Use on your own risk.
+1. Ensure your uses are legal and appropriate. Follow the terms of service for any apps you run with this. You're responsible for whatever happens.
 
 ## License
 

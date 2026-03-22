@@ -1433,7 +1433,7 @@ def create_netns_tun( pasta_custom_args=[] ):
             output["ns"] = dict(net=os.stat('/proc/self/ns/net').st_ino, pid=os.stat('/proc/self/ns/pid').st_ino)
             output["start_tick"] = open('/proc/self/stat').read().split(') ')[-1].split(' ')[22-1-2]
             pathlib.Path('/{tlcfg.sbxdir_path1}/temp/netns_proc_info.fifo').write_text( json.dumps(output) )
-            os.execvp('sleep', ['sleep', 'infinity'])
+            os.execvp('sleep', ["{si.sandbox_name}_pasta", 'infinity'])
         '''.strip().splitlines() ])
         execvp('pasta',  ['pasta', '-f',  '--runas', f'{si.uid}:{si.gid}',
             *pasta_custom_args,
@@ -1494,7 +1494,7 @@ def create_userns_unpri():
              ready_proc_name='userns_unpri',
              pidns_depth=tlcfg.pidns_depth, pidns_tree=tlcfg.pidns_tree,
         )
-        execvp('sleep', ['sleep', 'infinity'])
+        execvp('sleep', [f"{si.sandbox_name}_userns" ,  'infinity'])
         raise_exit('exec sleep failed') # exec后不应该到这里
     else: # 原进程
         skp.pa_recv(1, 1, BS.SetMeUidUser)
@@ -2181,8 +2181,7 @@ class OutestProcsMonitor:
 
 
                         drop_caps(no_textcheck_after_dropcap=True)
-                        # log('execvp sleep infinity')
-                        execvp('sleep', ['sleep', 'infinity'])
+                        execvp('sleep', [f"{si.sandbox_name}_{bridge_name}", 'infinity' ])
                         errmsg = f'Bridge exec unsuccessful {bItem}'
                         # wlog('error', errmsg=errmsg) # fd已关闭，无法wlog('error')
                         raise_exit(errmsg, no_cleanup=True)
@@ -2267,7 +2266,7 @@ class OutestProcsMonitor:
 
 def daemon_outest():
     # TODO 等待5秒，等待主app启动的信号，否则退出
-
+    set_proc_dispname(f'{si.sandbox_name}_TSBX_outest_{si.instance_name}'[:15])
     register_sig_handlers(outest=True)
 
     WlogReader.init()
