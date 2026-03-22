@@ -142,20 +142,20 @@ python3 -IBS ./treesandbox.py
 
 (`-IBS` means we don't need third-party python library)
 
-If you see in-sandbox shell prompt, congratulations!
+If you see in-sandbox shell prompt, congratulations! It works!
 
 Now you can take a look at [dependency list](#Dependencies), and consider installing some optional software to unlock more integrated features.
 
-### Deploy your sandboxes
+### Get Your Sandbox(es) Ready
 
-Above just checked your computer can run Tree Sandbox. Before actual use, you want to deploy startup script(s) of your **specific sandbox(es)**.
+Above just checked your computer can run Tree Sandbox. Before actual use, you want to make your startup script(s) of your **specific sandbox(es)** ready.
 
-Currently, need to manually deploy. Steps to deploy a **specific sandbox** are:
+Currently, need to manually do:
 
-1. Copy `treesandbox.py` from this repository to target location: `/yourpath/tsbxrun_mysandbox1.py`
+1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
 1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. **Modify userconfig section according to your specific needs**.
 
-Because this project is in early stage, userconfig hasn't been separated from the sandbox code — both in the same `.py` file.
+Because this project is in early stage, userconfig hasn't been separated from sandbox program code — all in single `.py` file. So that's current deploy & config steps.
 
 ## What Difference with Tree Sandbox
 

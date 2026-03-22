@@ -139,20 +139,20 @@ python3 -IBS ./treesandbox.py
 
 （`-IBS` = 不需要第三方python库）
 
-如果沙箱内的shell提示符出现了，恭喜。
+如果沙箱内的shell提示符出现了，那么恭喜，运行成功！
 
 现在你可以看看 [依赖列表](#依赖) ，考虑是否安装一些额外软件，以解锁更多整合了的功能。
 
-### 部署你的沙箱
+### 弄好你的沙箱
 
-以上只是说明你的电脑能跑 Tree Sandbox 了，而实际使用前，是要部署 **具体的沙箱** 的 启动脚本 的。
+以上只是说明你的电脑能跑 Tree Sandbox 了，而实际使用前，是要弄好 **具体的沙箱** 的 启动脚本 的。
 
-目前，部署方式为手动部署。部署一个**具体沙箱**的步骤：
+目前，要手动操作一下：
 
-1. 复制本仓库的 `treesandbox.py` 到 你的目标位置 `/yourpath/tsbxrun_mysandbox1.py`
+1. 从本仓库复制 `treesandbox.py` 到 `/yourpath/tsbxrun_mysandbox1.py`
 1. 打开编辑 `/yourpath/tsbxrun_mysandbox1.py` ， **根据你具体需要，修改其中 userconfig 部分**。
 
-因为目前本项处于早期，所有代码都在单一的`.py`文件里，尚未分离 userconfig 与 其余程序源码。
+因为目前本项处于早期，所有代码都在单一的`.py`文件里，尚未分离 userconfig 与 其余程序源码。以上便是目前的部署和配置步骤。
 
 ## Tree Sandbox 的一些不同玩法
 
