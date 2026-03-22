@@ -19,7 +19,7 @@ shutil.rmtree = None
 def userconfig(si):
     uc = d() # dict-like object
 
-    uc.sandbox_name='' # NOTE You should give a name to your sandbox
+    uc.sandbox_name='TryTreeSandbox' # NOTE You should give a name to your sandbox
 
     # ---- Reuse Or Not ----
     # uc.reuseful=True   # Reuse running same-name sandbox instance if there is one alive. (Enabling this makes your sandbox single-instance, otherwise multi-instance)
@@ -48,11 +48,11 @@ def userconfig(si):
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
         # HOME/bin
-        d(op='robind', src=f'{si.HOME}/bin', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/bin', SDS=1),
 
         # HOME/.local/{bin,lib}
-        d(op='robind', src=f'{si.HOME}/.local/bin', SDS=1),
-        d(op='robind', src=f'{si.HOME}/.local/lib', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/.local/bin', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/.local/lib', SDS=1),
 
         # /home/linuxbrew
         # d(op='robind', src='/home/linuxbrew', SDS=1),
