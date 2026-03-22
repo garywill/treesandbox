@@ -20,7 +20,7 @@ Tree Sandbox is another rootless Linux sandbox tool.
 | Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● | ✘ |
 | Containers nesting | ● "Containers tree" is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
 | No install/build. No system daemon | ● Single-file .py. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
-| Works out of the box | ◐ Users need edit some configs first | ● Has some built-in profiles | ● Flathub |
+| Works out of the box (for specific app) | ◐ Users need edit some configs first | ● Has some built-in app profiles | ● Flathub |
 | No traces in host HOME dir | ● | ● | ✘ |
 | Able to open in host when in-sandbox calls xdg-open | ● Can replace xdg-open by asking script. User can copy url/path/args | ✘ | ● Managed by portal |
 | Dynamically change accessable file/hardware list | ✘ Pre-configured mount list | ✘ Pre-configured mount list | ● Portal can do dynamically change, but in-sandbox see unpredictable file path |
@@ -30,7 +30,8 @@ Tree Sandbox is another rootless Linux sandbox tool.
 
 | Feature | **Tree sandbox** | Bubblewrap |
 | --- | --- | --- |
-| How sandbox is configured | Edit config file | By CLI args. Sometimes long |
+| How sandbox is configured | Edit config file | By CLI args |
+| Works out of the box (for a basic-system sandbox) | ● | ✘ Need long args to make basic system |
 | Integration of common tools (eg isolated X11 server, DBUS filter proxy etc.), and common socket path mounting options | ● | ✘ |
 | Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ✘ |
 | Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● |
