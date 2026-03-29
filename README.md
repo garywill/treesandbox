@@ -5,9 +5,9 @@ English | [中文](README_zh.md)
 
 You’ve played with Podman, Firejail, Flatpak, Bubblewrap, ...
 
-Tree Sandbox is another rootless Linux sandbox tool.
+Tree Sandbox is another rootless Linux sandbox tool. Our tools aren't rivals, they complement each other.
 
-"Tree-shaped" sandbox: multi-layer nesting and branching, like a “tree” composed of multiple sub-containers.
+Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, like a “tree” composed of multiple sub-containers. ([See details below](#what-is-containers-tree))
 
 ## Comparison with other sandbox tools
 
@@ -18,7 +18,7 @@ Tree Sandbox is another rootless Linux sandbox tool.
 | Filesystem: privacy vs size vs convinience | ◐ Pick needed paths from host fs. Score 2/3 | ✘ Use host fs, masking unneeded paths. Score 1/3 | ◐ Download container image. Score 2/3 |
 | Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ● | ● |
 | Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● | ✘ |
-| Containers nesting | ● "Containers tree" is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
+| Containers nesting | ● [Containers tree](#what-is-containers-tree) is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
 | No install/build. No system daemon | ● Single-file .py. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
 | Works out of the box (for specific app) | ◐ Users need edit some configs first | ● Has some built-in app profiles | ● Flathub |
 | No traces in host HOME dir | ● | ● | ✘ |
@@ -43,23 +43,29 @@ Tree Sandbox is another rootless Linux sandbox tool.
 
 - [x] Image-free containers. Tools like vim/git don’t need to be reinstalled inside.
 
+- [x] Internal new rootfs filesystem (Per-layer for [containers tree](#what-is-containers-tree))
+  - [x] bind mounts (rw/ro) for dir/file/socket/chardevice; symlink ; tmpfs . etc.
+  - [ ] overlayfs
+
 - GUI in sandbox
-  - [x] Optionally expose host X11 to the sandbox.
+  - [x] Optionally expose host X11 to sandbox.
   - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
   - [x] Optional isolated X11 using Xephyr ( with icewm).
   - [x] Optional seamless isolated X11 proxy via Xpra.
-  - [ ] Optional expose Wayland to the sandbox.
+  - [ ] Optional expose Wayland to sandbox.
   - [ ] Optional isolated full desktop running inside a single window.
-  - [x] Optional clipboard sync (from sandbox to host; the reverse direction can temporarily be done by IME paste).
+  - Clipboard content auto sync 
+    - [x] Optional sandbox -> host
+    - [ ] Optional host -> sandbox (Temporary workaround: use IME paste)
 
 - [x] Expose an in-container shell interface to the host, allowing the host to easily get (partially usable. Full support in plan).
 
-- Optionally expose real hardware devices to the sandbox
-  - [x] Expose GPU devices to the sandbox.
-  - [x] Expose all hardware devices to the sandbox.
+- Optionally expose real hardware devices to sandbox
+  - [x] Optionally expose GPU devices to sandbox.
+  - [x] Optionally expose all hardware devices to sandbox.
 
 - DBus
-  - [x] Optional host DBus exposure to the sandbox.
+  - [x] Optional host DBus exposure to sandbox.
   - [x] Optional DBus communication filtering.
 
 - Sandbox network
@@ -68,25 +74,24 @@ Tree Sandbox is another rootless Linux sandbox tool.
     - [x] Controllable tun/tap (managed by pasta) network interface
     - [x] Custom nftables rules (rootless) in sandbox.
 
-- [x] Mount AppImage and squashfs internally to access their contents inside the sandbox.
+- [x] App choosing (from your sandbox's configured app list) when sandbox startup (or when being reused)
+  - [x] Single-app sandbox
+  - [x] Multi-app sandbox
+  
+- [x] Option to <ins><u>reuse</u></ins> a running sandbox
+  - [x] Run multiple instance  (independent and each other isolated)
+  - [x] Reuse single instance (of same-name sandbox)  (pass cmd/args to the <ins><u>already-running</u></ins>)
 
-- [x] Optionally expose the PulseAudio interface to the sandbox.
+- [x] Mount AppImage/squashfs internally to access their contents in sandbox.
 
-- [x] Optionally expose the CUPS interface to the sandbox.
+- [x] Optionally expose PulseAudio socket to sandbox.
 
-- For the same-name sandbox: single-app/multi-app; single-instance/multi-instance (app selection at startup, instance management, and cmd/args passing)
+- [x] Optionally expose CUPS socket to sandbox.
 
-  Note: the user-configured `sandbox_name` is used to identify a “same-name sandbox”.
-  - [x] One sandbox can configure multiple apps; you can choose the app at startup (e.g., put multiple apps from the <ins><u> same vendor </u></ins> into one sandbox for their easier interaction).
-  - [x] Multi-instance mode: starting the sandbox multiple times creates multiple isolated independent instances.
-  - [x] Single-instance mode: after starting one sandbox, starting the same sandbox again passes command arguments to the <ins><u>already-running</u></ins> sandbox.
-
-- [x] “Containers tree” internally can do:
+- [x] [Containers tree](#what-is-containers-tree) internally can do:
   - [x] Per-layer control of whether a type of ns is `unshare`d or not from parent layer.
+  - [x] Per-layer fine-grained new-rootfs filesystem setup.
   - [x] Per-layer environment variable control.
-  - [x] Per-layer fine-grained new-rootfs filesystem setup list:
-    - [x] bind mounts (rw/ro) for dir/file/socket/chardevice; symlink ; tmpfs . etc.
-    - [ ] overlayfs
 
 - [x] Handle uid_map and user ns ; Drop caps;  noNewPrivs ; procfs hidepid=1
 
@@ -127,7 +132,7 @@ Here is an example of what a sandbox container tree might look like:
             DBus proxy and filtering proc
 ```
 
-With the “containers tree” model, we can **isolate** procs of different "classes" inside the sandbox  <ins><u> without requiring host subuid/subgid </u></ins>.
+With the “containers tree” model, we can **isolate** procs of different "classes" inside sandbox  <ins><u> without requiring host subuid/subgid </u></ins>.
 
 The way it works allow finely controlling the isolation degree and filesystem visibility for each layer. If you want, you can even play with unlimited nesting.
 
@@ -156,7 +161,7 @@ Currently, need to manually do:
 1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
 1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. **Modify userconfig section according to your specific needs**.
 
-Sandboxes of TreeSandbox will run as standalone single `.py` files, each of them contain both userconfig section and the sandbox program code. So that's current deploy & config steps. (We'll make a auto deploy script, for likely we'll have many specific sandboxes)
+Sandboxes of TreeSandbox will run as standalone single `.py` files, each of them contain both userconfig section and the sandbox program code. So that's current deploy & config steps. (We'll make a auto deploy script for users, for likely we'll have many specific sandboxes)
 
 ## What Difference with Tree Sandbox
 
@@ -190,7 +195,7 @@ That’s 3 calls already. Next, assume host calls the **in-sandbox** browser aga
 tsbxrun_ms.py --app msedge https://www.kernel.org   # 4
 ```
 
-Above has assumed the host has made **multiple calls** to `tsbxrun_ms.py`. To tell subsequent calls to **reuse** the sandbox instance started on the first call, we configure the sandbox as **"reuseful"**.
+Above has assumed the host has made **multiple calls** to `tsbxrun_ms.py`. To tell subsequent calls to **reuse** sandbox instance started on the first call, we configure sandbox as **"reuseful"**.
 
 A userconfig for this example looks like (simplified):
 
@@ -409,16 +414,16 @@ When sandbox exits, temporary symlinks cleaned up.
 
 ### Sandbox layering structure of our default template
 
-"Containers tree" design makes it a fully internally nestable sandbox. A default nesting template is provided, which <ins><u>suits 95% uses, so no need to know how it nests</u></ins>.
+Due to the [containers tree](#what-is-containers-tree) design, it is internally nesting sandbox. A default nesting template is provided, which <ins><u>suits 95% uses, so no need to know how it nests</u></ins>.
 
-But, if you want to unlock more possibilities, you need to understand the internals and how the default template define the "layers" of "containers tree". (It's pretty mind-bending)
+But if you're a geeky user and want to come up with more creative uses, you can get to know how it's built inside, know how the default template define the "layers" of containers tree. (It's pretty mind-bending)
 
 ```
 Linux Host
   |
- outest (the process launched by user; it manages this sandbox and stays outside the sandbox)
+ outest (the process launched by user; it manages this sandbox and stays outside sandbox)
   |
- layer1 (pid ns unshared; already inside the sandbox)
+ layer1 (pid ns unshared; already inside sandbox)
   |
  layer2 (prepares for building the semi-trusted zone)
    |
@@ -433,18 +438,16 @@ Linux Host
     |--layer4c (runs companion programs that do not need trust, such as a standalone X server)
 ```
 
-(Both layer2c and layer4c run companion programs. The difference is that layer2c can access the real host X11 and DBus interfaces, while layer4c does not need to access them.)
+Both layer2c and layer4c run companion programs. The difference is that layer2c can access the real host X11 and DBus interfaces, while layer4c does not need to access them.
 
-After the sandbox starts, the user’s app runs in layer4. layer4 is "main layer".
+After the sandbox starts, the user’s app runs in layer4. layer4 is "main layer".  (This project is usable and in early-stage still; No promise that internal design won't change.)
 
-> There’s still a lot not written yet. I’ll take a break first.
+> There’s still a lot of doc not written yet. I’ll take a break first.
 
-> This project is early-stage; We don't promise no internal design changes in the future.
+## Consent Disclaimer
 
-## Disclaimer
-
-1. This project comes with no warranty. Use on your own risk.
-1. Ensure your uses are legal and appropriate. Follow the terms of service for any apps you run with this. You're responsible for whatever happens.
+1. This sandbox is home-made, for running apps, not for testing malware. Although we try our best to cover all security aspects, this project comes with no warranty. Use at your own risk.
+1. This tool is for protecting system. It shall not be used to compromise app or system. The user agrees that they are solely responsible for their own actions.
 
 ## License
 
