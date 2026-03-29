@@ -32,7 +32,7 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
 | 常用工具的集成 (如隔离X11/转发、DBUS过滤代理)，和常用socket路径挂载的便捷选项 | ● | ✘ |
 | 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ✘ |
 | 同App沙箱多实例 (互相隔离独立) | ● | ● |
-| 容器内部shell接口暴露给主机，主机随时获取 | ◐ 已实现某些配置下可以，未来更完善 | ✘ 需要主机root做`nsenter` |
+| 容器内部shell接口暴露给主机，主机随时获取 | ● 已实现某些配置下可以，未来更完善 | ✘ 需要主机root做`nsenter` |
 
 ## 功能列表与完成状态
 
@@ -62,8 +62,8 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
 - 沙箱网络
   - [x] 可选的不管理沙箱网络（不 unshare net ns）
   - [x] 可选的网络控制
-      - [x] 主机与沙箱之间双向、单向端口范围暴露（tun，由pasta管理。可通过 localhost:端口号 互访）
-      - [x] 内部nftbles规则(免root)自定义
+      - [x] 使用 tun/tap 创建可控网络介面 (pasta管理)
+      - [x] 内部 nftbles 规则(免root)自定义
 
 - [x] 可挂载 AppImage、squashfs 在内部访问其内容
 
@@ -85,7 +85,7 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
         - [x] bind 挂载(rw/ro) 目录、文件、套接字、字符设备，symlink，tmpfs 等
         - [ ] overlayfs
 
-- [x] 启动时内部uid变0（提权）；进程uid变回1000(降权）；Drop caps；noNewPrivs ; procfs hidepid=1
+- [x] 处理 uid_map 和 user ns ; Drop caps；noNewPrivs ; procfs hidepid=1
 
 - [x] 看门狗
 
@@ -153,7 +153,7 @@ python3 -IBS ./treesandbox.py
 1. 从本仓库复制 `treesandbox.py` 到 `/yourpath/tsbxrun_mysandbox1.py`
 1. 打开编辑 `/yourpath/tsbxrun_mysandbox1.py` ， **根据你具体需要，修改其中 userconfig 部分**。
 
-因为目前本项处于早期，所有代码都在单一的`.py`文件里，尚未分离 userconfig 与 其余程序源码。以上便是目前的部署和配置步骤。
+Tree Sandbox 的沙箱都会以独立的单`.py`文件运行，此文件就包含了 userconfig 与 其余程序源码。以上便是目前的部署和配置步骤。（有打算写个自动部署脚本，因为我们肯定会有多个具体沙箱）
 
 ## Tree Sandbox 的一些不同玩法
 
@@ -312,9 +312,13 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
   “半信任”的层比“不信任”的可以看到更多一些的主机接口。例如沙箱内部的纯粹的 X server 运行在“不信任”层， 而用于转发 X11 通信的，就要运行的“半信任”层。“主层”是不信任的层。
 
-- “同名沙箱” 和 “复用”
+- 实例、“同名沙箱” 和 “复用”
 
-    你有一个要跑在沙箱里隔离的App。当你想让此 <ins><u>相同App</u></ins> 的沙箱 <ins><u>单实例</u></ins> 运行 (即，多次发送命令参数到<ins><u>运行中</u></ins>的沙箱，而不要启动沙箱多次) 时，“同名沙箱”是用于判断的依据。找到同名沙箱后，即可“复用”。（类似 Firejail 的 `--join=name` ）
+    对于 非“复用型” 的普通沙箱，每启动一次沙箱，就产生一个运行中的**沙箱实例**；
+    
+    而对于 “复用型” 的沙箱，只会有一个 同名沙箱 的 实例 保持运行。期间若尝试再调用启动脚本，只会把请求发送给运行中的 同名沙箱 实例。
+    
+    你有一个要跑在沙箱里隔离的App。当你想让此 <ins><u>相同App</u></ins> 的沙箱 <ins><u>单实例</u></ins> 运行 时，“同名” 是用于判断的依据（`uc.sandbox_name`）。找到 同名沙箱 后，即可“复用”。（类似 Firejail 的 `--join=name` ）
 
 ## 依赖
 
@@ -385,17 +389,17 @@ User Advanced Manual 与 User Manual 是不同的。95%的情况下不需要看 
 若你启动了一个 名为`ms` 的 Tree Sandbox 沙箱 的实例，会在主机的这个位置临时储存此实例的信息：
 
 ```
-/tmp/tsbxs-1000/ms-NNNN-NNNN-N/
+/tmp/tsbxs-1000/ms-nnnn-nnnn-n/
 ```
 
-（`ms-NNNN-NNNN-N` 是这个沙箱实例的名称。N是数字。假设你的 uid 是 1000。）
+（`ms-nnnn-nnnn-n` 是这个沙箱实例的名称。n是数字。假设你的 uid 是 1000。）
 
 另外有个附加功能：如果沙箱使用的内部的隔离的 X11/Wayland，那么还会在主机的以下位置创建临时symlink，以<ins><u>便于从主机给沙箱录屏</u></ins>： (假设沙箱使用 DISPLAY 500 )
 
 ```
-/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
+/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
   
-$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
+$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
 ```
 
 沙箱结束时，会清理临时symlink。

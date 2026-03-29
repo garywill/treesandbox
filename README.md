@@ -35,7 +35,7 @@ Tree Sandbox is another rootless Linux sandbox tool.
 | Integration of common tools (eg isolated X11 server, DBUS filter proxy etc.), and common socket path mounting options | ● | ✘ |
 | Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ✘ |
 | Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● |
-| Host can get in-sandbox shell easily, via a socket | ◐ Currently usable under some config case. Will fully support | ✘ Need host root to `nsenter` |
+| Host can get in-sandbox shell easily, via a socket | ● Currently usable under some config case. Will fully support | ✘ Need host root to `nsenter` |
 
 ## Features and status
 
@@ -65,7 +65,7 @@ Tree Sandbox is another rootless Linux sandbox tool.
 - Sandbox network
   - [x] Optional don't manage network (don't unshare net ns)
   - [x] Optional network control
-    - [x] Bidirectional / unidirectional port-range exposure between host and sandbox (tun managed by pasta; mutual access via localhost:port).
+    - [x] Controllable tun/tap (managed by pasta) network interface
     - [x] Custom nftables rules (rootless) in sandbox.
 
 - [x] Mount AppImage and squashfs internally to access their contents inside the sandbox.
@@ -88,7 +88,7 @@ Tree Sandbox is another rootless Linux sandbox tool.
     - [x] bind mounts (rw/ro) for dir/file/socket/chardevice; symlink ; tmpfs . etc.
     - [ ] overlayfs
 
-- [x] At startup the internal uid becomes 0 (privilege); uid back to 1000 running in-sandbox procs; drop caps;  noNewPrivs ; procfs hidepid=1 .
+- [x] Handle uid_map and user ns ; Drop caps;  noNewPrivs ; procfs hidepid=1
 
 - [x] Watchdog.
 
@@ -156,7 +156,7 @@ Currently, need to manually do:
 1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
 1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. **Modify userconfig section according to your specific needs**.
 
-Because this project is in early stage, userconfig hasn't been separated from sandbox program code — all in single `.py` file. So that's current deploy & config steps.
+Sandboxes of TreeSandbox will run as standalone single `.py` files, each of them contain both userconfig section and the sandbox program code. So that's current deploy & config steps. (We'll make a auto deploy script, for likely we'll have many specific sandboxes)
 
 ## What Difference with Tree Sandbox
 
@@ -315,9 +315,13 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
   A semi-trusted layer has access to more host sockets than an untrusted layer. For example, a pure X server running inside the sandbox runs on untrusted layer, while the proc used to forward X11 needs to run in semi-trusted layer. The "main layer" is an untrusted layer.
 
-- “Same-name sandbox” and "reuse" 
+- Instance, “same-name sandbox”, and "reuse" 
 
-  You have an app to run isolated in sandbox. When you want sandbox for this <ins><u>same app</u></ins> act as <ins><u>single-instance sandbox</u></ins>  (i.e., cmd/args sent to the <ins><u>running</u></ins> instance instead of starting sandbox multiple times),  "same-name" is the basis for identification. After finding a live same-name sandbox instance, "reuse" can take off. (Similar to Firejail's `--join=name`)
+  For a regular "non-reuseful" sandbox, each time the sandbox get started, a new running **sandbox instance** is spawned;
+  
+  For a "reuseful" sandbox, only one same-name sandbox instance can be kept running. During this time if an attempt to call the start script is made , it simply send the request to the already-running same-name sandbox instance.
+
+  You have an app to run isolated in sandbox. When you want sandbox for this <ins><u>same app</u></ins> act as <ins><u>single-instance sandbox</u></ins> ,  "same-name" is the basis for identification (`uc.sandbox_name`). After finding a live same-name sandbox instance, "reuse" takes off. (Similar to Firejail's `--join=name`)
 
 ## Dependencies
 
@@ -388,17 +392,17 @@ The User Advanced Manual is different from the User Manual. In 95% of cases you 
 Starting an instance of a sandbox named `ms`, info about this instance will be temporarily stored on host at:
 
 ```
-/tmp/tsbxs-1000/ms-NNNN-NNNN-N/
+/tmp/tsbxs-1000/ms-nnnn-nnnn-n/
 ```
 
-(`ms-NNNN-NNNN-N` is the name of this sandbox instance.  N is number. Assuming your UID is 1000. )
+(`ms-nnnn-nnnn-n` is the name of this sandbox instance.  n is number. Assuming your UID is 1000. )
 
 An additional feature: If the sandbox uses isolated internal X11/Wayland, temporary symlink(s) will be created on host at the following location, to allow <ins><u> user to record sandbox screen easily </u></ins> from host: (assume sandbox uses DISPLAY 500)
 
 ```
-/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
+/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
   
-$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-NNNN-NNNN-N/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
+$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
 ```
 
 When sandbox exits, temporary symlinks cleaned up.

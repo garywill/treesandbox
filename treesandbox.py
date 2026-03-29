@@ -47,15 +47,13 @@ def userconfig(si):
         # For persistant storage, use 'fakehome' dir as sandbox's HOME dir. Otherwise, tmpfs is used as HOME
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
-        # HOME/bin
         # d(op='robind', src=f'{si.HOME}/bin', SDS=1),
-
-        # HOME/.local/{bin,lib}
         # d(op='robind', src=f'{si.HOME}/.local/bin', SDS=1),
         # d(op='robind', src=f'{si.HOME}/.local/lib', SDS=1),
-
-        # /home/linuxbrew
         # d(op='robind', src='/home/linuxbrew', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/.npmrc', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/.vimrc', SDS=1),
+        # d(op='robind', src=f'{si.HOME}/.config/pip/pip.conf', SDS=1),
 
         # d(many_op='appimage', name='xxxx', src=f'{si.CWD}/xxxx.AppImage'),
         # AppImage mounting example. Will do :
