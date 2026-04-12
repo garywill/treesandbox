@@ -3182,8 +3182,11 @@ def symlink(linkto, dest):  # linkto：要创建的软链的指向 .  dest: 在�
 
 
 class EnhancedFalse:
+    def __init__(self, dictObj, keyName):
+        self.dictObj = dictObj
+        self.keyName = keyName
     def _error(self):
-        raise_exit("Program tries to stringlize or compare a non-defined member of a d() dict obj")
+        raise_exit(f"Program tries to stringlize or compare a non-defined member '{self.keyName}' of a dict-like obj: {str(self.dictObj)[:200]} ...")
     def __str__(self):
         self._error()
     def __repr__(self):
@@ -3203,7 +3206,6 @@ class EnhancedFalse:
     def __ge__(self, other):
         self._error()
     __hash__ = None
-FALSE = EnhancedFalse()
 
 
 class EnhancedDictTempl(dict):
@@ -3247,11 +3249,11 @@ class DictFALSE(EnhancedDictTempl):
         if name.startswith("__") and name.endswith("__"): raise AttributeError(name)
         try: return self[name]
         except KeyError:
-            return FALSE
+            return EnhancedFalse(self, name)
     def __getitem__(self, key):
         try: return super().__getitem__(key)
         except KeyError:
-            return FALSE
+            return EnhancedFalse(self, key)
 class DictNone(EnhancedDictTempl):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
