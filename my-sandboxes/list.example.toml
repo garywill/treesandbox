@@ -1,10 +1,20 @@
 
-# (Do only once) Copy this 'list.example.toml' file and name it 'list.toml' . Define your specific sandbox(es) in this file.
+# (Do only once) Copy this 'list.example.toml' file
+# and name it 'list.toml' . Define your specific sandbox(es) in this file.
 
-# When you are going to create a new specific sandbox: Copy the 'userconfig' part from treesandbox.py. Paste the code into your 'my-sandboxes/uc.<name>.py', and start to modify the userconfig code
+# When you are going to create a new specific sandbox:
+# Copy the 'userconfig' part from treesandbox.py.
+# Paste the code into your 'my-sandboxes/uc.<name>.py',
+# and start to modify the userconfig code
 
-# After you have edited your sandbox: Run 'python3 deploy.py'
+# After you have edited your sandbox's userconfig:
+# Run 'python3 deploy.py'
 
 my_sandboxes = [
-    {name='myapp1', distdir='/mysofts/myapp1'},
+    # Will associate 'name' with 'uc.<name>.py'.
+    # Will create a start script '{distdir}/tsbxrun_<name>.py' for one specific sandbox.
+
+    {name='ExampleMyapp0', distdir='/tmp'},
+
+    # {name='myapp1', distdir='/mysofts/myapp1'},
 ]

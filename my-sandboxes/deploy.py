@@ -90,7 +90,7 @@ def prepare():
 
     BEFORE = '\n'.join( TSBXS_LINES[:start_index+1] )
     AFTER = '\n'.join( TSBXS_LINES[end_index:] )
-    AFTER = '\n\n' + TSBXS_LINES[end_index] + '\n\n' + ast.unparse(ast.parse(AFTER))
+    # AFTER = '\n\n' + TSBXS_LINES[end_index] + '\n\n' + ast.unparse(ast.parse(AFTER)) # Don't minimize. That'll make error message a mess
 
     if not check_pycode_syntax(BEFORE):
         log_warn('Syntax error detected in the head of treesandbox.py')
