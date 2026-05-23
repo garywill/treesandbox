@@ -2,7 +2,7 @@
 import os,sys, ast, tomllib
 
 def main():
-    log(f'Using python interpreter << {sys.executable} >> . This interpreter will also be used in deployd .py files.')
+    log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .py files.")
 
     my_sandboxes = d(tomllib.loads(open(f'{scriptdirpath}/list.toml').read() ) ).my_sandboxes
     prepare()
@@ -11,7 +11,7 @@ def main():
         try:
             deploy_sandbox(sbx)
         except Exception as err:
-            log_warn(f'Error occured when distributing sandbox {sbx}: {err}')
+            log_warn(f'✘ Error occured when distributing sandbox {sbx}: {err}')
 
 
 def deploy_sandbox(sbx):
@@ -23,9 +23,9 @@ def deploy_sandbox(sbx):
     uc_filename = f'uc.{sbx.name}.py'
     uc_file_path = f'{scriptdirpath}/{uc_filename}'
     if not os.path.exists(uc_file_path):
-        log_warn(f'User config file not exist {uc_file_path} . Skip {sbx}')
+        log_warn(f'✘ User config file not exist {uc_file_path} . Skip {sbx}')
     if not check_pyfile_syntax(uc_file_path):
-        log_warn(f'Syntax error in file {uc_file_path}. Skip {sbx}')
+        log_warn(f'✘ Syntax error in file {uc_file_path}. Skip {sbx}')
         return False
 
     destdir = os.path.dirname(destfile)
@@ -34,7 +34,7 @@ def deploy_sandbox(sbx):
 
     if os.path.exists(destfile) and os.stat(destfile).st_size > 0:
         if not 'Tree Sandbox' in open(destfile).read(800):
-            log_warn(f'Target file {destfile} already exists and its content seems not to be a script of Tree Sandbox. Skip {sbx} . Please manually check and remove it if needed.')
+            log_warn(f'✘ Target file {destfile} already exists and its content seems not to be a script of Tree Sandbox. Skip {sbx} . Please manually check and remove it if needed.')
             return False
 
     code_content = make_tsbx_code(uc_file_path)
@@ -79,13 +79,13 @@ def prepare():
         if start_index is not None and end_index is not None:
             break
     if start_index is None:
-        low_warn(f"Failed find start mark '{start_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
+        low_warn(f"✘ Failed find start mark '{start_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
         sys.exit(1)
     if end_index is None:
-        low_warn(f"Failed find end mark '{end_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
+        low_warn(f"✘ Failed find end mark '{end_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
         sys.exit(1)
     if not (start_index < end_index):
-        log_warn(f'Start mark and end mark have wrong sequence in {TSBX_ORIG_CODE_FILEPATH}')
+        log_warn(f'✘ Start mark and end mark have wrong sequence in {TSBX_ORIG_CODE_FILEPATH}')
         sys.exit(1)
 
     BEFORE = '\n'.join( TSBXS_LINES[:start_index+1] )
@@ -106,7 +106,7 @@ def check_pyfile_syntax(filepath):
         return True
     except SyntaxError as e:
         print(f"❌ Syntax Error in {filepath}:")
-        print(f"   Line {e.lineno}, Col {e.offset}: {e.text.strip() if e.text else ''}")
+        print(f"   Line {e.lineno}, Col {e.offset}: \n{e.text if e.text else ''}")
         print(f"   Err msg: {e.msg}")
         return False
 
@@ -116,7 +116,7 @@ def check_pycode_syntax(codecontent):
         return True
     except SyntaxError as e:
         print(f"❌ Syntax Error:")
-        print(f"   Line {e.lineno}, Col {e.offset}: {e.text.strip() if e.text else ''}")
+        print(f"   Line {e.lineno}, Col {e.offset}: \n{e.text if e.text else ''}")
         print(f"   Err msg: {e.msg}")
         return False
 
@@ -135,7 +135,7 @@ def log(*args, **kwargs):
     print(*new_args, **kwargs)
 def log_warn(*args, **kwargs):
     if 'file' not in kwargs: kwargs['file'] = sys.stderr
-    log('WARNING: ',  *args, **kwargs)
+    log('WARNING ✘: ',  *args, **kwargs)
 
 
 class EnhancedFalse:
@@ -143,7 +143,7 @@ class EnhancedFalse:
         self.dictObj = dictObj
         self.keyName = keyName
     def _error(self):
-        raise Exception(f"Program tries to stringlize or compare a non-defined member '{self.keyName}' of a dict-like obj: {str(self.dictObj)[:200]} ...")
+        raise Exception(f"✘ Program tries to stringlize or compare a non-defined member '{self.keyName}' of a dict-like obj: {str(self.dictObj)[:200]} ...")
     def __str__(self):
         self._error()
     def __repr__(self):
