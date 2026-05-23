@@ -2,23 +2,23 @@
 import os,sys, ast, tomllib
 
 def main():
-    log(f'Using python interpreter << {sys.executable} >> . This interpreter will also be used in distributed .py files.')
+    log(f'Using python interpreter << {sys.executable} >> . This interpreter will also be used in deployd .py files.')
 
     my_sandboxes = d(tomllib.loads(open(f'{scriptdirpath}/list.toml').read() ) ).my_sandboxes
     prepare()
     for sbx in my_sandboxes:
         # log(sbx)
         try:
-            distribute_sandbox(sbx)
+            deploy_sandbox(sbx)
         except Exception as err:
             log_warn(f'Error occured when distributing sandbox {sbx}: {err}')
 
 
-def distribute_sandbox(sbx):
-    if sbx.distfile:
-        distfile = sbx.distfile
+def deploy_sandbox(sbx):
+    if sbx.destfile:
+        destfile = sbx.destfile
     else:
-        distfile = f'{sbx.distdir}/tsbxrun_{sbx.name}.py'
+        destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.py'
 
     uc_filename = f'uc.{sbx.name}.py'
     uc_file_path = f'{scriptdirpath}/{uc_filename}'
@@ -28,21 +28,21 @@ def distribute_sandbox(sbx):
         log_warn(f'Syntax error in file {uc_file_path}. Skip {sbx}')
         return False
 
-    distdir = os.path.dirname(distfile)
-    if not os.path.exists(distdir):
-        log(f'Dir {distdir} not exist. Skip {sbx}.')
+    destdir = os.path.dirname(destfile)
+    if not os.path.exists(destdir):
+        log(f'Dir {destdir} not exist. Skip {sbx}.')
 
-    if os.path.exists(distfile) and os.stat(distfile).st_size > 0:
-        if not 'Tree Sandbox' in open(distfile).read(800):
-            log_warn(f'Target file {distfile} already exists and its content seems not to be a script of Tree Sandbox. Skip {sbx} . Please manually check and remove it if needed.')
+    if os.path.exists(destfile) and os.stat(destfile).st_size > 0:
+        if not 'Tree Sandbox' in open(destfile).read(800):
+            log_warn(f'Target file {destfile} already exists and its content seems not to be a script of Tree Sandbox. Skip {sbx} . Please manually check and remove it if needed.')
             return False
 
     code_content = make_tsbx_code(uc_file_path)
 
-    with open(distfile, 'w') as f:
+    with open(destfile, 'w') as f:
         f.write(code_content)
         os.chmod(f.name, 0o755)
-    log(f'Write to {distfile} done.')
+    log(f'Write to {destfile} done.')
 
 def make_tsbx_code(uc_file_path):
     uc_file_content = open(uc_file_path).read()

@@ -12,9 +12,9 @@
 
 my_sandboxes = [
     # Will associate 'name' with 'uc.<name>.py'.
-    # Will create a start script '{distdir}/tsbxrun_<name>.py' for one specific sandbox.
+    # Will create a start script '{destdir}/tsbxrun_<name>.py' for one specific sandbox.
 
-    {name='ExampleMyapp0', distdir='/tmp'},
+    {name='ExampleMyapp0', destdir='/tmp'},
 
-    # {name='myapp1', distdir='/mysofts/myapp1'},
+    # {name='myapp1', destdir='/mysofts/myapp1'},
 ]
