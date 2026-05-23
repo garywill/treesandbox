@@ -1677,6 +1677,7 @@ def commit_fsOpertns(cfg, fsOpertns):
             offset = get_appimg_sqoffset(src) if op == 'appimg-mount' else 0
             # TODO 先做symlink链接到真实appimage文件路径，再调用 squashfuse命令
             run_a_cmd(['squashfuse', '-o', f'ro,offset={offset}', src, real_dest])
+            # 不考虑内核挂载先，因为内核挂载squashfs要loop, 容器内难搞.先用住 fuse
         elif op == 'rmt-ro':
             rmt_ro(real_dest, opItem.flag or 0)
         elif op == 'final-rmt-ro':
