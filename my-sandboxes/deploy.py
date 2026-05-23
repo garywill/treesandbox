@@ -137,14 +137,32 @@ def log_warn(*args, **kwargs):
     if 'file' not in kwargs: kwargs['file'] = sys.stderr
     log('WARNING: ',  *args, **kwargs)
 
+
 class EnhancedFalse:
+    def __init__(self, dictObj, keyName):
+        self.dictObj = dictObj
+        self.keyName = keyName
+    def _error(self):
+        raise Exception(f"Program tries to stringlize or compare a non-defined member '{self.keyName}' of a dict-like obj: {str(self.dictObj)[:200]} ...")
     def __str__(self):
-        raise Exception(loghead + "Script tries to stringify FALSE")
+        self._error()
     def __repr__(self):
-        raise Exception(loghead + "Script tries to stringify FALSE")
+        self._error()
     def __bool__(self):
         return False
-FALSE = EnhancedFalse()
+    def __eq__(self, other):
+        return False
+    def __ne__(self, other):
+        return True
+    def __lt__(self, other):
+        self._error()
+    def __le__(self, other):
+        self._error()
+    def __gt__(self, other):
+        self._error()
+    def __ge__(self, other):
+        self._error()
+    __hash__ = None
 
 
 class EnhancedDictTempl(dict):
@@ -188,11 +206,11 @@ class DictFALSE(EnhancedDictTempl):
         if name.startswith("__") and name.endswith("__"): raise AttributeError(name)
         try: return self[name]
         except KeyError:
-            return FALSE
+            return EnhancedFalse(self, name)
     def __getitem__(self, key):
         try: return super().__getitem__(key)
         except KeyError:
-            return FALSE
+            return EnhancedFalse(self, key)
 class DictNone(EnhancedDictTempl):
     def __getattr__(self, name):
         if name.startswith("__") and name.endswith("__"):
@@ -204,9 +222,10 @@ class DictNone(EnhancedDictTempl):
         try: return super().__getitem__(key)
         except KeyError:
             return None
-D = Dict # 试图访问不存在的键时, 报错
-d = DictFALSE # 试图访问不存在的键时，会返回EnhancedFalse
-dn = DictNone #试图访问不存在的键时， 返回None
+D = Dict  # Raises an error when trying to access a non-existent key.
+d = DictFALSE  # Returns EnhancedFalse when trying to access a non-existent key.
+dn = DictNone  # Returns None when trying to access a non-existent key.
+
 
 # ================================================
 
