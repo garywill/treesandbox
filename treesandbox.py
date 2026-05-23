@@ -520,7 +520,7 @@ def gen_layer3(si, uc, dyncfg):
             ] if si.sharedir_onhost else []),
 
             # NOTE 用户挂载要放最后
-            *uc.user_mnts, # NOTE 用户挂载要放最后
+            *(uc.user_mnts if uc.user_mnts else []), # NOTE 用户挂载要放最后
             d(op='final-rmt-ro', dest='/sbxdir/apps', flag=mntflag_apps)
         ],
         envs_unset=[
@@ -566,7 +566,7 @@ def gen_layer4(si, uc, dyncfg):
 
         envset_grps = [
             d(PATH=os.getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
-            uc.setenvs,
+            uc.setenvs if uc.setenve else {},
         ],
 
         start_after = [
