@@ -951,6 +951,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
             os.chmod(f.name, 0o444)
 
         symlink(f'sbx.{si.outest_pid}.pid', f'{si.outest_sbxdir}/sbx.pid')
+        symlink(f'/proc/{si.outest_pid}/status', f'{si.outest_sbxdir}/sbx.pid.status')
 
         # userconfig.json , dyncfg.json
         with open(f'{si.outest_sbxdir}/userconfig.json', 'w') as f:
