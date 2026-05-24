@@ -1076,6 +1076,9 @@ def main(lyrcfg_in):
                                 help="Using a configured appname, specify the command to start in sandbox. Not specifying or using '--app default' has the same effect.")
         arg_parser.add_argument("--workdir", metavar="<path>", default=None,
                                 help="Before launch app, cd to this path")
+        arg_parser.add_argument("--workdir-try", metavar="<path>", default=None,
+                                help="Similar to '--workdir', but will fallback to default workdir path if cd fails")
+
 
         (sbx_args, # 上面列出的参数
          user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
@@ -1086,7 +1089,8 @@ def main(lyrcfg_in):
         # enter = sbx_args.enter
         # chosen_instance_name = sbx_args.enter_instance
         chosen_appname = sbx_args.app
-        chosen_workdir = sbx_args.workdir
+        chosen_workdir     = sbx_args.workdir
+        chosen_workdir_try = sbx_args.workdir_try
 
     if is_outest:
         si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
@@ -1107,7 +1111,8 @@ def main(lyrcfg_in):
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == chosen_appname), None)
         CHK( chosen_appItem and chosen_appItem.cmdvec, 'Selected app not found, or selected app does not have a valid cmdvec')
         OG.chosen_appItem = chosen_appItem
-        OG.chosen_workdir = chosen_workdir
+        OG.chosen_workdir     = chosen_workdir
+        OG.chosen_workdir_try = chosen_workdir_try
         OG.user_cli_argv = user_cli_argv
         OG.mainApp_cmdvec = chosen_appItem.cmdvec + user_cli_argv
         log(f'App command to run in sandbox: {OG.mainApp_cmdvec}')
@@ -1304,7 +1309,7 @@ def main2(skp_lyfk):
 def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
                    keep_caps=False, # True 全部 | False 全丢 | 字符串 部分
                    stdin=None, stdout=None, stderr=None,
-                   workdir=None,
+                   workdir=None, workdir_try=None,
                    no_wait=False,
                    ): # TODO pty或setsid
 
@@ -1318,7 +1323,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
     if dev_shell:
         keep_caps=True
 
-    if not workdir:
+    if not (workdir or workdir_try):
         if user_shell or dev_shell: workdir = tlcfg.sbxdir_path1
         else: workdir = si.HOME
 
@@ -1360,7 +1365,12 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         else:           startTip = f'Starting subprocess {subp_name}'
         if cmdvec: log(f'{startTip} : ', cmdvec)
 
-        if workdir: os.chdir(workdir)
+        if workdir_try:
+            try: os.chdir(workdir_try)
+            except:
+                log_warn(f"Could not cd to '{workdir_try}'. Would use fallback workdir if needed")
+                if workdir: os.chdir(workdir)
+        elif workdir: os.chdir(workdir)
 
         # === 重定向 stdin/out/err  # NOTE 下面可能无法再 log 或 print
         devnull = os.open('/dev/null', os.O_RDWR)
@@ -1873,6 +1883,8 @@ def maybe_sendto_running_instance(reusefg):
     log(f'Found instance {chosen_instance}, attempting to send app command to it ')
     msgObj = d()
     msgObj.run_in_mainLyr_cmdvec = OG.mainApp_cmdvec
+    msgObj.workdir     = OG.chosen_workdir or OG.chosen_appItem.workdir or None
+    msgObj.workdir_try = OG.chosen_workdir_try or None
     msgObj.si_should_match = d({k:si[k] for k in MATCH_SI_K})
     if reusefg: msgObj.use_dtach = True
 
@@ -1987,6 +1999,8 @@ class OutsideServ():
                 return False
         if msgObj.run_in_mainLyr_cmdvec:
             targetLyr = si.specialLyrs.mainLyr
+            workdir     = msgObj.workdir or None
+            workdir_try = msgObj.workdir_try or None
             if not msgObj.use_dtach:
                 cmdvec = msgObj.run_in_mainLyr_cmdvec
                 subp_name = f'mainApp_{connItem.index}'
@@ -1998,7 +2012,14 @@ class OutsideServ():
                 cmdvec = ['dtach', '-N', f'/sbxdir/temp/shareshell.{shellId}.socket',  *msgObj.run_in_mainLyr_cmdvec ]
                 subp_name = f'shareshell_{shellId}'
             OutestProcsMonitor.tell_lyr_runsubp(targetLyr,
-                d(cmdvec=cmdvec, subp_name=subp_name, stdin=False) )
+                d(
+                    cmdvec=cmdvec,
+                    workdir     = workdir,
+                    workdir_try = workdir_try,
+                    subp_name=subp_name,
+                    stdin=False
+                )
+            )
             cls.response_close(connItem, reuseSucceeded=True, message=subp_name)
             return True
     @classmethod
@@ -2047,7 +2068,8 @@ class OutestProcsMonitor:
             d(
                 cmdvec=OG.mainApp_cmdvec,
                 subp_name='mainApp',
-                workdir= OG.chosen_workdir or OG.chosen_appItem.workdir or None
+                workdir     = OG.chosen_workdir     or OG.chosen_appItem.workdir or None,
+                workdir_try = OG.chosen_workdir_try or None,
             )
         )
         OutsideServ.init()
