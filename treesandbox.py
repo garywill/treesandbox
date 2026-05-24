@@ -566,7 +566,7 @@ def gen_layer4(si, uc, dyncfg):
 
         envset_grps = [
             d(PATH=os.getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
-            uc.setenvs if uc.setenve else {},
+            uc.setenvs if uc.setenvs else {},
         ],
 
         start_after = [
