@@ -2723,6 +2723,10 @@ def custom_excepthook(*args):
     tb_str = "".join(traceback.format_exception(*args))
     print( lines_add_prefix(tb_str) , file=sys.stderr)
 
+_print = print
+def print(*args, **kwargs):
+    try: _print(*args, **kwargs)
+    except: pass
 loghead = ''
 def set_loghead(new_loghead):
     global loghead
