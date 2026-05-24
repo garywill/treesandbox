@@ -115,7 +115,7 @@ def userconfig(si):
     # uc.mask_osrelease=True # Ban /etc/os-release
     uc.machineid='zero' # Write zeros to /etc/machine-id
 
-    uc.setenvs = d( # Env vars seen by main apps in sandbox. Values must be string
+    uc.set_envs = d( # Env vars seen by main apps in sandbox. Values must be string
         # ENV_VAR_NAME1 = 'ENV_VAR_VAL1',
         # ENV_VAR_NAME2 = 'ENV_VAR_VAL2',
     )
@@ -566,7 +566,7 @@ def gen_layer4(si, uc, dyncfg):
 
         envset_grps = [
             d(PATH=os.getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
-            uc.setenvs if uc.setenvs else {},
+            uc.set_envs if uc.set_envs else {},
         ],
 
         start_after = [
