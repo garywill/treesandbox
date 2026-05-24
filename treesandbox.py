@@ -1074,6 +1074,8 @@ def main(lyrcfg_in):
                                 # help="找到指定的正在运行的具体实例，获得其shell。可以是非同名沙箱，但沙箱版本需要一致")
         arg_parser.add_argument("--app", metavar="<chosen_appname>", default="default",
                                 help="Using a configured appname, specify the command to start in sandbox. Not specifying or using '--app default' has the same effect.")
+        arg_parser.add_argument("--workdir", metavar="<path>", default=None,
+                                help="Before launch app, cd to this path")
 
         (sbx_args, # 上面列出的参数
          user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
@@ -1084,6 +1086,7 @@ def main(lyrcfg_in):
         # enter = sbx_args.enter
         # chosen_instance_name = sbx_args.enter_instance
         chosen_appname = sbx_args.app
+        chosen_workdir = sbx_args.workdir
 
     if is_outest:
         si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
@@ -1104,6 +1107,7 @@ def main(lyrcfg_in):
         else: chosen_appItem = next((app for app in si.apps if app.get('appname') == chosen_appname), None)
         CHK( chosen_appItem and chosen_appItem.cmdvec, 'Selected app not found, or selected app does not have a valid cmdvec')
         OG.chosen_appItem = chosen_appItem
+        OG.chosen_workdir = chosen_workdir
         OG.user_cli_argv = user_cli_argv
         OG.mainApp_cmdvec = chosen_appItem.cmdvec + user_cli_argv
         log(f'App command to run in sandbox: {OG.mainApp_cmdvec}')
@@ -2037,7 +2041,15 @@ class OutestProcsMonitor:
         cls.oPaSkts = d()
         for lyrn, fdpair in dict.items(si.oSkt_fds):
             cls.oPaSkts[lyrn] = socket.socket(fileno=fdpair.pa)
-        cls.tell_lyr_runsubp(si.specialLyrs.mainLyr, d(cmdvec=OG.mainApp_cmdvec, subp_name='mainApp', workdir=OG.chosen_appItem.workdir or None)) # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+
+        # 不需等主层启动就发，保证主层收到的第一条信息是这个mainApp的命令
+        cls.tell_lyr_runsubp(si.specialLyrs.mainLyr,
+            d(
+                cmdvec=OG.mainApp_cmdvec,
+                subp_name='mainApp',
+                workdir= OG.chosen_workdir or OG.chosen_appItem.workdir or None
+            )
+        )
         OutsideServ.init()
     @classmethod
     def get_alive_new_sshot_from_cg(cls) -> list:
@@ -2504,7 +2516,7 @@ def get_procs_wdgsee():
     else: return D_cont_dn(read_all_from_fd_then_jsonloads(si.file_fds.procs_wdgsee) )
 
 
-
+# TODO 清理环境变量
 def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=None,
          close_fds=False, close_keep_fds=[] ,
          set_fds_CLOEXEC=False, CLOEXEC_keep_fds=[]
