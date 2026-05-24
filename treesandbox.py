@@ -1179,6 +1179,7 @@ def main(lyrcfg_in):
     set_ps1('afterUnshare')
 
     skp_lyfk = TmpSocketPair()
+    sys.stdout.flush() ; sys.stderr.flush()
     pid = os.fork()
     if pid == 0: # 子进程
         unreg_cleanup_func()
@@ -1333,6 +1334,7 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
     skp_spfk = TmpSocketPair()
 
+    sys.stdout.flush() ; sys.stderr.flush()
     pid = os.fork()
     if pid == 0: # 子进程
         unreg_cleanup_func()
@@ -2549,6 +2551,7 @@ def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=N
         sktpair = TmpSocketPair()
         set_fd_keep_on_exec(sktpair._skt_chd.fileno(), False)
         set_fd_keep_on_exec(sktpair._skt_pa .fileno(), False)
+    sys.stdout.flush() ; sys.stderr.flush()
     pid = os.fork()
     CHK(pid >= 0, 'fork failed')
     if pid == 0 : # 子进程
@@ -2726,7 +2729,9 @@ def custom_excepthook(*args):
 
 _print = print
 def print(*args, **kwargs):
-    try: _print(*args, **kwargs)
+    try:
+        _print(*args, **kwargs)
+        sys.stdout.flush() ; sys.stderr.flush()
     except: pass
 loghead = ''
 def set_loghead(new_loghead):
