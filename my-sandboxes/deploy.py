@@ -1,10 +1,25 @@
 
-import os,sys, ast, tomllib
+import os,sys, ast, tomllib, argparse
 
+user_sbxes_path = None
 def main():
-    log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .py files.")
+    global user_sbxes_path
+    arg_parser = argparse.ArgumentParser( add_help=True,
+        description="The Deploy Tool of Tree Sandbox"
+    )
+    arg_parser.add_argument("-s", default=None, metavar='<dir>',
+                            help="The path of the dir that contains your list.toml and uc.<name>.py files. Defaultly use the same dir as this deploy tool script file.")
 
-    my_sandboxes = d(tomllib.loads(open(f'{scriptdirpath}/list.toml').read() ) ).my_sandboxes
+    (known_args, # 上面列出的参数
+        user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
+    ) = arg_parser.parse_known_args()
+    user_sbxes_path = known_args.s
+    if not user_sbxes_path: user_sbxes_path = scriptdirpath
+
+    log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .py files.")
+    log(f"Look for user custom list.toml and uc.<name>.py files in '{user_sbxes_path}'")
+
+    my_sandboxes = d(tomllib.loads(open(f'{user_sbxes_path}/list.toml').read() ) ).my_sandboxes
     prepare()
     for sbx in my_sandboxes:
         # log(sbx)
@@ -21,7 +36,7 @@ def deploy_sandbox(sbx):
         destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.py'
 
     uc_filename = f'uc.{sbx.name}.py'
-    uc_file_path = f'{scriptdirpath}/{uc_filename}'
+    uc_file_path = f'{user_sbxes_path}/{uc_filename}'
     if not os.path.exists(uc_file_path):
         log_warn(f'✘ User config file not exist {uc_file_path} . Skip {sbx}')
     if not check_pyfile_syntax(uc_file_path):
