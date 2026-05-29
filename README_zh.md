@@ -151,14 +151,14 @@ python3 -IBS ./treesandbox.py
 
 ### 弄好你的沙箱
 
-以上只是说明你的电脑能跑 Tree Sandbox 了，而实际使用前，是要弄好 **具体的沙箱** 的 启动脚本 的。
+以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，一个 **TreeSandbox具体沙箱** 的 **启动脚本** 会以独立的 **单`.py`文件** 存在，此文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。
 
-目前，要手动操作一下：
+手动操作弄好一个具体沙箱的步骤为：
 
 1. 从本仓库复制 `treesandbox.py` 到 `/yourpath/tsbxrun_mysandbox1.py`
-1. 打开编辑 `/yourpath/tsbxrun_mysandbox1.py` ， **根据你具体需要，修改其中 userconfig 部分**。
+1. 打开编辑 `/yourpath/tsbxrun_mysandbox1.py` ， 根据你具体需要，修改其中 userconfig 部分。
 
-Tree Sandbox 的沙箱都会以独立的单`.py`文件运行，此文件就包含了 userconfig 与 其余程序源码。以上便是目前的部署和配置步骤。（有打算写个自动部署脚本，因为我们肯定会有多个具体沙箱）
+因为我们肯定会搞很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`my-sandboxes/README`](my-sandboxes/README_zh.md) 。
 
 ## Tree Sandbox 的一些不同玩法
 

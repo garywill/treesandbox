@@ -154,14 +154,14 @@ Now you can take a look at [dependency list](#Dependencies), and consider instal
 
 ### Get Your Sandbox(es) Ready
 
-Above just checked your computer can run Tree Sandbox. Before actual use, you want to make your startup script(s) of your **specific sandbox(es)** ready.
+Above just checked your computer can run Tree Sandbox. In actual daily use, **startup script** of a **specific TreeSandbox sandbox** will run as standalone **single `.py` file**, containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
 
-Currently, need to manually do:
+To manually make a specific sandbox ready:
 
 1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
-1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. **Modify userconfig section according to your specific needs**.
+1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. Modify userconfig section according to your specific needs.
 
-Sandboxes of TreeSandbox will run as standalone single `.py` files, each of them contain both userconfig section and the sandbox program code. So that's current deploy & config steps. (We'll make a auto deploy script for users, for likely we'll have many specific sandboxes)
+For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conviniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`my-sandboxes/README`](my-sandboxes/README.md).
 
 ## What Difference with Tree Sandbox
 
