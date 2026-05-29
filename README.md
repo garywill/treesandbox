@@ -161,7 +161,7 @@ To manually make a specific sandbox ready:
 1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
 1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. Modify userconfig section according to your specific needs.
 
-For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conviniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`my-sandboxes/README`](my-sandboxes/README.md).
+For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`my-sandboxes/README`](my-sandboxes/README.md).
 
 ## What Difference with Tree Sandbox
 
@@ -338,7 +338,7 @@ Required:
 - glibc
 - Python >= 3.12
 - bash
-- sleep
+- coreutils
 
 (Although Python script it is, it directly talks to Linux kernel via libc, no third-party Python library.)
 

@@ -335,7 +335,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 - glibc
 - Python >= 3.12
 - bash
-- sleep
+- coreutils
 
 (虽然是Python脚本，但通过libc直接调用Linux内核功能，不需第三方Python库)
 

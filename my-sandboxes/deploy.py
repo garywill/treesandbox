@@ -32,13 +32,18 @@ def main():
 def deploy_sandbox(sbx):
     if sbx.destfile:
         destfile = sbx.destfile
-    else:
+        if not destfile.lower().endswith('.py'):
+            raise Exception("destfile should end with '.py'")
+    elif sbx.destdir:
         destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.py'
+    else:
+        raise Exception("No destdir nor destfile")
 
     uc_filename = f'uc.{sbx.name}.py'
     uc_file_path = f'{user_sbxes_path}/{uc_filename}'
     if not os.path.exists(uc_file_path):
         log_warn(f'✘ User config file not exist {uc_file_path} . Skip {sbx}')
+        return False
     if not check_pyfile_syntax(uc_file_path):
         log_warn(f'✘ Syntax error in file {uc_file_path}. Skip {sbx}')
         return False
@@ -46,6 +51,7 @@ def deploy_sandbox(sbx):
     destdir = os.path.dirname(destfile)
     if not os.path.exists(destdir):
         log(f'Dir {destdir} not exist. Skip {sbx}.')
+        return False
 
     if os.path.exists(destfile) and os.stat(destfile).st_size > 0:
         if not 'Tree Sandbox' in open(destfile).read(800):
@@ -94,10 +100,10 @@ def prepare():
         if start_index is not None and end_index is not None:
             break
     if start_index is None:
-        low_warn(f"✘ Failed find start mark '{start_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
+        log_warn(f"✘ Failed find start mark '{start_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
         sys.exit(1)
     if end_index is None:
-        low_warn(f"✘ Failed find end mark '{end_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
+        log_warn(f"✘ Failed find end mark '{end_marker}' in {TSBX_ORIG_CODE_FILEPATH}")
         sys.exit(1)
     if not (start_index < end_index):
         log_warn(f'✘ Start mark and end mark have wrong sequence in {TSBX_ORIG_CODE_FILEPATH}')

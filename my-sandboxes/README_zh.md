@@ -40,7 +40,7 @@ python3 -IBS deploy.py
 如果要将 自定义的具体沙箱 与 Tree Sandbox 的代码仓库目录**分开存放**，可以：
 
 ```sh
-python3 -IBS deploy.py -s /my_path_for_sandboxes
+python3 -IBS deploy.py -s /path_to_your_sandboxes_config
 ```
 
 那样的话，这样存放文件：
@@ -51,7 +51,7 @@ treesandbox/         （TreeSandbox的git仓库）
   └─ my-sandboxes/
     └─ deploy.py        （部署工具脚本）
     
-/my_path_for_sandboxes/
+/path_to_your_sandboxes_config/
   ├─ list.toml        （定义你的具体沙箱列表）
   ├─ uc.<name1>.py   （你的具体沙箱1的userconfig）
   └─ uc.<name2>.py   （你的具体沙箱2的userconfig）
@@ -59,19 +59,34 @@ treesandbox/         （TreeSandbox的git仓库）
 
 ### 如何写 `list.toml` 
 
-例子：（两个具体沙箱）
+`list.toml` 简单示例：（两个具体沙箱）
 
 ```toml
 my_sandboxes = [
-    {name='myapp1', destdir='/mypath1'}, # destfile = /mypath1/tsbxrun_myapp1.py
-    {name='myapp2', destdir='/mypath2'}, # destfile = /mypath2/tsbxrun_myapp2.py
+    {name='myapp1', destdir='/pathA'}, # destfile = /pathA/tsbxrun_myapp1.py
+    {name='myapp2', destdir='/pathB'}, # destfile = /pathB/tsbxrun_myapp2.py
     ...
 ]
 ```
 
+部署完成后，你的App的文件像这样：
+
+```
+/pathA/                  (You create this dir for an app)
+  ├─ tsbxrun_myapp1.py     (Deployed by this tool. Startup script for app1 to run in sandbox)
+  └─ app1.AppImage         (You download from Internet)
+
+/pathB/                 (You create this dir for an app)
+  ├─ tsbxrun_myapp2.py     (Deployed by this tool. Startup script for app2 to run in sandbox)
+  └─ app2/                 (You download from Internet)
+    ├─ app2.bin
+    ├─ libapp2.so
+    └─ ....
+```
+
 ### 如何搞 `uc.<name>.py`
 
-一个 `uc.<name>.py` 文件里写你的一个具体沙箱的 userconfig 部分。文件名中的`<name>` 与 `list.toml` 里的一个条目的 `name` 一致。
+一个 `uc.<name>.py` 文件里写你的一个具体沙箱的 userconfig 。文件名中的`<name>` 与 `list.toml` 里的一个条目的 `name` 一致。
 
 `uc.<name>.py` 的内容像是这样：
 
@@ -86,8 +101,8 @@ def userconfig(si):
     return uc
 ```
 
-打开 `treesandbox.py` ，从其头部获取 userconfig 模板。
+打开 `treesandbox.py` ，从其头部获取 userconfig **模板**。
 
 ## 关于 Shabang
 
-我们的 `treesandbox.py` 和 `deploy.py` 的第一行都**没有写**像 `#!/usr/bin/...` 这样的 shabang 。那是因为，在你使用你的 python 来调用 `deploy.py` 时，它才把所使用的 python 解释器 的绝对路径 作为 shabang 写进 具体沙箱 的 启动脚本 里。
+我们的 `treesandbox.py` 和 `deploy.py` 的第一行都**没有写**像 `#!/usr/bin/...` 这样的 shabang 。那是因为，在你使用你的 python 来调用 `deploy.py` 时，它才把所使用的 python 解释器 的绝对路径 作为 shabang 写进 具体沙箱 的 启动脚本 里。（因此，记住了，我们的 `treesandbox.py` 和 `deploy.py` 都不是直接执行的，要用你的 `python3` 来调用）
