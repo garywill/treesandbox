@@ -1325,17 +1325,17 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
     if subLayer:
         keep_caps=True
 
-    skp_spfk = TmpSocketPair()
-
-    sys.stdout.flush() ; sys.stderr.flush()
-    pid = os.fork()
+    pid, skp_spfk = fork(create_socketpair=True, loghead=f"{loghead}subp {subp_name}", proc_dispname='sub',
+        **(
+            d(  close_fds=True,
+                close_keep_fds=[
+                    OG.userns_unpri.usernsfd,
+                    si.file_fds.layerslog_a,
+                    *( [si.subp_log_fds[subp_name]] if subp_name in dict.keys(si.subp_log_fds) else [] ),
+                ]
+        ) if not subLayer and not keep_caps else {} )
+    )
     if pid == 0: # 子进程
-        unreg_cleanup_func()
-        set_loghead(f"{loghead}subp {subp_name}")
-        set_proc_dispname('subp')
-        skp_spfk.i_am_chd()
-
-
         skp_spfk.chd_send(BS.IChdBorn)
         skp_spfk.chd_recv(1, 5, BS.YouChdGo)
         skp_spfk.chd_recv(1, 2, BS.YouChdGo)
@@ -1396,7 +1396,6 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         else: # 是subLayer
             return 0, None
     else: # 原进程
-        skp_spfk.i_am_pa()
         skp_spfk.pa_recv(1, 2, BS.IChdBorn)
         if no_wait:
             for _ in range(2): skp_spfk.pa_send(BS.YouChdGo);
