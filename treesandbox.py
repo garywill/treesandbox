@@ -1421,7 +1421,7 @@ def is_dir_inaccessible(path):
 
 def create_netns_tun( pasta_custom_args=[] ):
     os.mkfifo(f'/{tlcfg.sbxdir_path1}/temp/netns_proc_info.fifo')
-    pid, skp = fork(create_socketpair=True, loghead=f'{loghead} netns', proc_dispname='pasta runner',
+    pid, skp = fork(create_socketpair=True, loghead=f'{loghead} netns', proc_dispname='pasta runner', cut_stdin=True,
                     close_fds=True, close_keep_fds=[si.file_fds.layerslog_a, OG.userns_unpri.usernsfd] )
     if pid == 0: # 子进程
         if not is_dir_inaccessible('/zrootfs'):
@@ -1488,7 +1488,7 @@ def create_netns_tun( pasta_custom_args=[] ):
         return result
 
 def create_userns_unpri():
-    pid, skp = fork(create_socketpair=True, loghead=f'{loghead} userns', proc_dispname='unpri userns',
+    pid, skp = fork(create_socketpair=True, loghead=f'{loghead} userns', proc_dispname='unpri userns', cut_stdin=True,
                     close_fds=True, close_keep_fds=[si.file_fds.layerslog_a] )
     if pid == 0: # 子进程
         if not is_dir_inaccessible('/zrootfs'):
@@ -2176,7 +2176,7 @@ class OutestProcsMonitor:
                 pidfd_seeto   = os.pidfd_open(seeto_pid)
                 ns_seefrom        = get_nstypes(f'/proc/{seefrom_pid}/ns')
                 ns_seeto   = get_nstypes(f'/proc/{seeto_pid}/ns')
-                PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name,
+                PID1, _ = fork( proc_dispname='bridge', loghead=bridge_name, cut_stdin=True,
                                close_fds=True,
                                close_keep_fds=[si.file_fds.layerslog_a, pidfd_seefrom,  pidfd_seeto, OG.userns_unpri.usernsfd],
                                set_fds_CLOEXEC=True )
@@ -2184,7 +2184,7 @@ class OutestProcsMonitor:
                     # TODO 判断其他ns种类，如果不同，也要setns过去
                     os.setns(pidfd_seefrom, unshrflg(d(pid=1)))
 
-                    PID2, _ = fork(loghead=f'{loghead}F')
+                    PID2, _ = fork(loghead=f'{loghead}F', cut_stdin=True)
                     if PID2 == 0 : # 第二个子进程（孙进程). 与seefrom同pidns
                         mypid = os.getpid()
 
@@ -2561,6 +2561,8 @@ def fork(cut_stdin=False, create_socketpair=False, loghead=None, proc_dispname=N
             devnull = os.open('/dev/null', os.O_RDWR)
             os.dup2(devnull, 0)
             os.close(devnull)
+            os.setsid()
+            # os.setpgid(0, 0)
         if loghead is not None: set_loghead(loghead)
         if proc_dispname is not None: set_proc_dispname(proc_dispname)
         if create_socketpair: sktpair.i_am_chd()
