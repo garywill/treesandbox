@@ -2149,11 +2149,11 @@ class OutestProcsMonitor:
         if proc_name in ['xephyr', 'xwayland', 'xpraserver']:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
-            cleanup_symlinks_to_rm.append(f'/tmp/.X11-unix/X{si.newXId}')
+            cleanup_symlinks_to_rm.add(f'/tmp/.X11-unix/X{si.newXId}')
         if proc_name == 'weston':
             cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
             cls.symlink_into_sbxdir(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
-            cleanup_symlinks_to_rm.append(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+            cleanup_symlinks_to_rm.add(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
         if proc_name.startswith('shareshell_'):
             shellId = proc_name.removeprefix('shareshell_')
             cls.symlink_from_sbxdir_to_in_proc_rootfs('shellsocket', proc_name, f'/sbxdir/temp/shareshell.{shellId}.socket')
@@ -2580,7 +2580,7 @@ def isMeThatRegedCleanup(): # TODO 把stat里的时间也加入要素
     if (os.getpid(), get_nstypes('/proc/self/ns').pid) == whoCleanupRegister : return True
     else: log_warn('I am not the process that registered cleanup function. Cleanup function might not unregistered in time'); return False
 
-cleanup_symlinks_to_rm = []
+cleanup_symlinks_to_rm = set()
 def cleanup_outest():
     atexit._clear()
     if not isMeThatRegedCleanup(): return
