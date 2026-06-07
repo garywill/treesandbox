@@ -244,10 +244,9 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             #--title=VALUE
             #--border=yellow,10.
             '--clipboard-direction=disabled', # 用xpra的好像对ASK_OPEN不灵
+            '--use-display=yes'
         ]
 
-        xpra_server_extra_args += [f'--xvfb=Xorg -ac -noreset -novtswitch -nolisten tcp  -nolisten local +extension GLX +extension RANDR +extension RENDER   -config /etc/xpra/xorg.conf  -depth 24 :{newXId}' ]
-        # xpra_server_extra_args += [f'--xvfb=Xwayland :{newXId}']
         # Xorg的参数-ac让不需要XAUTHORITY。 如果不自定义xpra的--xvfb的值的话，无法让Xserver免认证。xpra的--auth可能控制的是xpra的客户端与服务端之间的认证，不是x server与client的认证
 
     if uc.windowed_size:
@@ -553,7 +552,9 @@ def gen_layer4c(si, uc, dyncfg):
             d( subp_name='xwayland',  cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ]
             ) if uc.gui=='weston-xwayland' else None,
 
-            d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}']
+            d( subp_name='xorg', cmdvec=['Xorg', '-ac', '-noreset', '-novtswitch', '-nolisten', 'tcp', '-nolisten', 'local', '+extension', 'GLX', '+extension', 'RANDR', '+extension', 'RENDER', '-config', '/etc/xpra/xorg.conf', '-depth', '24', f':{si.newXId}'] ) if uc.gui=='xpra' else None,
+
+            d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ]
             ) if uc.gui=='xpra' else None,
         ],
     )
@@ -2146,7 +2147,7 @@ class OutestProcsMonitor:
         CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         if proc_name == 'userns_unpri':
             OG.userns_unpri = get_userns_unpri()
-        if proc_name in ['xephyr', 'xwayland', 'xpraserver']:
+        if proc_name in ['xephyr', 'xwayland', 'xorg']:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.add(f'/tmp/.X11-unix/X{si.newXId}')
