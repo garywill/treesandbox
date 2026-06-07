@@ -578,6 +578,50 @@ def gen_layer4(si, uc, dyncfg):
         # dev_shell=True,  # 调试用
     )
 
+class NameMng:
+    random_chars = "abcdefghkmnpqrsuvwxyz"
+    @classmethod
+    def chk_str_valid_sandbox_name(cls, string):
+        CHK( re.match(r'^[a-zA-Z0-9_-]+$', string), f"Sandbox name can only contain letters, numbers, '-', '_' . This name is invalid: {string}" )
+        CHK( not '--' in string, f" '--' is not allowed in sandbox name. This name is invalid: {string}")
+        CHK( not string.startswith('-') and not string.endswith('-'), f"Sandbox name can not starts or ends with '-'. This name is invalid: {string}")
+    @classmethod
+    def gen_instance_name_mkdir(cls): # 只在 最外层启动时 并且 确定要创建新实例时 调用
+        now = datetime.datetime.now()
+        time_str = now.strftime("%m%d-%H%M%S")
+        ds = now.microsecond // 100_000
+
+        n = 0
+        while True:
+            if n>100: raise_exit('Have tried too many times generating instance name')
+
+            random_str = ''.join(random.choices(cls.random_chars, k=3))
+            instance_name = f'{si.sandbox_name}--{time_str}-{ds}{random_str}'
+            outest_sbxdir = f'{si.PTMP}/{instance_name}'
+            CG_SBX = f'{si.CG_TSBXS}/{instance_name}'
+
+            if os.path.lexists(outest_sbxdir) or os.path.lexists(CG_SBX):
+                n+=1 ; continue
+
+            try: os.makedirs(outest_sbxdir, exist_ok=False)
+            except FileExistsError:
+                n+=1 ; continue
+            except: raise
+
+            mkdirp(si.CG_TSBXS)
+
+            try: os.makedirs(CG_SBX, exist_ok=False)
+            except FileExistsError:
+                n+=1 ; continue
+            except: raise
+
+            Path(f'{CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
+
+            break
+        return instance_name, outest_sbxdir, CG_SBX
+    @classmethod
+    def is_pattern_instance_name(cls, string):
+        return re.match(rf'^{si.sandbox_name}--\d{{4}}-\d{{6}}-\d[{cls.random_chars}]{{3}}$', string)
 
 resv_name_prefix = ['bridge_', 'layer', 'shareshell_', 'mainApp']
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun', 'bridge', 'shareshell', 'mainApp']
@@ -634,7 +678,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     uc = userconfig(si) # NOTE
 
     # 沙箱名。不是子容器层名
-    CHK( not uc.sandbox_name or re.match(r'^[a-zA-Z0-9_-]+$', uc.sandbox_name), f"Sandbox name can only contain letters, numbers, '-', '_' . This name is invalid: {uc.sandbox_name}" )
+    if uc.sandbox_name: NameMng.chk_str_valid_sandbox_name(uc.sandbox_name)
     sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"Sandbox name {sandbox_name} conflicts with reserved word {resv_words}")
@@ -653,31 +697,24 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     sync_clipbd_from_sandbox = True if uc.sync_clipbd_from_sandbox else False
 
-    dyncfg = gen_dynamic_cfg(si, uc) # NOTE
 
-    starttime_str = datetime.datetime.now().strftime("%m%d-%H%M")
+    si.update( { k: v for k, v in locals().items() if k in
+        [ 'sandbox_name', 'reuseful', 'idleKeepSbxTime', 'apps', 'sync_clipbd_from_sandbox', ]
+    } )
 
-    n = 0
-    while True:
-        instance_name = f'{sandbox_name}_{starttime_str}-{n}'
-        if os.path.lexists( (outest_sbxdir := f'{PTMP}/{instance_name}') ) :
-            n+=1
-        else : break
-
-    if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
 
     CG_HOSTUSER = f'/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service'
     CG_TSBXS = f'{CG_HOSTUSER}/tsbxs.slice'
-    CG_SBX = f'{CG_TSBXS}/{instance_name}'
     CHK( os.access(CG_HOSTUSER, os.W_OK), f"The directory {CG_HOSTUSER} does not exist or is not writable")
 
     BND_MAX = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
     pythonbin = sys.executable
 
+    dyncfg = gen_dynamic_cfg(si, uc) # NOTE
+    if 'newXId' in dict.keys(dyncfg): newXId = dyncfg.newXId
+
     si.update( { k: v for k, v in locals().items() if k in
-        ['sandbox_name', 'instance_name', 'reuseful', 'idleKeepSbxTime',  'outest_sbxdir',
-         'newXId', 'apps', 'CG_HOSTUSER', 'CG_TSBXS', 'CG_SBX', 'BND_MAX', 'pythonbin',
-         'sync_clipbd_from_sandbox' ]
+          ['newXId', 'CG_HOSTUSER', 'CG_TSBXS', 'BND_MAX', 'pythonbin', ]
     } )
 
     layer1_cfg = gen_layer1(si, uc, dyncfg)
@@ -903,6 +940,7 @@ def make_mnt_fill_sbxdir(si, lyrcfg, call_at_begin=None, call_at_buildfs=None, O
         # apps/ 挂为 tmpfs rw
         # overlays.xxx.dirs/ 挂载为tmpfs 可能rw (暂未实现）
     if call_at_begin: # 刚启动脚本
+        si.instance_name , si.outest_sbxdir, si.CG_SBX = NameMng.gen_instance_name_mkdir()
         target_sbxdir_path = napath(si.outest_sbxdir)
         old_sbxdir_path = None
     elif call_at_buildfs: # 为本层接下来的新文件系统准备的 （可能 变根=新旧路径不同  ，也可能 不变根=新旧路径同）
@@ -1098,7 +1136,7 @@ def main(lyrcfg_in):
         si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
         tlcfg = layer1_cfg
 
-        tlcfg.sbxdir_path0 = si.outest_sbxdir
+        # tlcfg.sbxdir_path0 = # 到后面决定了instance_name才设置这个
 
         if nocleanup: si.nocleanup = True
     else: # 是子层
@@ -1126,19 +1164,15 @@ def main(lyrcfg_in):
         log('---------------------')
         if si.newXId:
             CHK( is_XId_available(si.newXId), f"The display number {si.newXId=} to be used is occupied")
-        log(f"Creating new instance of sandbox. Info dir: {si.outest_sbxdir}")
-        log(f"cgroup: {si.CG_SBX}")
         log(f"Procs to be polled by watchdog: {si.expected_alive_procs}")
         if si.newXId: log(f'X11/Wayland display number used in sandbox: {si.newXId}')
 
         reg_cleanup_func(cleanup_outest) # 顶层父进程注册清理函数
 
-        mkdirp(si.CG_TSBXS)
-        mkdirp(si.CG_SBX)
-        Path(f'{si.CG_SBX}/cgroup.procs').write_text(str(os.getpid()))
-
         make_mnt_fill_sbxdir(si, layer1_cfg, call_at_begin=True, OG=OG)
-
+        log(f"Create new instance of sandbox. Info dir: {si.outest_sbxdir}")
+        log(f"cgroup: {si.CG_SBX}")
+        tlcfg.sbxdir_path0 = si.outest_sbxdir
 
     set_loghead (f'{tlcfg.layer_name}: ' if not is_outest else 'outest: ')
     set_ps1('notready')
@@ -1839,7 +1873,7 @@ def maybe_sendto_running_instance(reusefg):
     for dir_in_PTMP in Path(si.PTMP).iterdir():
         dirname = dir_in_PTMP.name
         # 是否是同名沙箱
-        if not re.match(rf'^{si.sandbox_name}_\d{{4}}-\d{{4}}-\d+$', dirname) :
+        if not NameMng.is_pattern_instance_name(dirname):
             continue
         # 是否无 xxx_exit 退出标记
         if os.path.lexists(f'{si.PTMP}/{dirname}_exit'):

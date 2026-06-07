@@ -391,20 +391,20 @@ User Advanced Manual 与 User Manual 是不同的。95%的情况下不需要看 
 
 ### 主机什么位置有运行中的沙箱的信息
 
-若你启动了一个 名为`ms` 的 Tree Sandbox 沙箱 的实例，会在主机的这个位置临时储存此实例的信息：
+若你启动了一个 名为`SomeName` 的 Tree Sandbox 沙箱 的实例，会在主机的这个位置临时储存此实例的信息：
 
 ```
-/tmp/tsbxs-1000/ms-nnnn-nnnn-n/
+/tmp/tsbxs-1000/SomeName-nnnn..../
 ```
 
-（`ms-nnnn-nnnn-n` 是这个沙箱实例的名称。n是数字。假设你的 uid 是 1000。）
+（`SomeName-nnnn....` 是这个沙箱实例的名称。n是时间戳数字。假设你的 uid 是 1000。）
 
 另外有个附加功能：如果沙箱使用的内部的隔离的 X11/Wayland，那么还会在主机的以下位置创建临时symlink，以<ins><u>便于从主机给沙箱录屏</u></ins>： (假设沙箱使用 DISPLAY 500 )
 
 ```
-/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
+/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/SomeName-nnnn..../x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
   
-$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
+$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/SomeName-nnnn..../waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
 ```
 
 沙箱结束时，会清理临时symlink。

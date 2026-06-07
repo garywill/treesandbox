@@ -394,20 +394,20 @@ The User Advanced Manual is different from the User Manual. In 95% of cases you 
 
 ### On host where those live sandboxes info are
 
-Starting an instance of a sandbox named `ms`, info about this instance will be temporarily stored on host at:
+Starting an instance of a sandbox named `SomeName`, info about this instance will be temporarily stored on host at:
 
 ```
-/tmp/tsbxs-1000/ms-nnnn-nnnn-n/
+/tmp/tsbxs-1000/SomeName-nnnn..../
 ```
 
-(`ms-nnnn-nnnn-n` is the name of this sandbox instance.  n is number. Assuming your UID is 1000. )
+(`SomeName-nnnn....` is the name of this sandbox instance.  n is timestamp digit. Assuming your UID is 1000. )
 
 An additional feature: If the sandbox uses isolated internal X11/Wayland, temporary symlink(s) will be created on host at the following location, to allow <ins><u> user to record sandbox screen easily </u></ins> from host: (assume sandbox uses DISPLAY 500)
 
 ```
-/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
+/tmp/.X11-unix/X500  (symlink)   -> /tmp/tsbxs-1000/SomeName-nnnn..../x11socket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/tmp/.X11-unix/X500
   
-$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/ms-nnnn-nnnn-n/waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
+$XDG_RUNTIME_DIR/wayland-500  (symlink)   -> /tmp/tsbxs-1000/SomeName-nnnn..../waylandsocket  (also a symlink)   -> /proc/<in-sandbox-proc-pid>/root/$XDG_RUNTIME_DIR/wayland-500
 ```
 
 When sandbox exits, temporary symlinks cleaned up.
