@@ -1291,6 +1291,7 @@ def main2(skp_lyfk):
     for pid, skp_spfk in inprepare_children:
         skp_spfk.pa_send(BS.YouChdGo)
     for pid, skp_spfk in inprepare_children:
+        skp_spfk.pa_send(BS.YouChdGo)
         skp_spfk.close()
 
     # TODO 让最外层把每一层的pidfd和各类ns保活， 再继续
@@ -1337,7 +1338,8 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
 
         skp_spfk.chd_send(BS.IChdBorn)
         skp_spfk.chd_recv(1, 5, BS.YouChdGo)
-        skp_spfk.chd_recv(1, 2, b'')
+        skp_spfk.chd_recv(1, 2, BS.YouChdGo)
+        skp_spfk.chd_recv(1, 2, b'') # 仅所有持有对端（原进程）的fd的进程都关闭了其fd之后，才会收到 b'' 。若fork时，有漏关的，则不行
         skp_spfk.close()
 
         wait_for_startAfters(start_after) # NOTE 必须在wlog之前等待
@@ -1397,7 +1399,8 @@ def layer_run_subp(cmdvec=None, subp_name=None, start_after=None,
         skp_spfk.i_am_pa()
         skp_spfk.pa_recv(1, 2, BS.IChdBorn)
         if no_wait:
-            skp_spfk.pa_send(BS.YouChdGo); skp_spfk.close() ; skp_spfk = None
+            for _ in range(2): skp_spfk.pa_send(BS.YouChdGo);
+            skp_spfk.close() ; skp_spfk = None
         return pid, skp_spfk
 
     # os.execv('/bin/bash', ['/bin/bash', '--norc'])
