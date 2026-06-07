@@ -571,8 +571,7 @@ def gen_layer4(si, uc, dyncfg):
         ],
 
         start_after = [
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston-xwayland','xpra'] else None,
-            # xephyr这里可以不需要等，因为上面等过了
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['xephyr', 'weston-xwayland','xpra'] else None,
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
