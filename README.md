@@ -444,6 +444,11 @@ After the sandbox starts, the user’s app runs in layer4. layer4 is "main layer
 
 > There’s still a lot of doc not written yet. I’ll take a break first.
 
+## Downside of This Sandbox Tool
+
+1. Currently implemented in Python, where each instance uses 15MB more memory than compiled container tool.
+1. Difficulty in development, due to the tree-structured multi-layered design. (Thankfully, the difficult part is already done)
+
 ## Consent Disclaimer
 
 1. This sandbox is home-made, for running apps, not for testing malware. Although we try our best to cover all security aspects, this project comes with no warranty. Use at your own risk.
