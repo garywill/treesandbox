@@ -178,7 +178,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     mnts_gui = []
     xephyr_extra_args = []
     weston_extra_args = []
-    xpra_extra_args = [] ; xpra_server_extra_args = []
+    xpra_extra_args = [] ; xpra_server_extra_args = [] ; xpra_client_extra_args = []
     xwayland_extra_args = []
     bridges = []
     #-------------------------
@@ -337,7 +337,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     dyncfg = d({k: v for k, v in locals().items() if k in [
         'paths_to_mask', 'machineid', 'sharedir_onhost', 'dbusproxy_argv' , 'mnts_dns', 'bridges',
-        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'xpra_extra_args', 'xpra_server_extra_args', 'icewm',
+        'newXId', 'mnts_gui', 'xephyr_extra_args', 'weston_extra_args', 'xwayland_extra_args', 'xpra_extra_args', 'xpra_server_extra_args', 'xpra_client_extra_args', 'icewm',
     ]})
     return dyncfg
 
@@ -416,7 +416,7 @@ def gen_layer2c(si, uc, dyncfg):
             d( subp_name='weston', cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args]
             ) if uc.gui=='weston-xwayland' else None,
 
-            d( subp_name='xpraclient', cmdvec=['xpra', *dyncfg.xpra_extra_args, 'attach',f':{si.newXId}'],
+            d( subp_name='xpraclient', cmdvec=['xpra', *dyncfg.xpra_extra_args, *dyncfg.xpra_client_extra_args,  'attach',f':{si.newXId}'],
                 start_after = [
                     d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ,
                     d(waittype='socket-listened', path=f'/run/xpra/{si.hostname}-{si.newXId}')
@@ -572,6 +572,7 @@ def gen_layer4(si, uc, dyncfg):
 
         start_after = [
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['weston-xwayland','xpra'] else None,
+            # xephyr这里可以不需要等，因为上面等过了
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
