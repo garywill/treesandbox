@@ -1178,18 +1178,12 @@ def main(lyrcfg_in):
 
     set_ps1('afterUnshare')
 
-    skp_lyfk = TmpSocketPair()
-    sys.stdout.flush() ; sys.stderr.flush()
-    pid = os.fork()
+    pid, skp_lyfk = fork(create_socketpair=True, loghead=f'{tlcfg.layer_name} F: ', proc_dispname=tlcfg.layer_name)
     if pid == 0: # 子进程
-        unreg_cleanup_func()
-        set_loghead (f'{tlcfg.layer_name} F: ')
-        skp_lyfk.i_am_chd()
         if tlcfg.depth == 1:
             set_pdeathsig(signal.SIGTERM) # 最外层的原进程（fork前的进程）退出的话，layer1的fork出来的子进程应该主动退出
         return main2(skp_lyfk)
     else: # 父进程
-        skp_lyfk.i_am_pa()
 
         # if tlcfg.uid_map_as_user and tlcfg.depth > 1: # 已删除 map_as_user 的功能
         skp_lyfk.close()
@@ -1203,8 +1197,6 @@ def main(lyrcfg_in):
 
 
 def main2(skp_lyfk):
-    set_proc_dispname(tlcfg.layer_name)
-
     # 变内部uid=0 (root)
     if tlcfg.uid_map_as_root:
         Path('/proc/self/setgroups').write_text('deny\n')
