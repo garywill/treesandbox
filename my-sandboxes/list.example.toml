@@ -12,9 +12,14 @@
 
 my_sandboxes = [
     # Will associate 'name' with 'uc.<name>.py'.
-    # Will create a start script '{destdir}/tsbxrun_<name>.py' for one specific sandbox.
+    # Will create a start script '{destdir}/tsbxrun_<name>.py' for one specific sandbox, if 'destdir' is used. Otherwise use 'destfile'.
 
-    {name='ExampleMyapp0', destdir='/tmp'},
+    {name='ExampleMyapp0',  destdir='/tmp' },
+    {name='ExampleMyapp0',  destfile='/tmp/tsbxrun_example0_2.py' },
+    #{name='myapp1',         destdir='/mysofts/myapp1'},
 
-    # {name='myapp1', destdir='/mysofts/myapp1'},
+    # 'tsver' indicates which version of TreeSandbox program code to use, for a specific sandbox
+    {name='ExampleMyapp0', tsver='git:tag:v0.1.2',    destfile='/tmp/tsbxrun_example0_3.py' },
+    {name='ExampleMyapp0', tsver='git:commit:156c0d', destfile='/tmp/tsbxrun_example0_4.py' },
+
 ]

@@ -83,6 +83,8 @@ After deploying, your app files are like:
     └─ ....
 ```
 
+(It supports specifying which version of sandbox program code to use for individual specific sandbox. See `list.example.toml` )
+
 ### How to Write `uc.<name>.py`
 
 Content of a `uc.<name>.py` file is the userconfig of your specific sandbox. The `<name>` in file name should equal the value of `name` of an item in `list.toml`.

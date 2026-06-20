@@ -80,6 +80,8 @@ my_sandboxes = [
     └─ ....
 ```
 
+（支持 为每个具体沙箱 指定 要使用的沙箱程序代码 的 版本，详见 `list.example.toml` ）
+
 ### 如何搞 `uc.<name>.py`
 
 一个 `uc.<name>.py` 文件里写你的一个具体沙箱的 userconfig 。文件名中的`<name>` 与 `list.toml` 里的一个条目的 `name` 一致。
