@@ -129,11 +129,20 @@ def get_progcodeinfo_by_ver(verstring):
         orig_code_content = open(ts_prog_file).read()
     elif verstring.startswith('git:tag:'):
         tagname = verstring.removeprefix('git:tag:')
-        tsver_tip = f'git tag {tagname}'
+        tsver_tip = verstring
         orig_code_content = run_cmd_get_stdout(['git', 'show', f'refs/tags/{tagname}:treesandbox.py'])
     elif verstring.startswith('git:commit:'):
         commit = verstring.removeprefix('git:commit:')
-        tsver_tip = f'git commit {commit}'
+        tsver_tip = verstring
+        orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
+    elif verstring.startswith('git:branch:') :
+        branchname = verstring.removeprefix('git:branch:')
+        commit = run_cmd_get_stdout(['git', 'rev-parse', f'refs/heads/{branchname}']).strip()
+        tsver_tip = f'{verstring} {commit}'
+        orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
+    elif verstring == 'git:head':
+        commit = run_cmd_get_stdout(['git', 'rev-parse', 'HEAD']).strip()
+        tsver_tip = f'{verstring} {commit}'
         orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
     else:
         raise OneSbxError(f'Invalid version string {verstring}')
