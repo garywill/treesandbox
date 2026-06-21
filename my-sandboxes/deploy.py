@@ -30,15 +30,19 @@ def main():
         sys.exit(1)
 
     try:
-        my_sandboxes = d(list_file_obj).my_sandboxes
+        my_sandboxes = D(list_file_obj).my_sandboxes
     except Exception as err:
-        log_warn(f'Failed to find my_sandboxes from list file {list_file}')
+        log_warn(f'Failed to find my_sandboxes from file {list_file}')
         log_warn(err)
+        sys.exit(1)
+
+    if not isinstance(my_sandboxes, list):
+        log_warn(f'Failed to find list object my_sandboxes from file {list_file}')
         sys.exit(1)
 
     for sbx in my_sandboxes:
         try:
-            deploy_one_sandbox(sbx)
+            deploy_one_sandbox(d(sbx))
         except OneSbxError as err:
             log_warn(f'✘ A sandbox failed {sbx}: {err}')
         except OneSbxErrorSame as err:
@@ -47,6 +51,7 @@ def main():
             log_warn(f'✘ Error occured when deploying sandbox {sbx}: {err}')
             traceback.print_exc()
             sys.exit(1)
+
 
 
 def deploy_one_sandbox(sbx):

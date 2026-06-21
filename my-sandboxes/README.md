@@ -5,9 +5,9 @@ English | [中文](README_zh.md)
 
 ## Why Need This Batch Deploy Script
 
-**Startup script** of a **specific TreeSandbox sandbox** will run as standalone **single `.py` file**, containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
-
 Once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
+
+**Startup script** of a **specific TreeSandbox sandbox** will run as standalone **single `.py` file**, containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
 
 For likely we'll have many specific sandboxes, it's recommended to use this **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes.
 

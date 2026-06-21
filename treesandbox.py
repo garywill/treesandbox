@@ -1471,7 +1471,7 @@ def create_netns_tun( pasta_custom_args=[] ):
         PYCODE = '\n'.join([line.strip() for line in f'''
             import os, json, pathlib, ctypes, ctypes.util, signal
             libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-            libc.prctl(1, signal.SIGKILL)
+            PR_SET_PDEATHSIG = 1 ; libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
             output = dict()
             output["self_see_pid"] = os.getpid()
             output["ns"] = dict(net=os.stat('/proc/self/ns/net').st_ino, pid=os.stat('/proc/self/ns/pid').st_ino)

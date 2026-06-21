@@ -320,6 +320,10 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
   A semi-trusted layer has access to more host sockets than an untrusted layer. For example, a pure X server running inside the sandbox runs on untrusted layer, while the proc used to forward X11 needs to run in semi-trusted layer. The "main layer" is an untrusted layer.
 
+- "Specific sandbox"
+
+  For sandboxing various apps, every app needs its tailored sandbox configuration. A configured sandbox will be a standalone `.py` file. A configured sandbox is called "specific sandbox". That `.py` file contains <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins> (userconfig is one sandbox's configuration). Different specific sandboxes have same program code and have different userconfig.
+
 - Instance, “same-name sandbox”, and "reuse" 
 
   For a regular "non-reuseful" sandbox, each time the sandbox get started, a new running **sandbox instance** is spawned;
