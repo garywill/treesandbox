@@ -200,6 +200,9 @@ def split_origcode(origcode ):
     if not (start_index < end_index):
         raise OneSbxError(f'✘ Start mark and end mark have wrong sequence')
 
+    if TSBXS_LINES[0].startswith('#!/'):
+        del TSBXS_LINES[0]
+
     code_beforeUc = '\n'.join( TSBXS_LINES[:start_index+1] )
     code_afterUc = '\n'.join( TSBXS_LINES[end_index:] )
 
