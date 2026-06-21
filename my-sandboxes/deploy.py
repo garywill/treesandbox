@@ -21,49 +21,57 @@ def main():
     log('')
 
     list_file = f'{user_sbxes_path}/list.toml'
+    list_file_content = open(list_file).read()
     try:
-        my_sandboxes = d(tomllib.loads(open(list_file).read() ) ).my_sandboxes
+        list_file_obj = tomllib.loads(list_file_content)
     except Exception as err:
-        log_warn(f'Failed to read and parse {list_file}')
+        log_warn(f'Failed to parse {list_file}')
         log_warn(err)
         sys.exit(1)
+
+    try:
+        my_sandboxes = d(list_file_obj).my_sandboxes
+    except Exception as err:
+        log_warn(f'Failed to find my_sandboxes from list file {list_file}')
+        log_warn(err)
+        sys.exit(1)
+
     for sbx in my_sandboxes:
-        # log(sbx)
         try:
             deploy_one_sandbox(sbx)
+        except OneSbxError as err:
+            log_warn(f'✘ A sandbox failed {sbx}: {err}')
+        except OneSbxErrorSame as err:
+            log_warn(f'A sandbox skipped {sbx}: {err}')
         except Exception as err:
-            log_warn(f'✘ Error occured when distributing sandbox {sbx}: {err}')
+            log_warn(f'✘ Error occured when deploying sandbox {sbx}: {err}')
             traceback.print_exc()
+            sys.exit(1)
 
 
 def deploy_one_sandbox(sbx):
     if sbx.destfile:
         destfile = sbx.destfile
         if not destfile.lower().endswith('.py'):
-            raise Exception("destfile should end with '.py'")
+            raise OneSbxError("destfile should end with '.py'")
     elif sbx.destdir:
         destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.py'
     else:
-        raise Exception("No destdir nor destfile")
+        raise OneSbxError("No destdir nor destfile")
 
     uc_filename = f'uc.{sbx.name}.py'
     uc_file_path = f'{user_sbxes_path}/{uc_filename}'
     if not os.path.exists(uc_file_path):
-        log_warn(f'✘ User config file not exist {uc_file_path} . Skip {sbx}')
-        return False
-    if not check_pyfile_syntax(uc_file_path):
-        log_warn(f'✘ Syntax error in file {uc_file_path}. Skip {sbx}')
-        return False
+        raise OneSbxError(f'✘ User config file not exist {uc_file_path}')
+    check_syntax(filepath=uc_file_path)
 
     destdir = os.path.dirname(destfile)
     if not os.path.exists(destdir):
-        log(f'Dir {destdir} not exist. Skip {sbx}.')
-        return False
+        raise OneSbxError(f'Dir {destdir} not exist. ')
 
     if os.path.exists(destfile) and os.stat(destfile).st_size > 0:
         if not 'Tree Sandbox' in open(destfile).read(800):
-            log_warn(f'✘ Target file {destfile} already exists and its content seems not to be a script of Tree Sandbox. Skip {sbx} . Please manually check and remove it if needed.')
-            return False
+            raise OneSbxError(f'✘ Target file {destfile} already exists and seems not to be a script of Tree Sandbox. Please manually check and remove it if needed.')
 
     tsver = sbx.tsver
     if not tsver:
@@ -73,7 +81,7 @@ def deploy_one_sandbox(sbx):
 
     progcodeinfo = get_progcodeinfo_by_ver(verstring)
     if progcodeinfo == 'preholder':
-        raise Exception(f'Encountered some problem with program code in {verstring}')
+        raise OneSbxErrorSame(f"Skip because version '{verstring}' met problem before")
 
 
     onesbx_code_content = make_onesbx_code(uc_file_path, progcodeinfo )
@@ -81,7 +89,7 @@ def deploy_one_sandbox(sbx):
     with open(destfile, 'w') as f:
         f.write(onesbx_code_content)
         os.chmod(f.name, 0o755)
-    log(f'Write to {destfile} done.')
+    log(f'Successfully write to {destfile}. √')
 
 def make_onesbx_code(uc_file_path, progcodeinfo):
     uc_file_content = open(uc_file_path).read()
@@ -128,18 +136,14 @@ def get_progcodeinfo_by_ver(verstring):
         tsver_tip = f'git commit {commit}'
         orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
     else:
-        raise Exception(f'Invalid version string {verstring}')
+        raise OneSbxError(f'Invalid version string {verstring}')
 
-    try:
-        split_result = split_origcode(orig_code_content)
-    except:
-        log_warn(f'Failed to split {verstring} original program code into head and body parts')
-        raise
+    split_result = split_origcode(orig_code_content)
 
-    if not check_pycode_syntax(split_result.code_beforeUc):
-        raise Exception(f'Syntax error detected in the head of treesandbox.py')
-    if not check_pycode_syntax(split_result.code_afterUc):
-        raise Exception(f'Syntax error detected in the body of treesandbox.py')
+    check_syntax( codecontent=split_result.code_beforeUc ,
+                 name=f'treesandbox.py (version: {verstring})' )
+    check_syntax( codecontent=split_result.code_afterUc , lineofs=split_result.lineofs_af,
+                 name=f'treesandbox.py (version: {verstring})' )
 
     result = D(
         tsver_tip = tsver_tip,
@@ -157,7 +161,7 @@ def run_cmd_get_stdout(cmdvec):
     )
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
-        raise Exception(f'Error when executing command {cmdvec} . Stderr: {stderr.decode()}')
+        raise OneSbxError(f'Error when executing command {cmdvec} . Stderr: {stderr.decode()}')
     return stdout.decode()
 
 
@@ -181,11 +185,11 @@ def split_origcode(origcode ):
         if start_index is not None and end_index is not None:
             break
     if start_index is None:
-        raise Exception(f"✘ Failed find start mark '{start_marker}'")
+        raise OneSbxError(f"✘ Failed find start mark '{start_marker}'")
     if end_index is None:
-        raise Exception(f"✘ Failed find end mark '{end_marker}'")
+        raise OneSbxError(f"✘ Failed find end mark '{end_marker}'")
     if not (start_index < end_index):
-        raise Exception(f'✘ Start mark and end mark have wrong sequence')
+        raise OneSbxError(f'✘ Start mark and end mark have wrong sequence')
 
     code_beforeUc = '\n'.join( TSBXS_LINES[:start_index+1] )
     code_afterUc = '\n'.join( TSBXS_LINES[end_index:] )
@@ -198,28 +202,26 @@ def split_origcode(origcode ):
     return result
 
 
-
-
-
-def check_pyfile_syntax(filepath):
+def check_syntax(filepath=None, codecontent=None , name=None, lineofs=0):
     try:
-        ast.parse(open(filepath).read())
+        if filepath:
+            ast.parse(open(filepath).read())
+        elif codecontent:
+            ast.parse(codecontent)
+        else: raise Exception('This function is not used with proper parameter')
         return True
-    except SyntaxError as e:
-        print(f"❌ Syntax Error in {filepath}:")
-        print(f"   Line {e.lineno}, Col {e.offset}: \n{e.text if e.text else ''}")
-        print(f"   Err msg: {e.msg}")
-        return False
+    except SyntaxError as err:
+        errmsg = '\n'
+        errmsg +=  "✘ Syntax Error in " + (filepath if filepath else name) + " :\n"
+        errmsg += f"   Line {err.lineno + lineofs}, Col {err.offset}:\n"
+        errmsg +=   err.text + '\n'
+        errmsg += f"   Err msg: {err.msg}\n"
+        errmsg += '\n'
+        log_warn(errmsg)
+        raise OneSbxError(f'Syntax error found in {filepath if filepath else name}')
 
-def check_pycode_syntax(codecontent):
-    try:
-        ast.parse(codecontent)
-        return True
-    except SyntaxError as e:
-        print(f"❌ Syntax Error:")
-        print(f"   Line {e.lineno}, Col {e.offset}: \n{e.text if e.text else ''}")
-        print(f"   Err msg: {e.msg}")
-        return False
+
+
 
 
 
@@ -236,7 +238,12 @@ def log(*args, **kwargs):
     print(*new_args, **kwargs)
 def log_warn(*args, **kwargs):
     if 'file' not in kwargs: kwargs['file'] = sys.stderr
-    log('WARNING ✘: ',  *args, **kwargs)
+    log('Warn: ',  *args, **kwargs)
+
+class OneSbxError(Exception):
+    pass
+class OneSbxErrorSame(Exception):
+    pass
 
 
 class EnhancedFalse:
