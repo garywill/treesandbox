@@ -1752,7 +1752,7 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
             for x in os.listdir(srcbase):
                 if x in [ 'proc', 'sbxdir', 'zrootfs', ]: continue
                 a( d( op='same', dest=napath(f'{destbase}/{x}') , src=napath(f'{srcbase}/{x}') ) )
-            a( d( op='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
+            # a( d( op='tmpfs', dest=napath(f'{destbase}/run/tmux') ) ) # 按理说，使用 dup-rootfs 的层本来不应该运行任何程序（因为uid=0)，但可能会用 tmux 当内外通信工具，先预留这个，并且要与host中的 /run/tmux 不同
         elif many_op == 'sbxdir-in-newrootfs':
             dcp_pItem = copy.deepcopy(opItem)
             a( d({'op': dict.pop(dcp_pItem, 'many_op'), **dcp_pItem} ) )
