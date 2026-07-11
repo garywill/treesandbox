@@ -350,7 +350,7 @@ Optional:
 
 - dtach (share shell to the host)
 - xdg-dbus-proxy (filter DBus communication)
-- [pasta (passt)](https://passt.top) (tun/tap networking)
+- [pasta (passt)](https://passt.top) (tun/tap networking) (version >= about 202512xx)
 - nftables (network traffic control)
 - Xpra (isolated X11, seamless)
 - Weston + Xwayland + icewm (isolated X11)

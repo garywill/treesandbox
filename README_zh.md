@@ -347,7 +347,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
 - dtach (共享shell给主机)
 - xdg-dbus-proxy (过滤DBUS通信)
-- [pasta (passt)](https://passt.top) (网络介面tun/tap)
+- [pasta (passt)](https://passt.top) (网络介面tun/tap) (版本 >= 约 202512xx)
 - nftables (网络流量控制)
 - Xpra (隔离X11。无缝显示)
 - Weston + Xwayland + icewm (隔离X11)

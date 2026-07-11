@@ -1773,7 +1773,9 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
         elif many_op == 'container-rootfs':
             # 只读挂载的重要系统路径
             paths_to_rosame = [ '/bin', '/sbin', '/usr', '/lib64', '/lib', '/etc',
-                '/var/lib/dbus', '/var/cache/fontconfig' , ]
+                '/var/cache/fontconfig' ,
+                '/var/lib/dbus', # TODO machine-id
+                ]
             if os.path.lexists('/var/lib/ca-certificates'):
                 paths_to_rosame.append += ['/var/lib/ca-certificates']
             for p in paths_to_rosame:
