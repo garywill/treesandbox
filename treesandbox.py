@@ -1260,7 +1260,8 @@ def main2(skp_lyfk):
         with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path1}/temp', mode='w', delete=True) as f:
             f.write(tlcfg.nftables_rule)
             f.flush()
-            run_a_cmd([ 'nft', '-f', f.name ])
+            PATH_w_sbin = '/sbin:/usr/sbin:/usr/local/sbin:' +  os.getenv('PATH', '').strip(':')
+            run_a_cmd(['env', f'PATH={PATH_w_sbin}',  'nft', '-f', f.name ])
 
     # 变内部uid=1000 (user)
     # if tlcfg.uid_map_as_user: # 已删除 map_as_user 功能
