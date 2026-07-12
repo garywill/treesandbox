@@ -48,12 +48,16 @@ Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, li
   - [ ] overlayfs
 
 - GUI in sandbox
-  - [x] Optionally expose host X11 to sandbox.
-  - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
-  - [x] Optional isolated X11 using Xephyr ( with icewm).
-  - [x] Optional seamless isolated X11 proxy via Xpra.
-  - [ ] Optional expose Wayland to sandbox.
-  - [ ] Optional isolated full desktop running inside a single window.
+  - Sandbox graphics displaying on host
+    - [x] By X11 protocol (Wayland compatible, using Xwayland)
+    - [ ] By Wayland protocol
+  - Sandbox internal display service
+    - [x] Optionally expose host X11 to sandbox.
+    - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
+    - [x] Optional isolated X11 using Xephyr ( with icewm).
+    - [x] Optional seamless isolated X11 proxy via Xpra.
+    - [ ] Optional expose Wayland to sandbox.
+    - [ ] Optional isolated full desktop running inside a single window.
   - Clipboard content auto sync 
     - [x] Optional sandbox -> host
     - [ ] Optional host -> sandbox (Temporary workaround: use IME paste)
@@ -84,7 +88,9 @@ Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, li
 
 - [x] Mount AppImage/squashfs internally to access their contents in sandbox.
 
-- [x] Optionally expose PulseAudio socket to sandbox.
+- Audio
+  - [x] Optionally expose PulseAudio socket to sandbox (PipeWire compatible)
+  - [ ] Optionally expose PipeWire socket to sandbox
 
 - [x] Optionally expose CUPS socket to sandbox.
 

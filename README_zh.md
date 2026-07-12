@@ -45,15 +45,19 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
     - [ ] overlayfs
 
 - 沙箱内使用 GUI
+  - 沙箱画面显示在主机上
+    - [x] 通过 X11 协议 （Wayland 兼容，有 Xwayland）
+    - [ ] 通过 Wayland 协议
+  - 沙箱内部的显示服务
     - [x] 可选暴露真实 X11 接口给沙箱
     - [x] 可选使用 Weston + Xwayland 隔离 X11（GPU可用）（配icewm）
     - [x] 可选使用 Xephyr 隔离 X11（配icewm）
     - [x] 可选使用 Xpra 隔离的 无缝X11 代理
     - [ ] 可选暴露 wayland 接口给沙箱
     - [ ] 可选在一窗口内运行的隔离的完整桌面环境
-    - 自动同步剪贴板内容
-      - [x] 可选 沙箱 -> 主机
-      - [ ] 可选 主机 -> 沙箱 （现在暂时用IME的粘贴功能替代）
+  - 自动同步剪贴板内容
+    - [x] 可选 沙箱 -> 主机
+    - [ ] 可选 主机 -> 沙箱 （现在暂时用IME的粘贴功能替代）
 
 - [x] 容器内部shell接口暴露给主机，主机随时获取（已部分可用。计划更完善）
 
@@ -81,7 +85,9 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
 
 - [x] 可挂载 AppImage、squashfs 在内部访问其内容
 
-- [x] 可选暴露 PulseAudio 接口给沙箱
+- 音频
+  - [x] 可选暴露 PulseAudio 接口给沙箱（PipeWire 兼容）
+  - [ ] 可选暴露 PipeWire 接口给沙箱
 
 - [x] 可选暴露 CUPS 接口给沙箱
 
