@@ -410,7 +410,7 @@ def gen_layer2c(si, uc, dyncfg):
         ],
         is_semitruCmpannLyr=True, # 设layer2c（而非2）为semitruCmpannLyr,因为2c才有unshare_pid
         subprocs=[
-            d( subp_name='xephyr', cmdvec=["Xephyr",  f":{si.newXId}", '-nolisten', 'local', "-resizeable",  "-ac", '-title', si.instance_name,  *dyncfg.xephyr_extra_args]
+            d( subp_name='xephyr', cmdvec=["Xephyr",  f":{si.newXId}", '-nolisten', 'local', "-resizeable",  "-ac", '-title', si.sandbox_name,  *dyncfg.xephyr_extra_args]
             ) if uc.gui=='xephyr' else None,
 
             d( subp_name='weston', cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args]
