@@ -511,6 +511,7 @@ def gen_layer3(si, uc, dyncfg):
             # d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),# 让app无法决定新窗口位置
             d(op='rofile', dest=f'{si.HOME}/.icewm/menu', content=''),
             d(op='rofile', dest=f'{si.HOME}/.icewm/toolbar', content=''),
+            d(op='rofile', dest=f'{si.HOME}/.icewm/programs', content=''),
             ] if dyncfg.icewm else [] ),
 
             *([
@@ -545,8 +546,8 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_net=True, # NOTE 内部xpra所带出来的dbus可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
         subprocs=[
             *([
-            d( subp_name='icewm', cmdvec=["icewm"] , start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
-            d( subp_name='icewmtray', cmdvec=["icewmtray"] ,  start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            d( subp_name='icewm', cmdvec=['env', 'LC_ALL=en_US.UTF8', 'env', 'LANG=en_US.UTF8', 'env', 'LANGUAGE=en_US.UTF8', 'icewm-session', '--nobg'] , start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            # d( subp_name='icewmtray', cmdvec=["icewmtray"] ,  start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
             ] if dyncfg.icewm else [] ) ,
 
             d( subp_name='xwayland',  cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ]
@@ -3410,11 +3411,18 @@ ICEWM_WINOPTIONS='''
 
 # NOTE 不要启用icewm的启动器、程序菜单等，因为那样所启动的程序与沙箱的主层不是同一个pidns
 ICEWM_PREF='''
+TaskBarEnableSystemTray=1
+TaskBarShowTray=1
+ToolTipIcon=1
+ShowSysTray=1
+ShowTaskBar=1
+
 ShowStartMenu=0
 ShowLogoutMenu=0
 ShowSettingsMenu=0
 ShowRun=0
 
+TaskBarShowStartMenu=0
 TaskBarShowClock=0
 TaskBarShowCPUStatus=0
 TaskBarShowMEMStatus=0
