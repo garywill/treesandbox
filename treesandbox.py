@@ -213,6 +213,12 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
                 if is_XId_available(newXId): break
 
     if uc.gui == 'xpra':
+        mnts_gui += [
+            d(op='tmpfs', dest=f'{si.HOME}/.xpra'),
+            d(op='tmpfs', dest=f'{si.HOME}/.config/xpra'),
+            d(op='rofile',dest='/etc/X11/Xwrapper.config', content='allowed_users=anybody') if os.path.lexists('/etc/X11/Xwrapper.config') else None,
+        ]
+
         xpra_extra_args += [
             '--daemon=no',
             # '--bind=unix',
@@ -506,6 +512,7 @@ def gen_layer3(si, uc, dyncfg):
             *dyncfg.mnts_dns,
 
             *([
+            d(op='tmpfs',  dest=f'{si.HOME}/.icewm'),
             d(op='rofile', dest=f'{si.HOME}/.icewm/preferences', content=ICEWM_PREF),
             d(op='rofile', dest=f'{si.HOME}/.icewm/prefoverride', content=ICEWM_PREF),
             # d(op='rofile', dest=f'{si.HOME}/.icewm/winoptions', content=ICEWM_WINOPTIONS),# 让app无法决定新窗口位置
