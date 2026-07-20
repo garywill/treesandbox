@@ -264,7 +264,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     if uc.dbus_session == 'filter':
         dbusproxy_argv = [
-            os.getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
+            getenv('DBUS_SESSION_BUS_ADDRESS'), '/tmp/dbusproxy.socket', '--filter',
             '--talk=org.freedesktop.Notifications',
             '--talk=org.fcitx.*',
             '--talk=org.freedesktop.IBus.*',
@@ -376,17 +376,18 @@ def gen_layer2(si, uc, dyncfg):
 
             *dyncfg.mnts_gui,
 
-            d(op='robind', src=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-            d(op='robind', src=f'{os.getenv("XAUTHORITY")}', SDS=1),
+            d(op='robind', src=f'/tmp/.X11-unix/X{getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(op='robind', src=f'{getenv("XAUTHORITY")}', SDS=1),
 
-            d(op='bind', src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
+            d(op='bind', src=getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path='), SDS=1 ),
 
             d(many_op='dup-rootfs', destbase='/zrootfs'), # 排除/proc。不加ro。
             d(many_op='mask-privacy', destbase='/zrootfs'),
             d(op='empty-if-exist', dest=f'/zrootfs/{si.PTMP}'),
         ],
         envs_unset=[
-            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "QT_WAYLAND_RECONNECT",
+            "SYSTEMD_EXEC_PID", "MANAGERPID", "SSH_AGENT_PID", "SSH_AUTH_SOCK",  "WINDOWMANAGER", "SHELL_SESSION_ID", "INVOCATION_ID", "GPG_TTY", "XDG_SESSION_ID", "KONSOLE_DBUS_SERVICE", "GPG_AGENT_INFO", "OLDPWD", "WINDOWID", "SESSION_MANAGER", "JOURNAL_STREAM",  "XDG_CACHE_HOME",
+            "XDG_SESSION_TYPE", "WAYLAND_DISPLAY", "QT_WAYLAND_RECONNECT", # 这几个是因为现在暂时不支持主机wayland所以放这里先
         ],
         envset_grps=[
             d(NO_AT_BRIDGE='1'),
@@ -442,7 +443,7 @@ def gen_layer2z(si, uc, dyncfg):
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(waittype='socket-listened', path=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(waittype='socket-listened', path=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
         ],
         newrootfs=True,
         fs=[
@@ -450,7 +451,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(op='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
             d(op='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -488,19 +489,19 @@ def gen_layer3(si, uc, dyncfg):
             # TODO 1. 改用dyncfg  2. layer2里也加
 
             *([
-            d(op='robind', dest=f'/tmp/.X11-unix/X{os.getenv("DISPLAY").lstrip(":")}', SDS=1),
-            d(op='robind', dest='/tmp/xauthfile', src=f'{os.getenv("XAUTHORITY")}'),
+            d(op='robind', dest=f'/tmp/.X11-unix/X{getenv("DISPLAY").lstrip(":")}', SDS=1),
+            d(op='robind', dest='/tmp/xauthfile', src=f'{getenv("XAUTHORITY")}'),
             ] if uc.gui=='realX' else [] ),
 
             d(op='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
 
             *dyncfg.mnts_gui,
 
             d(op='rofile', dest=shutil.which("xdg-open"), destmode='555', content=ASK_OPEN ) if uc.ask_xdg_open else None,
             *[d(op='empty-if-exist', dest=path) for path in dyncfg.paths_to_mask],
 
-            d(op='robind', dest='/tmp/dbus-session.socket',  src=os.getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
+            d(op='robind', dest='/tmp/dbus-session.socket',  src=getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
             d(op='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
 
             d(op='empty-if-exist', dest='/etc/fstab'),
@@ -535,7 +536,7 @@ def gen_layer3(si, uc, dyncfg):
             "XDG_SESSION_DESKTOP", "XDG_CURRENT_DESKTOP", "KDE_FULL_SESSION", "KDE_APPLICATIONS_AS_SCOPE", "KDE_SESSION_UID", "KDE_SESSION_VERSION", # TODO 如果用户主机不是KDE是其他, 会有其他变量需要去除
         ],
         envset_grps=[
-            d( DISPLAY=os.getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
+            d( DISPLAY=getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
             d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra'] else None,
             # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
@@ -574,7 +575,7 @@ def gen_layer4(si, uc, dyncfg):
         unshare_pid=True, unshare_mnt=True,
 
         envset_grps = [
-            d(PATH=os.getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
+            d(PATH=getenv("PATH").rstrip(':')+':/sbxdir/apps' ),
             uc.set_envs if uc.set_envs else {},
         ],
 
@@ -1267,7 +1268,7 @@ def main2(skp_lyfk):
         with tempfile.NamedTemporaryFile( dir=f'{tlcfg.sbxdir_path1}/temp', mode='w', delete=True) as f:
             f.write(tlcfg.nftables_rule)
             f.flush()
-            PATH_w_sbin = '/sbin:/usr/sbin:/usr/local/sbin:' +  os.getenv('PATH', '').strip(':')
+            PATH_w_sbin = '/sbin:/usr/sbin:/usr/local/sbin:' +  getenv('PATH', '').strip(':')
             run_a_cmd(['env', f'PATH={PATH_w_sbin}',  'nft', '-f', f.name ])
 
     # 变内部uid=1000 (user)
@@ -2199,9 +2200,9 @@ class OutestProcsMonitor:
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.add(f'/tmp/.X11-unix/X{si.newXId}')
         if proc_name == 'weston':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
-            cls.symlink_into_sbxdir(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
-            cleanup_symlinks_to_rm.add(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+            cls.symlink_into_sbxdir(f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
+            cleanup_symlinks_to_rm.add(f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
         if proc_name.startswith('shareshell_'):
             shellId = proc_name.removeprefix('shareshell_')
             cls.symlink_from_sbxdir_to_in_proc_rootfs('shellsocket', proc_name, f'/sbxdir/temp/shareshell.{shellId}.socket')
@@ -2485,7 +2486,7 @@ class ClipboardSyncer():
         # 到这里是的确应该 从沙箱 往主机 写剪贴板
         log(f'Sandbox clipboard content updated, syncing to host {sandbox_clipbd_data[:20]}')
         Path(cls.LAST_CONTENT_F).write_bytes(sandbox_clipbd_data)
-        cls.write_clipboard(os.getenv("DISPLAY").lstrip(':'), sandbox_clipbd_data)
+        cls.write_clipboard(getenv("DISPLAY").lstrip(':'), sandbox_clipbd_data)
         os._exit(0)
     @classmethod
     def read_clipboard(cls, XId) ->bytes|bool: # 这个只应该在fork出一个子进程后调用。它不os._exit, 只返回False或数据
@@ -3209,6 +3210,13 @@ def rslvn(path):
 
 def rslvy(path):
     return str(Path(napath(path)).resolve(strict=True))
+
+def getenv(env_var_name, allow_no=False):
+    r = os.getenv(env_var_name, None)
+    if not allow_no:
+        CHK ( r is not None, f'No Environment variable {env_var_name}')
+    if r is None: r = ''
+    return r
 
 def padir(path):
     if napath(path) == '/': raise_exit(f"{path} is already the root path, cannot get parent directory")
