@@ -391,6 +391,7 @@ def gen_layer2(si, uc, dyncfg):
         ],
         envset_grps=[
             d(NO_AT_BRIDGE='1'),
+            d(XDG_RUNTIME_DIR=si.sbx_XDG_R_D),
         ],
 
         create_userns_unpri=True,
@@ -443,7 +444,7 @@ def gen_layer2z(si, uc, dyncfg):
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(waittype='socket-listened', path=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(waittype='socket-listened', path=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
         ],
         newrootfs=True,
         fs=[
@@ -451,7 +452,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(op='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
             d(op='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -494,7 +495,7 @@ def gen_layer3(si, uc, dyncfg):
             ] if uc.gui=='realX' else [] ),
 
             d(op='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
 
             *dyncfg.mnts_gui,
 
@@ -665,6 +666,8 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     HOME = f'/home/{username}' if uid>0 else '/root'
     hostname = open("/etc/hostname").read().strip()
     outest_pid = os.getpid()
+    host_XDG_R_D = getenv("XDG_RUNTIME_DIR")
+    sbx_XDG_R_D = f'/run/user/{uid}'
     startscript_on_host = scriptfilepath
     CWD = scriptdirpath
     PTMP = f'/tmp/tsbxs-{uid}'
@@ -677,7 +680,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     si.update( { k: v for k, v in locals().items() if k in
         ['hostname', 'PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
-         'startscript_on_host', 'CWD', 'hash_bootsbx_py']
+         'startscript_on_host', 'CWD', 'hash_bootsbx_py', 'host_XDG_R_D', 'sbx_XDG_R_D']
     } )
 
     uc = userconfig(si) # NOTE
@@ -2196,9 +2199,9 @@ class OutestProcsMonitor:
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.add(f'/tmp/.X11-unix/X{si.newXId}')
         if proc_name == 'weston':
-            cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
-            cls.symlink_into_sbxdir(f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
-            cleanup_symlinks_to_rm.add(f'{getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}')
+            cls.symlink_from_sbxdir_to_in_proc_rootfs('waylandsocket', proc_name, f'{si.sbx_XDG_R_D}/wayland-{si.newXId}')
+            cls.symlink_into_sbxdir(f'{si.host_XDG_R_D}/wayland-{si.newXId}', f'into.{proc_name}.waylandsocket.link')
+            cleanup_symlinks_to_rm.add(f'{si.host_XDG_R_D}/wayland-{si.newXId}')
         if proc_name.startswith('shareshell_'):
             shellId = proc_name.removeprefix('shareshell_')
             cls.symlink_from_sbxdir_to_in_proc_rootfs('shellsocket', proc_name, f'/sbxdir/temp/shareshell.{shellId}.socket')
