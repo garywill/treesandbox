@@ -671,10 +671,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     hash_bootsbx_py = hash_blake2b(open(scriptfilepath, 'rb').read())
 
     CHK(uid != 0 and gid != 0, f'Currently our sandbox tool does not support running as root')
-    if not os.getenv("XDG_RUNTIME_DIR"):
-        os.environ.update({"XDG_RUNTIME_DIR": f'/run/user/{uid}'})
-        log_warn(f'Environment variable XDG_RUNTIME_DIR not set, setting it to {os.getenv("XDG_RUNTIME_DIR")}')
-
 
     mkdirp(PTMP)      # 创建不同沙箱实例共用的 主临时目录,不清理这个
     os.chmod(PTMP, 0o700)
