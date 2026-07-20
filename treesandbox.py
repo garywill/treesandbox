@@ -28,7 +28,7 @@ def userconfig(si):
 
     uc.apps = [
         # The first item is default app, which can omit appname
-        d(cmdvec=['bash'], appname='bash'), # Recommend to keep this item, so host can get sandbox shell easily if needed
+        d(cmdvec=['bash', '--norc'], appname='bash'), # Recommend to keep this item, so host can get sandbox shell easily if needed
         d(cmdvec=['sleep', 'infinity'], appname='sleep'),
     ]
     # cmdvec is array, elements are shell args ( shell command string splitted )
@@ -47,6 +47,7 @@ def userconfig(si):
         # For persistant storage, use 'fakehome' dir as sandbox's HOME dir. Otherwise, tmpfs is used as HOME
         # d(op='bind', src=f'{si.CWD}/fakehome', dest=si.HOME),
 
+        # d(op='robind', src=f'{si.HOME}/.bashrc', SDS=1),
         # d(op='robind', src=f'{si.HOME}/bin', SDS=1),
         # d(op='robind', src=f'{si.HOME}/.local/bin', SDS=1),
         # d(op='robind', src=f'{si.HOME}/.local/lib', SDS=1),
@@ -93,9 +94,9 @@ def userconfig(si):
     # --- DBus ----
 
     # User (session) DBUS (things like IME needs DBUS)
+    if uc.gui: uc.dbus_session="filter"
     # uc.dbus_session="allow" # Allow all DBUS communication
     # uc.dbus_session="filter" # DBUS communication filtered by xdg-dbus-proxy. Default rule is allowing IME and notifications (you can add more to uc.dbusproxy_extra also)
-    if uc.gui: uc.dbus_session="filter"
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (by Flatpak) extra args
 
@@ -113,7 +114,7 @@ def userconfig(si):
     uc.ask_xdg_open=True # Replace 'xdg-open' by an asking script.
     uc.forbid_browsers=True # Ban system's firefox/chromium/... in sandbox. (Experimental)
     # uc.mask_osrelease=True # Ban /etc/os-release
-    uc.machineid='zero' # Write zeros to /etc/machine-id
+    # uc.machineid='zero' # Write zeros to /etc/machine-id (in rare cases may break some app). Otherwise keep real.
 
     uc.set_envs = d( # Env vars seen by main apps in sandbox. Values must be string
         # ENV_VAR_NAME1 = 'ENV_VAR_VAL1',
@@ -216,6 +217,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         mnts_gui += [
             d(op='tmpfs', dest=f'{si.HOME}/.xpra'),
             d(op='tmpfs', dest=f'{si.HOME}/.config/xpra'),
+            # d(op='rofile',  dest=f'{si.HOME}/.fakexinerama', content=''), # 不注释这两个则可以阻止这两个文件有内容，但好像不重要
+            # d(op='rofile',  dest=f'{si.HOME}/.{newXId}-fakexinerama', content=''),
             d(op='rofile',dest='/etc/X11/Xwrapper.config', content='allowed_users=anybody') if os.path.lexists('/etc/X11/Xwrapper.config') else None,
         ]
 
@@ -506,8 +509,6 @@ def gen_layer3(si, uc, dyncfg):
             d(op='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
 
             d(op='empty-if-exist', dest='/etc/fstab'),
-            d(op='empty-if-exist', dest='/etc/systemd'),
-            d(op='empty-if-exist', dest='/etc/init.d'),
             d(op='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
             d(op='rofile', dest='/etc/machine-id', content=dyncfg.machineid) if dyncfg.machineid else None,
 
@@ -1782,9 +1783,7 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
         elif many_op == 'container-rootfs':
             # 只读挂载的重要系统路径
             paths_to_rosame = [ '/bin', '/sbin', '/usr', '/lib64', '/lib', '/etc',
-                '/var/cache/fontconfig' ,
-                '/var/lib/dbus', # TODO machine-id
-                ]
+                '/var/cache/fontconfig' ]
             if os.path.lexists('/var/lib/ca-certificates'):
                 paths_to_rosame.append += ['/var/lib/ca-certificates']
             for p in paths_to_rosame:
@@ -1801,6 +1800,7 @@ def gen_fsOpertns(cfg): # 把fs里面的 many_op 都转成 op ,并去重、排�
                 a( d( op='tmpfs', dest=p ) )
             a( d( op='symlink', dest='/var/run', linkto='/run' ) )
             a( d( op='symlink', dest='/var/lock', linkto='/run/lock' ) )
+            a( d( op='symlink', dest='/var/lib/dbus/machine-id', linkto='/etc/machine-id' ) )
         elif many_op == 'mask-privacy':
             destbase = opItem.destbase
             CHK( destbase in ['/', '/zrootfs'], "mask-privacy requires destbase to be '/' or '/zrootfs'")
@@ -3238,11 +3238,11 @@ def is_socket(path):
 def is_ro(path):
     return os.statvfs(path).f_flag & MS.RDONLY
 
-def is_XId_available(newXId):
-    if not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
-    and not os.path.lexists(f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
-    and not re.search(rf':{newXId}(?:\.|$)', os.getenv('DISPLAY')) \
-    and not os.getenv('WAYLAND_DISPLAY') == f'wayland-{newXId}' \
+def is_XId_available(newXId):  # TODO 搞清楚xpra在run里面创建什么与XID有关的文件，也检查它们
+    if  not os.path.lexists(f'/tmp/.X11-unix/X{newXId}')  \
+    and not os.path.lexists(f'{getenv("XDG_RUNTIME_DIR")}/wayland-{newXId}')  \
+    and not re.search(rf':{newXId}(?:\.|$)', getenv('DISPLAY')) \
+    and not getenv('WAYLAND_DISPLAY',allow_no=True) == f'wayland-{newXId}' \
     and not re.search(rf'\/tmp/\.X11-unix\/X{newXId}\b', Path('/proc/net/unix').read_text(), re.MULTILINE) :
         return True
     else: return False
