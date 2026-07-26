@@ -83,7 +83,7 @@ def userconfig(si):
 
     uc.sync_clipbd_from_sandbox = True # Auto sync clipboard from sandbox to host (take effect if internel DISPLAY used)
 
-    uc.gpus     =      True if uc.gui else False # Sandbox can see /dev/dri and needed GPU's PCI paths in /sys .
+    uc.gpus = True if uc.gui in ['realX', 'weston-xwayland', 'xpra-weston-xwayland'] else False # Sandbox can see /dev/dri and needed GPU's PCI paths in /sys .
     uc.see_userfonts = True if uc.gui else False # Sandbox can see ~/.fonts and so on.
 
     # --- ---- ----
@@ -98,6 +98,7 @@ def userconfig(si):
     if uc.gui: uc.dbus_session="filter"
     # uc.dbus_session="allow" # Allow all DBUS communication
     # uc.dbus_session="filter" # DBUS communication filtered by xdg-dbus-proxy. Default rule is allowing IME and notifications (you can add more to uc.dbusproxy_extra also)
+    # uc.dbus_session='isolated' # Run a session dbus daemon in sandbox. Totally isolated from host
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (by Flatpak) extra args
 
@@ -561,6 +562,7 @@ def gen_layer3(si, uc, dyncfg):
             d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra', 'xpra-weston-xwayland'] else None,
             # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
+            d(DESKTOP_SESSION='icewm-session', XDG_SESSION_DESKTOP='ICEWM', XDG_CURRENT_DESKTOP='ICEWM' ) if dyncfg.icewm else None,
         ],
         sublayers=[
             gen_layer4c(si, uc, dyncfg),
@@ -575,7 +577,12 @@ def gen_layer4c(si, uc, dyncfg):
         unshare_net=True, # NOTE 内部xpra所带出来的dbus可能监听抽象套接字。最好unshare_net, 否则因为我们不要求认证，其他沙箱不隔离网络就可能偷看这个, 也可以考虑用unshare -n -r -c 来启动Xorg
         subprocs=[
             *([
-            d( subp_name='icewm', cmdvec=['env', 'LC_ALL=en_US.UTF8', 'env', 'LANG=en_US.UTF8', 'env', 'LANGUAGE=en_US.UTF8', 'icewm-session', '--nobg'] , start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
+            d( subp_name='icewm', cmdvec=['env', 'LC_ALL=en_US.UTF8', 'env', 'LANG=en_US.UTF8', 'env', 'LANGUAGE=en_US.UTF8', 'icewm-session', '--nobg'] ,
+              start_after = [
+                  d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}'),
+                  d(waittype='socket-listened', path=f'/tmp/dbus-session.socket') if uc.dbus_session=='isolated' else None,
+                ]
+            ) ,
             # d( subp_name='icewmtray', cmdvec=["icewmtray"] ,  start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ] ) ,
             ] if dyncfg.icewm else [] ) ,
 
@@ -586,6 +593,8 @@ def gen_layer4c(si, uc, dyncfg):
 
             d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'env', 'XPRA_PASSWORD=abc', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ]
             ) if uc.gui in ['xpra', 'xpra-weston-xwayland'] else None,
+
+            d( subp_name='dbus_daemon_session', cmdvec=['dbus-daemon',  '--session',  '--address=unix:path=/tmp/dbus-session.socket'] ) if uc.dbus_session=='isolated' else None,
         ],
     )
 
@@ -602,6 +611,7 @@ def gen_layer4(si, uc, dyncfg):
 
         start_after = [
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['xephyr', 'weston-xwayland','xpra', 'xpra-weston-xwayland'] else None,
+            d(waittype='socket-listened', path=f'/tmp/dbus-session.socket') if uc.dbus_session else None,
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
