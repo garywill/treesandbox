@@ -311,6 +311,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if RSLVCF_is_file : # /etc/resolv.conf是文件，非链接
         if dns_use_custom:
             mnts_dns = [d(op='rofile', content=RSLVCF_content, dest='/etc/resolv.conf')]
+            log_warn('Your /etc/resolv.conf is file not symlink. And you configured custom dns for sandbox. If NetworkManager changes network state, your custom dns will lose and become back to the host one')
         else:
             if have_iface: mnts_dns = [] # 原本的/etc/resolv.conf文件保持
             else             : mnts_dns = [d(op='empty-if-exist', dest='/etc/resolv.conf')] # 清空
