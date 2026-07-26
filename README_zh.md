@@ -52,7 +52,8 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
     - [x] 可选暴露真实 X11 接口给沙箱
     - [x] 可选使用 Weston + Xwayland 隔离 X11（GPU可用）（配icewm）
     - [x] 可选使用 Xephyr 隔离 X11（配icewm）
-    - [x] 可选使用 Xpra 隔离的 无缝X11 代理
+    - [x] 可选使用 Xpra 隔离的 无缝X11 （Weston+Xwayland） 代理 （GPU可用）
+    - [x] 可选使用 Xpra 隔离的 无缝X11 （Xvfb） 代理
     - [ ] 可选暴露 wayland 接口给沙箱
     - [ ] 可选在一窗口内运行的隔离的完整桌面环境
   - 自动同步剪贴板内容
@@ -356,8 +357,9 @@ tsbxrun_mysandbox.py --reusefg --app bash
 - [pasta (passt)](https://passt.top) (网络介面tun/tap) (版本 >= 约 202512xx)
 - nftables (网络流量控制)
 - Xpra >= 6 (隔离X11。无缝显示)
-- Weston + Xwayland + icewm (隔离X11)
-- Xephyr + icewm (隔离X11)
+- Weston + Xwayland (隔离X11)
+- Xephyr (隔离X11)
+- icewm (窗口化隔离显示时用)
 - xsel (同步剪贴板)
 - squashfuse (内部AppImage、squashfs挂载)
 - zenity 或 kdialog (内部阻止随意的网页等弹窗而改用询问)

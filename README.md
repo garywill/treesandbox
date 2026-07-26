@@ -55,7 +55,8 @@ Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, li
     - [x] Optionally expose host X11 to sandbox.
     - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
     - [x] Optional isolated X11 using Xephyr ( with icewm).
-    - [x] Optional seamless isolated X11 proxy via Xpra.
+    - [x] Optional seamless isolated X11 proxy via Xpra (Weston+Xwayland) (GPU usable).
+    - [x] Optional seamless isolated X11 proxy via Xpra (Xvfb).
     - [ ] Optional expose Wayland to sandbox.
     - [ ] Optional isolated full desktop running inside a single window.
   - Clipboard content auto sync 
@@ -359,8 +360,9 @@ Optional:
 - [pasta (passt)](https://passt.top) (tun/tap networking) (version >= about 202512xx)
 - nftables (network traffic control)
 - Xpra >= 6 (isolated X11, seamless)
-- Weston + Xwayland + icewm (isolated X11)
-- Xephyr + icewm (isolated X11)
+- Weston + Xwayland (isolated X11)
+- Xephyr (isolated X11)
+- icewm (used when windowed isolated display)
 - xsel (clipboard sync)
 - squashfuse (mount AppImage/squashfs internally)
 - zenity or kdialog (we stop random web popups with interactive prompts)

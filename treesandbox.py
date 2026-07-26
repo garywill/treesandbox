@@ -72,9 +72,10 @@ def userconfig(si):
     # Without uc.gui, no DISPLAY in sandbox
     # When uc.gui has value and is not "realX", a sandbox-managed new DISPLAY is used inside.
     # uc.gui="realX" # Use host's real X11
-    # uc.gui="weston-xwayland" # A Xwayland in Weson is used
-    # uc.gui="xephyr"
-    # uc.gui='xpra'
+    # uc.gui="weston-xwayland" # Windowed. Xwayland in Weson
+    # uc.gui="xephyr" # Windowed
+    # uc.gui='xpra-weston-xwayland' # Seamless. GPU acceleration. Xwayland (in Weston) as internal X server
+    # uc.gui='xpra' # Seamless. No GPU acceleration. Xvfb as internal X server
 
     # uc.newXId='50' # When internel DISPLAY used , the DISPLAY id. String. Otherwise random
 
@@ -213,7 +214,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             while (newXId := str(random.randrange(230, 980)) ) :
                 if is_XId_available(newXId): break
 
-    if uc.gui == 'xpra':
+    if uc.gui in ['xpra', 'xpra-weston-xwayland']:
         mnts_gui += [
             d(op='tmpfs', dest=f'{si.HOME}/.xpra'),
             d(op='tmpfs', dest=f'{si.HOME}/.config/xpra'),
@@ -262,17 +263,25 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             # --xsettings=auto|yes|no # 您本机的主题、字体渲染等配置传递给沙箱程序
             # '--socket-dir=/tmp/xpra/socket-dir',
             # '--sessions-dir=/tmp/xpra/sessions-dir',
+            '--video-scaling=off',
+            '--desktop-scaling=off',
             '--use-display=yes'
         ]
+        if uc.gui=='xpra-weston-xwayland':
+            weston_extra_args += [
+                '--backend=headless',
+                '--renderer=gl',
+                '--width=8000', '--height=4500'
+            ]
 
         # Xorg的参数-ac让不需要XAUTHORITY。 如果不自定义xpra的--xvfb的值的话，无法让Xserver免认证。xpra的--auth可能控制的是xpra的客户端与服务端之间的认证，不是x server与client的认证
 
     if uc.windowed_size:
         if uc.gui == 'xephyr':
-            xephyr_extra_args = ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
+            xephyr_extra_args += ['-screen', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
         elif uc.gui == 'weston-xwayland' :
-            weston_extra_args = [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
-            xwayland_extra_args = ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
+            weston_extra_args += [f'--width={uc.windowed_size[0]}', f'--height={uc.windowed_size[1]}' ]
+            xwayland_extra_args += ['-geometry', f'{uc.windowed_size[0]}x{uc.windowed_size[1]}']
 
     if uc.dbus_session == 'filter':
         dbusproxy_argv = [
@@ -334,11 +343,11 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         machineid = '00000000000000000000000000000000'
 
     # bridge seefrom是从哪层可看见这个桥进程 seeto是通过这个桥进程看到哪个层的fs
-    if uc.gui in ['weston-xwayland','xpra']:
+    if uc.gui in ['weston-xwayland','xpra', 'xpra-weston-xwayland']:
         bItem = d(seefrom='semitruCmpannLyr', seeto='mainLyr')
         bItem.create_links = []
         bItem.create_links += [f'/tmp/.X11-unix/X{newXId}']
-        if uc.gui=='xpra':
+        if uc.gui in ['xpra', 'xpra-weston-xwayland']:
             bItem.create_links += [ # NOTE 不能链目录，要防止xpra客户端的socket被放进目录里被server看见
                 f'/run/xpra/{si.hostname}-{newXId}',
                 f'/run/user/{si.uid}/xpra/{si.hostname}-{newXId}',
@@ -434,19 +443,19 @@ def gen_layer2c(si, uc, dyncfg):
             ) if uc.gui=='xephyr' else None,
 
             d( subp_name='weston', cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args]
-            ) if uc.gui=='weston-xwayland' else None,
+            ) if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None,
 
             d( subp_name='xpraclient', cmdvec=['env', 'XPRA_PASSWORD=abc', 'xpra', *dyncfg.xpra_extra_args, *dyncfg.xpra_client_extra_args,  'attach',f':{si.newXId}'],
                 start_after = [
                     d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ,
                     d(waittype='socket-listened', path=f'/run/xpra/{si.hostname}-{si.newXId}')
-            ] ) if uc.gui=='xpra' else None,
+            ] ) if uc.gui in ['xpra', 'xpra-weston-xwayland'] else None,
 
             d( subp_name='dbusproxy',  cmdvec=['xdg-dbus-proxy', *dyncfg.dbusproxy_argv]
             ) if uc.dbus_session=='filter' else None,
         ],
         daemon_tasks = [
-            d(task='sync_clipbd') if uc.gui in ['weston-xwayland', 'xephyr', 'xpra'] else None,
+            d(task='sync_clipbd') if uc.gui in ['weston-xwayland', 'xephyr', 'xpra', 'xpra-weston-xwayland'] else None,
         ],
     )
 
@@ -456,7 +465,7 @@ def gen_layer2z(si, uc, dyncfg):
         start_after=[
             d(waittype='socket-listened', path='/tmp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
             d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(waittype='socket-listened', path=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(waittype='socket-listened', path=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}') if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None,
         ],
         newrootfs=True,
         fs=[
@@ -464,7 +473,7 @@ def gen_layer2z(si, uc, dyncfg):
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
 
             d(op='robind', src=f'/tmp/.X11-unix/X{si.newXId}', dest=f'/sbxdir/temp/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}', dest=f'/sbxdir/temp/wayland-{si.newXId}') if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None,
             d(op='robind', src='/tmp/dbusproxy.socket', dest='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
         ],
         sublayers=[ gen_layer3(si, uc, dyncfg) ],
@@ -507,7 +516,7 @@ def gen_layer3(si, uc, dyncfg):
             ] if uc.gui=='realX' else [] ),
 
             d(op='robind', src=f'/sbxdir/temp/X{si.newXId}', dest=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui=='xephyr' else None,
-            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{si.sbx_XDG_R_D}/wayland-{si.newXId}', ) if uc.gui=='weston-xwayland' else None,
+            d(op='robind', src=f'/sbxdir/temp/wayland-{si.newXId}',  dest=f'{os.getenv("XDG_RUNTIME_DIR")}/wayland-{si.newXId}', ) if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None,
 
             *dyncfg.mnts_gui,
 
@@ -548,8 +557,8 @@ def gen_layer3(si, uc, dyncfg):
         ],
         envset_grps=[
             d( DISPLAY=getenv("DISPLAY"), XAUTHORITY='/tmp/xauthfile', ) if uc.gui=='realX' else None,
-            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra'] else None,
-            # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui=='weston-xwayland' else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
+            d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra', 'xpra-weston-xwayland'] else None,
+            # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
         ],
         sublayers=[
@@ -570,12 +579,12 @@ def gen_layer4c(si, uc, dyncfg):
             ] if dyncfg.icewm else [] ) ,
 
             d( subp_name='xwayland',  cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ]
-            ) if uc.gui=='weston-xwayland' else None,
+            ) if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None,
 
             d( subp_name='xvfb', cmdvec=["Xvfb", "+extension", "GLX", "+extension", "RANDR", "+extension", "RENDER", "+extension", "Composite", "-extension", "DOUBLE-BUFFER", "-nolisten", "tcp", "-nolisten", "local", "-noreset", "-ac",  f":{si.newXId}"] ) if uc.gui=='xpra' else None,
 
             d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'env', 'XPRA_PASSWORD=abc', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ]
-            ) if uc.gui=='xpra' else None,
+            ) if uc.gui in ['xpra', 'xpra-weston-xwayland'] else None,
         ],
     )
 
@@ -591,7 +600,7 @@ def gen_layer4(si, uc, dyncfg):
         ],
 
         start_after = [
-            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['xephyr', 'weston-xwayland','xpra'] else None,
+            d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') if uc.gui in ['xephyr', 'weston-xwayland','xpra', 'xpra-weston-xwayland'] else None,
             # TODO 等待icewm, 如果需要
         ],
         # user_shell=True, # 调试用
@@ -1599,7 +1608,7 @@ def wait_for_startAfters(arr_startAfter):
         tt = time.monotonic()
         if wait_task.waittype == 'socket-listened':
             while not is_unix_socket_listened(wait_task.path):
-                CHK(time.monotonic() <= tt+(6 if OG.uc.gui!='xpra' else 40), f'Waited too long, reporting error ( {wait_task} )')
+                CHK(time.monotonic() <= tt+(6 if OG.uc.gui not in ['xpra', 'xpra-weston-xwayland'] else 40), f'Waited too long, reporting error ( {wait_task} )')
                 time.sleep(0.1)
 
 
@@ -2363,7 +2372,7 @@ def daemon_outest():
     while True:
         OutestProcsMonitor.wdg()
 
-        if time.monotonic() >= t0 + (10 if OG.uc.gui!='xpra' else 60):
+        if time.monotonic() >= t0 + (10 if OG.uc.gui not in ['xpra', 'xpra-weston-xwayland'] else 60):
             A = set(dict.keys(get_procs_heared() ))
             B = set(si.expected_alive_procs) # TODO 区分expected_heared_procs , 应用 noWdg=1选项给subprocs
             if not B.issubset(A):
