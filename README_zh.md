@@ -355,7 +355,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 - xdg-dbus-proxy (过滤DBUS通信)
 - [pasta (passt)](https://passt.top) (网络介面tun/tap) (版本 >= 约 202512xx)
 - nftables (网络流量控制)
-- Xpra (隔离X11。无缝显示)
+- Xpra >= 6 (隔离X11。无缝显示)
 - Weston + Xwayland + icewm (隔离X11)
 - Xephyr + icewm (隔离X11)
 - xsel (同步剪贴板)

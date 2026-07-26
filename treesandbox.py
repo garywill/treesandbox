@@ -225,14 +225,16 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
         xpra_extra_args += [
             '--daemon=no',
             # '--bind=unix',
-            # '--auth=allow',
+            # '--auth=allow', # '--wss-auth=allow', # '--tcp-auth=allow', # '--ssl-auth=allow', # '--rfb-auth=allow', # '--vsock-auth=allow', # '--ssh-auth=allow', # '--rdp-auth=allow', # '--quic-auth=allow',
             '--start-new-commands=no',
             '--pulseaudio=no',
+            '--dbus=no',
             '--dbus-launch=no', # NOTE  禁止dbus为什么无效？
-            '--dbus-proxy=no',
             '--dbus-control=no',
+            '--tray=no',
             '--webcam=no',
             '--html=off',
+            '--http=off',
             '--systemd-run=no',
             '--exit-with-windows=no',
             '--exit-with-client=no',
@@ -244,15 +246,22 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
             '--keyboard-sync=no',
             # --keyboard-raw=yes|no
             '--opengl=yes:native', # --opengl=(yes|no|auto)[:backend]
-            '--encoding=rgb',
             '-z0', # 无压缩
+
+            '--video=yes',
+            '--encoding=rgb',
             '--video-encoders=vaapi',
+
             #--speaker=on|off|disabled and --microphone=on|off|disabled|on:DEVICE|off:DEVICE
             '--speaker=disabled',
             '--microphone=disabled',
             #--title=VALUE
             #--border=yellow,10.
             '--clipboard-direction=disabled', # 用xpra的好像对ASK_OPEN不灵
+            '--challenge-handlers=env' ,
+            # --xsettings=auto|yes|no # 您本机的主题、字体渲染等配置传递给沙箱程序
+            # '--socket-dir=/tmp/xpra/socket-dir',
+            # '--sessions-dir=/tmp/xpra/sessions-dir',
             '--use-display=yes'
         ]
 
@@ -427,7 +436,7 @@ def gen_layer2c(si, uc, dyncfg):
             d( subp_name='weston', cmdvec=["weston", f"--socket=wayland-{si.newXId}" ,  f"--shell=kiosk", *dyncfg.weston_extra_args]
             ) if uc.gui=='weston-xwayland' else None,
 
-            d( subp_name='xpraclient', cmdvec=['xpra', *dyncfg.xpra_extra_args, *dyncfg.xpra_client_extra_args,  'attach',f':{si.newXId}'],
+            d( subp_name='xpraclient', cmdvec=['env', 'XPRA_PASSWORD=abc', 'xpra', *dyncfg.xpra_extra_args, *dyncfg.xpra_client_extra_args,  'attach',f':{si.newXId}'],
                 start_after = [
                     d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ,
                     d(waittype='socket-listened', path=f'/run/xpra/{si.hostname}-{si.newXId}')
@@ -563,9 +572,9 @@ def gen_layer4c(si, uc, dyncfg):
             d( subp_name='xwayland',  cmdvec=['env', f'WAYLAND_DISPLAY=wayland-{si.newXId}', 'Xwayland', f':{si.newXId}', '-nolisten', 'local', *dyncfg.xwayland_extra_args ]
             ) if uc.gui=='weston-xwayland' else None,
 
-            d( subp_name='xorg', cmdvec=['Xorg', '-ac', '-noreset', '-novtswitch', '-nolisten', 'tcp', '-nolisten', 'local', '+extension', 'GLX', '+extension', 'RANDR', '+extension', 'RENDER', '-config', '/etc/xpra/xorg.conf', '-depth', '24', f':{si.newXId}'] ) if uc.gui=='xpra' else None,
+            d( subp_name='xvfb', cmdvec=["Xvfb", "+extension", "GLX", "+extension", "RANDR", "+extension", "RENDER", "+extension", "Composite", "-extension", "DOUBLE-BUFFER", "-nolisten", "tcp", "-nolisten", "local", "-noreset", "-ac",  f":{si.newXId}"] ) if uc.gui=='xpra' else None,
 
-            d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ]
+            d( subp_name='xpraserver' ,  cmdvec=['env', 'XPRA_PRIVATE_XAUTH=1', 'env', 'XPRA_PASSWORD=abc', 'xpra', 'start', *dyncfg.xpra_extra_args, *dyncfg.xpra_server_extra_args, f':{si.newXId}'], start_after = [ d(waittype='socket-listened', path=f'/tmp/.X11-unix/X{si.newXId}') ]
             ) if uc.gui=='xpra' else None,
         ],
     )
@@ -2194,7 +2203,7 @@ class OutestProcsMonitor:
         CHK( cls.I_AM_OUTEST, "Only outest can call this, but I_AM_OUTEST is not set")
         if proc_name == 'userns_unpri':
             OG.userns_unpri = get_userns_unpri()
-        if proc_name in ['xephyr', 'xwayland', 'xorg']:
+        if proc_name in ['xephyr', 'xwayland', 'xvfb']:
             cls.symlink_from_sbxdir_to_in_proc_rootfs('x11socket', proc_name, f'/tmp/.X11-unix/X{si.newXId}')
             cls.symlink_into_sbxdir(f'/tmp/.X11-unix/X{si.newXId}', f'into.{proc_name}.x11socket.link')
             cleanup_symlinks_to_rm.add(f'/tmp/.X11-unix/X{si.newXId}')

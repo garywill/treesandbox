@@ -358,7 +358,7 @@ Optional:
 - xdg-dbus-proxy (filter DBus communication)
 - [pasta (passt)](https://passt.top) (tun/tap networking) (version >= about 202512xx)
 - nftables (network traffic control)
-- Xpra (isolated X11, seamless)
+- Xpra >= 6 (isolated X11, seamless)
 - Weston + Xwayland + icewm (isolated X11)
 - Xephyr + icewm (isolated X11)
 - xsel (clipboard sync)
