@@ -190,7 +190,7 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
     if uc.see_userfonts: mnts_gui += [
         d(op='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
         d(op='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
-        d(op='robind', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
+        d(op='ovl', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
     ]
 
     if uc.gpus: # /sys/module/i915 这类一般不用也可以
@@ -1699,6 +1699,11 @@ def commit_fsOpertns(cfg, fsOpertns):
                 make_file_exist(real_dest)
                 mount(src,  real_dest, None, MS.BIND|MS.RDONLY, None)
             else: raise_exit(f"Type of source {src} is not yet supported")
+        elif op in ['ovl']:
+            mkdirp(real_dest)
+            work_tmp = tempfile.mkdtemp(dir=f'{cfg.sbxdir_path0}/temp')
+            upper_tmp = tempfile.mkdtemp(dir=f'{cfg.sbxdir_path0}/temp')
+            mount_overlayfs(lowerdir=src, workdir=work_tmp, upperdir=upper_tmp, target=real_dest)
         elif op in ['tmpfs', 'rotmpfs']:
             RO = True if op == 'rotmpfs' else False
             mkdirp(real_dest)
@@ -3145,7 +3150,7 @@ def pivot_root(new_root, put_old):
 
 MS = types.SimpleNamespace(RDONLY=0x01, NOSUID=0x02, NODEV=0x04, NOEXEC=0x08,  REMOUNT=0x20, NOSYMFOLLOW=0x100, BIND=0x1000, MOVE=0x2000, REC=0x4000,  UNBINDABLE=1<<17, PRIVATE=1<<18, SLAVE=1<<19, SHARED=1<<20, )
 def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs或proc， target一定有
-    allowed_nonabs = ['tmpfs', 'proc', 'devpts']
+    allowed_nonabs = ['tmpfs', 'proc', 'devpts', 'overlay']
     if not ( (source is None) or (source in allowed_nonabs) or (source.startswith('/')) ):
         raise_exit(f"Mount source {source} is not an absolute path, and not in allowed {allowed_nonabs}")
     if isinstance(source, str) and source.startswith('/'):
@@ -3167,6 +3172,25 @@ def mount(source, target, fstype, flags, data): # source可能空, 或为tmpfs�
         log(f"Error during mount {source} -> {target} | {fstype=} {flags=} {data=}")
         errno = ctypes.get_errno()
         raise OSError(errno, os.strerror(errno), target)
+
+def mount_overlayfs(lowerdir, upperdir, workdir, target, flags=0):
+    def pathEscape(p: str) -> str:
+        p = napath(p)
+        return p.replace("\\", "\\\\") .replace(",", "\\,") .replace(":", "\\:")
+
+    upperdir = pathEscape(upperdir)
+    workdir = pathEscape(workdir)
+
+    if isinstance(lowerdir, list): # lowerdir 是数组
+        lowerdir = [pathEscape(x) for x in lowerdir]
+    else: # lowerdir不是数组
+        lowerdir = [pathEscape(lowerdir) ]
+    joined_lowerdir = ':'.join(lowerdir)
+
+    mount('overlay', target, 'overlay', flags=flags,
+          data=f"lowerdir={joined_lowerdir},upperdir={upperdir},workdir={workdir}"
+          )
+
 
 MNT = types.SimpleNamespace(FORCE=1, DETACH=2, EXPIRE=4, NOFOLLOW=8) # 缷载（umount2)可能用到的常数
 def umount(target, flags=0):
