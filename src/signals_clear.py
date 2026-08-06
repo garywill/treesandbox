@@ -106,14 +106,12 @@ def signals_handler_outest(signum, frame):
 def signals_handler_pidnsleader(signum, frame):
     _signals_handler(signum)
 
-sig_say_exit = False
 def _signals_handler(signum, is_outest=False):
     # NOTE 不能print 不能sleep 不能sys.exit . 只能 os._exit ， 但不要os._exit, 设置should_exit)
-    global sig_say_exit
     if signum in SIGS_TO_PASSBY:
         pass # TODO
     elif signum == signal.SIGTERM:
-        sig_say_exit = True
+        g.sig_say_exit = True
     elif signum == signal.SIGCHLD:
         while True:
             try:
@@ -121,7 +119,7 @@ def _signals_handler(signum, is_outest=False):
                 pid, status = os.waitpid(-1, os.WNOHANG)
                 if pid == 0: break  # 没有进程退出, 可能是子进程被暂停（STOP）触发的SIGCHLD，我们忽略它，也可能已经处理完了僵尸
             except ChildProcessError:
-                if not tlcfg.is_mainlyr or not si.idleKeepSbxTime: sig_say_exit = True ;
+                if not tlcfg.is_mainlyr or not si.idleKeepSbxTime: g.sig_say_exit = True ;
                 break
 
 

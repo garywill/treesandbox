@@ -275,7 +275,7 @@ def daemon_outest():
             if not B.issubset(A):
                 warn_exit(f'Did not receive startup messages for {list(B-A)} processes within the timeout, assuming sandbox startup was not completely successful')
 
-        if sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
+        if g.sig_say_exit: OutestProcsMonitor.sbx_exit_broadcast()
 
         if not exist_childtree(): sys.exit()
 
@@ -291,7 +291,7 @@ def daemon_pidnsleader():
     PidnsleaderListener.i_am_pidnsleader()
     PERIOD = 0.2
     while True:
-        if sig_say_exit: sys.exit()
+        if g.sig_say_exit: sys.exit()
 
         if (msg_from_outest := PidnsleaderListener.readmsg_from_outest() ):
             if msg_from_outest.action == 'sbx_exit':
