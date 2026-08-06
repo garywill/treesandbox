@@ -9,6 +9,7 @@ sys.path.insert(0, '.')
 from heads import *
 
 
+
 from basefuncs import *
 from basetypes import *
 from clipbd import *
@@ -36,7 +37,18 @@ from toolfuncs import *
 from userns_unpri import *
 from wlog import *
 
+
+
 from userconfig import userconfig
+
+
+
+si = d() # sbxinfo , sandbox info
+tlcfg = d() # thislyr_cfg , this layer config
+OG = d() # outest global dynamic info
+LG = d() # layer global dynamic info
+
+
 
 def _update_funcs_globals():
     current_globals = globals()
@@ -52,13 +64,16 @@ def _update_funcs_globals():
 _update_funcs_globals()
 del _update_funcs_globals
 
+
+
+
 if __name__ == "__main__":
     CHK( platform.system() == 'Linux' and tuple(map(int, platform.release().split('.')[:2])) >= (6, 3) , 'Require Linux >= 6.3')
     set_nonewpriv()
     lyrcfg_to_use = 'notready'
     while lyrcfg_to_use:
-        tlcfg = None
-        LG = d()
+        dict.clear(tlcfg)
+        dict.clear(LG)
         if isinstance(lyrcfg_to_use, dict):
             log(f'Sublayer {lyrcfg_to_use.layer_name}')
             set_proc_dispname(lyrcfg_to_use.layer_name)

@@ -2,13 +2,8 @@ from heads import *  # 真正要import 的模块 和 自定义常量
 import g  # 全局变量
 
 
-si = None # sbxinfo , sandbox info
-tlcfg = None # thislyr_cfg , this layer config
-OG = None # outest global dynamic info
-LG = None # layer global dynamic info
-def main(lyrcfg_in):
-    global si, tlcfg, OG
 
+def main(lyrcfg_in):
     if not isinstance(lyrcfg_in, dict): is_outest = True # 是顶层
     else: is_outest = False # 是子层
 
@@ -45,16 +40,16 @@ def main(lyrcfg_in):
         chosen_workdir_try = sbx_args.workdir_try
 
     if is_outest:
-        si, layer1_cfg, OG = init_sbxinfo() # 只有从最外层启动才运行这个函数
-        tlcfg = layer1_cfg
+        layer1_cfg = init_sbxinfo() # 只有从最外层启动才运行这个函数。 也会写 si, OG
+        dict.clear(tlcfg) ; dict.update(tlcfg , layer1_cfg)
 
         # tlcfg.sbxdir_path0 = # 到后面决定了instance_name才设置这个
 
         if nocleanup: si.nocleanup = True
     else: # 是子层
-        tlcfg = lyrcfg_in
+        dict.clear(tlcfg) ; dict.update(tlcfg , lyrcfg_in)
         tlcfg.sbxdir_path0 = '/sbxdir' if is_dir('/sbxdir') else si.outest_sbxdir
-        # si =  # 不需要再加载si, 因为是fork来的
+        # si   # 不需要再加载si, 因为是fork来的
 
     if is_outest:
         if reusefg: CHK(si.reuseful, '--reusefg cannot be used because reuseful is not enabled in the sandbox configuration')

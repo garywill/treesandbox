@@ -57,8 +57,6 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
     scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
 
-    si = d()
-
     for i in [0,1,2]:
         try: fcntl.fcntl(i, fcntl.F_GETFD)
         except OSError as err:
@@ -162,8 +160,9 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
         si.expected_alive_procs.append(bridge_name)
     si.bridges = bridges
 
-    OG = d(dyncfg=dyncfg, uc=uc)
-    return si, layer1_cfg, OG
+    OG.dyncfg = dyncfg
+    OG.uc = uc
+    return layer1_cfg
 
 def start_lyrs_recursive_jobs(si, layer1_cfg): # 这是给最外层启动时把layer1_cfg作为cfg传入的
     recursive_lyrs_jobs(si, layer1_cfg, None, [])
