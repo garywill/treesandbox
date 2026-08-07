@@ -42,7 +42,7 @@ from wlog import *
 from userconfig import userconfig
 
 
-
+# 这里的全局变量只能 dict.clear dict.update ， 不能重新赋值，否则破坏引用
 si = d() # sbxinfo , sandbox info
 tlcfg = d() # thislyr_cfg , this layer config
 OG = d() # outest global dynamic info
@@ -52,14 +52,25 @@ LG = d() # layer global dynamic info
 
 def _update_funcs_globals():
     current_globals = globals()
-    for itemname in current_globals:
-        itemobj = current_globals[itemname]
-        if type(itemobj).__name__ == 'function' \
-        and hasattr(itemobj, '__globals__') \
-        and hasattr(itemobj, '__name__') \
-            :
-            # print(itemname)
-            itemobj.__globals__.update(current_globals)
+    def update_func(func):
+        if hasattr(func, '__globals__'):
+            func.__globals__.update(current_globals)
+    for name, obj in current_globals.items():
+        # 模块级函数
+        if type(obj).__name__ == 'function':
+            update_func(obj)
+        # 类
+        elif isinstance(obj, type):
+            for attr_name, attr_obj in obj.__dict__.items():
+                # 实例方法：类字典里实际存的是 function
+                if type(attr_obj).__name__ == 'function':
+                    update_func(attr_obj)
+                # @classmethod：要取 __func__
+                elif isinstance(attr_obj, classmethod):
+                    update_func(attr_obj.__func__)
+                # @staticmethod：也取 __func__
+                elif isinstance(attr_obj, staticmethod):
+                    update_func(attr_obj.__func__)
 
 _update_funcs_globals()
 del _update_funcs_globals
