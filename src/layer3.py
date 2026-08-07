@@ -15,7 +15,7 @@ def gen_layer3(si, uc, dyncfg):
         fs=[ # fs全称fs_operations_for_new_rootfs 。
             d(many_op='container-rootfs'),  # 不包括 dev 。不包括 proc
             d(many_op='sbxdir-in-newrootfs', dest='/sbxdir'),
-            d(op='empty-if-exist', dest=rslvn(si.startscript_on_host)),
+            d(op='empty-if-exist', dest=rslvn(si.bootsbx_path)),
 
             # ---- 以上是不变条目 ----
 

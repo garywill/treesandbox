@@ -50,6 +50,18 @@ LG = d() # layer global dynamic info
 
 
 
+
+sbxPyEntrance = padir(rslvn(os.path.abspath(__file__))) # 取得 __main__.py 文件 的 所在目录路径。可能真是目录（非pyz时），可能是pyz文件
+if zipfile.is_zipfile ( sbxPyEntrance ):
+    si.pyz = True
+else: si.pyz = False
+sbxPyEntranceDirpath = os.path.dirname(sbxPyEntrance)  # 所在目录完整路径
+sbxPyEntranceDirname = os.path.basename(sbxPyEntranceDirpath) # 所在目录名
+sbxPyEntranceName = os.path.basename(sbxPyEntrance)  # 文件名含扩展名（pyz时） 或 入口目录名（如src）
+sbxPyEntranceNameNoext = os.path.splitext(sbxPyEntranceName)[0]
+
+
+
 def _update_funcs_globals():
     current_globals = globals()
     def update_func(func):

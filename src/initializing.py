@@ -50,13 +50,6 @@ class NameMng:
 resv_name_prefix = ['bridge_', 'layer', 'shareshell_', 'mainApp']
 resv_words = ['host', 'sbx', 'sbxs', 'tsbx', 'tsbxs', 'tsbxes', 'sandbox', 'sandboxs', 'sandboxes', 'layer', 'layers', 'new', 'py', 'json', 'name', 'dirs', 'log', 'logs', 'socket', 'nc', 'tmpfs', 'tmp', 'temp', 'overlay', 'events', 'lyr_cfg', 'pid', 'userconfig', 'rootfs', 'outest', 'mainLyr', 'semitruCmpannLyr', 'userns_unpri', 'netns_tun', 'bridge', 'shareshell', 'mainApp']
 def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据一路传下各个子层
-    # 获得调用py脚本的文件位置信息，一般仅用于顶层得多，子容器内用得少
-    scriptfilepath = rslvy(os.path.abspath(__file__))
-    scriptdirpath = os.path.dirname(scriptfilepath)  # 获取脚本所在目录
-    scriptdirname = os.path.basename(scriptdirpath) # 获取脚本所在目录名
-    scriptname = os.path.basename(scriptfilepath)  # 获取脚本文件名（含扩展名）
-    scriptnamenoext = os.path.splitext(scriptname)[0]  # 获取脚本文件名（不含扩展名）
-
     for i in [0,1,2]:
         try: fcntl.fcntl(i, fcntl.F_GETFD)
         except OSError as err:
@@ -80,10 +73,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     outest_pid = os.getpid()
     host_XDG_R_D = getenv("XDG_RUNTIME_DIR")
     sbx_XDG_R_D = f'/run/user/{uid}'
-    startscript_on_host = scriptfilepath
-    CWD = scriptdirpath
+    bootsbx_path = sbxPyEntrance
+    CWD = sbxPyEntranceDirpath
     PTMP = f'/tmp/tsbxs-{uid}'
-    hash_bootsbx_py = hash_blake2b(open(scriptfilepath, 'rb').read())
+    if si.pyz:
+        hash_bootsbx = hash_blake2b(open(sbxPyEntrance, 'rb').read())
+    else:
+        hash_bootsbx = { x.removeprefix(f'{sbxPyEntrance}/') : hash_blake2b(open(x, 'rb').read())
+                           for x in glob(f'{sbxPyEntrance}/*.py') }
 
     CHK(uid != 0 and gid != 0, f'Currently our sandbox tool does not support running as root')
 
@@ -92,14 +89,14 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
 
     si.update( { k: v for k, v in locals().items() if k in
         ['hostname', 'PTMP', 'uid', 'gid', 'username', 'groupname', 'HOME', 'outest_pid',
-         'startscript_on_host', 'CWD', 'hash_bootsbx_py', 'host_XDG_R_D', 'sbx_XDG_R_D']
+         'bootsbx_path', 'CWD', 'hash_bootsbx', 'host_XDG_R_D', 'sbx_XDG_R_D']
     } )
 
     uc = userconfig(si) # NOTE
 
     # 沙箱名。不是子容器层名
     if uc.sandbox_name: NameMng.chk_str_valid_sandbox_name(uc.sandbox_name)
-    sandbox_name = uc.sandbox_name or f'{scriptdirname}_{scriptname}' # 沙箱名
+    sandbox_name = uc.sandbox_name or f'{sbxPyEntranceDirname}_{sbxPyEntranceName}' # 沙箱名
     sandbox_name = re.sub(r'[^a-zA-Z0-9_\-]', lambda m: f"_{ord(m.group(0)):x}", sandbox_name)
     CHK( sandbox_name not in resv_words, f"Sandbox name {sandbox_name} conflicts with reserved word {resv_words}")
     CHK( len(sandbox_name) < 500, f'Sandbox name too long: {sandbox_name}')

@@ -5,7 +5,7 @@ import g  # 全局变量
 
 def maybe_sendto_running_instance(reusefg):
     log('Looking for running instance of same-name sandbox ...')
-    MATCH_SI_K = ["hash_bootsbx_py", "hostname", "uid", "gid", "username", "groupname", "PTMP", "pythonbin",  ]
+    MATCH_SI_K = ["hash_bootsbx", "hostname", "uid", "gid", "username", "groupname", "PTMP", "pythonbin", "pyz"]
     def is_still_alive(instance_name):
         if is_dir(f'{si.PTMP}/{instance_name}') and not os.path.lexists(f'{si.PTMP}/{instance_name}_exit'):
             return True # is_still_alive() 返回 真
