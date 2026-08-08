@@ -1,5 +1,5 @@
 
-import os,sys, ast, tomllib, argparse, subprocess, datetime, traceback
+import os,sys, ast, tomllib, argparse, subprocess, datetime, traceback, zipapp, zipfile, tempfile
 
 user_sbxes_path = None
 def main():
@@ -16,7 +16,7 @@ def main():
     user_sbxes_path = known_args.s
     if not user_sbxes_path: user_sbxes_path = f'{scriptdirpath}/my-sandboxes'
 
-    log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .py files.")
+    log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .pyz files.")
     log(f"Look for user custom list.toml and uc.<name>.py files in '{user_sbxes_path}'")
     log('')
 
@@ -57,10 +57,10 @@ def main():
 def deploy_one_sandbox(sbx):
     if sbx.destfile:
         destfile = sbx.destfile
-        if not destfile.lower().endswith('.py'):
-            raise OneSbxError("destfile should end with '.py'")
+        if not destfile.lower().endswith('.pyz'):
+            raise OneSbxError("destfile should end with '.pyz'")
     elif sbx.destdir:
-        destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.py'
+        destfile = f'{sbx.destdir}/tsbxrun_{sbx.name}.pyz'
     else:
         raise OneSbxError("No destdir nor destfile")
 
@@ -74,9 +74,6 @@ def deploy_one_sandbox(sbx):
     if not os.path.exists(destdir):
         raise OneSbxError(f'Dir {destdir} not exist. ')
 
-    if os.path.exists(destfile) and os.stat(destfile).st_size > 0:
-        if not 'Tree Sandbox' in open(destfile).read(800):
-            raise OneSbxError(f'✘ Target file {destfile} already exists and seems not to be a script of Tree Sandbox. Please manually check and remove it if needed.')
 
     tsver = sbx.tsver
     if not tsver:
@@ -358,5 +355,8 @@ scriptfilepath = os.path.abspath(__file__)
 scriptdirpath = os.path.dirname(scriptfilepath)
 scriptpadirpath = os.path.dirname(scriptdirpath)
 
-
-main()
+DPL_TMPDIR = None
+with tempfile.TemporaryDirectory(prefix=datetime.datetime.now().strftime("%m%d_%H%M%S%f") ,
+                    dir="/tmp", delete=True) as temp_dir:
+    DPL_TMPDIR = temp_dir
+    main()
