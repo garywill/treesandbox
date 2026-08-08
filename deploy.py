@@ -14,7 +14,7 @@ def main():
         user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
     ) = arg_parser.parse_known_args()
     user_sbxes_path = known_args.s
-    if not user_sbxes_path: user_sbxes_path = scriptdirpath
+    if not user_sbxes_path: user_sbxes_path = f'{scriptdirpath}/my-sandboxes'
 
     log(f"Using python interpreter << '{sys.executable}' >> . This interpreter will also be used in deployed specific-sandbox startup .py files.")
     log(f"Look for user custom list.toml and uc.<name>.py files in '{user_sbxes_path}'")
@@ -127,7 +127,7 @@ def get_progcodeinfo_by_ver(verstring):
     Codes[verstring] = 'preholder'
 
     if verstring == 'file-as-is' :
-        ts_prog_file = f'{scriptpadirpath}/treesandbox.py'
+        ts_prog_file = f'{scriptdirpath}/treesandbox.py'
         timestamp_disp = datetime.datetime.fromtimestamp(os.stat(ts_prog_file).st_mtime) \
             .strftime("%Y-%m-%d %H:%M:%S")
         tsver_tip = timestamp_disp
