@@ -14,6 +14,10 @@ def jsondumps_mycompat(obj):
 
 
 def eq_ignore_order(v1, v2):
+    # 防止d D dn dict差异造成误判断，统一为dict
+    if isinstance(v1, dict): v1 = dict(v1)
+    if isinstance(v2, dict): v2 = dict(v2)
+
     if type(v1) != type(v2): return False
     if isinstance(v1, dict): return v1.keys() == v2.keys() and all(eq_ignore_order(v1[k], v2[k]) for k in v1)
     if isinstance(v1, list): return len(v1) == len(v2) and sorted(v1, key=str) == sorted(v2, key=str)

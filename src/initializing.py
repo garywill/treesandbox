@@ -79,7 +79,7 @@ def init_sbxinfo(): # 仅顶层运行，子容器层不运行。返回的数据�
     if si.pyz:
         hash_bootsbx = hash_blake2b(open(sbxPyEntrance, 'rb').read())
     else:
-        hash_bootsbx = { x.removeprefix(f'{sbxPyEntrance}/') : hash_blake2b(open(x, 'rb').read())
+        hash_bootsbx = { x.removeprefix(f'{sbxPyEntrance}/') : hash_blake2b(open(x, 'rb').read())[:5]
                            for x in glob(f'{sbxPyEntrance}/*.py') }
 
     CHK(uid != 0 and gid != 0, f'Currently our sandbox tool does not support running as root')

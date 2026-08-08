@@ -170,7 +170,7 @@ class OutsideServ():
             return False
         for k,v in dict.items(msgObj.si_should_match or {}):
             if not eq_ignore_order(si[k], v):
-                errmsg = f'si[{k}] inconsistent.\nValue in running sandbox: {si[k]}\nValue in message: {v}\n(If you modified the sandbox configuration, you may need to terminate the running sandbox first)'
+                errmsg = f'si[{k}] inconsistent.\nValue in running sandbox: {str(si[k])[:200]}\nValue in message: {str(v)[:200]}\n(If you modified the sandbox configuration, you may need to terminate the running sandbox first)'
                 log_warn(f'{errmsg}')
                 cls.response_close(connItem, message=errmsg)
                 return False
