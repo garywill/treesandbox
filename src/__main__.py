@@ -9,6 +9,7 @@ sys.path.insert(0, '.')
 from heads import *
 
 
+globals_0 = set(globals().keys())
 
 from basefuncs import *
 from basetypes import *
@@ -37,9 +38,9 @@ from toolfuncs import *
 from userns_unpri import *
 from wlog import *
 
-
-
 from userconfig import userconfig
+
+
 
 
 # 这里的全局变量只能 dict.clear dict.update ， 不能重新赋值，否则破坏引用
@@ -51,7 +52,7 @@ LG = d() # layer global dynamic info
 
 
 
-sbxPyEntrance = padir(rslvn(os.path.abspath(__file__))) # 取得 __main__.py 文件 的 所在目录路径。可能真是目录（非pyz时），可能是pyz文件
+sbxPyEntrance = os.path.dirname(os.path.abspath(__file__)) # 取得 __main__.py 文件 的 所在目录路径。可能真是目录（非pyz时），可能是pyz文件
 if zipfile.is_zipfile ( sbxPyEntrance ):
     si.pyz = True
 else: si.pyz = False
@@ -62,27 +63,40 @@ sbxPyEntranceNameNoext = os.path.splitext(sbxPyEntranceName)[0]
 
 
 
+globals_1 = set(globals().keys())
+
+
+
+
+
 def _update_funcs_globals():
-    current_globals = globals()
-    def update_func(func):
-        if hasattr(func, '__globals__'):
-            func.__globals__.update(current_globals)
-    for name, obj in current_globals.items():
-        # 模块级函数
-        if type(obj).__name__ == 'function':
-            update_func(obj)
-        # 类
-        elif isinstance(obj, type):
+    new_names = (globals_1 - globals_0) - { 'globals_0', 'globals_1', '_update_funcs_globals' }
+    # print(f'{new_names=}')
+
+    def update_to_func(func):
+        if not hasattr(func, '__globals__'):
+            print(f'WARNING:  A function to patch does not have __globals__ attr', file=sys.stderr)
+            return
+        for name in new_names:
+            if name not in func.__globals__:
+                func.__globals__[name] = globals()[name]
+
+    for name, obj in globals().items():
+        if name not in new_names :
+            continue
+        if type(obj).__name__ == 'function':  # 函数
+            update_to_func(obj)
+        elif isinstance(obj, type):  # 类
             for attr_name, attr_obj in obj.__dict__.items():
-                # 实例方法：类字典里实际存的是 function
                 if type(attr_obj).__name__ == 'function':
-                    update_func(attr_obj)
-                # @classmethod：要取 __func__
-                elif isinstance(attr_obj, classmethod):
-                    update_func(attr_obj.__func__)
-                # @staticmethod：也取 __func__
-                elif isinstance(attr_obj, staticmethod):
-                    update_func(attr_obj.__func__)
+                    update_to_func(attr_obj)
+                elif isinstance(attr_obj, (staticmethod, classmethod)):
+                    update_to_func(attr_obj.__func__)
+                elif isinstance(attr_obj, property):
+                    for f in (attr_obj.fget, attr_obj.fset, attr_obj.fdel):
+                        if f is not None:
+                            update_to_func(f)
+
 
 _update_funcs_globals()
 del _update_funcs_globals
