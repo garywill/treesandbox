@@ -4,12 +4,13 @@
 # Licensed under GPL.  https://github.com/garywill/treesandbox
 # This project comes with no warranty. Use on your own risk.
 
+globals_0 = set(globals().keys()) ########################
+
 import sys
 sys.path.insert(0, '.')
 from heads import *
 
 
-globals_0 = set(globals().keys()) ########################
 
 from basefuncs import *
 from basetypes import *
