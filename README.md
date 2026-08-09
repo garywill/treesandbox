@@ -148,7 +148,7 @@ The way it works allow finely controlling the isolation degree and filesystem vi
 ### Quick Trying
 
 ```sh
-git clone --shallow-since=2026-03-01 https://github.com/garywill/treesandbox
+git clone --shallow-since=2026-08-01 https://github.com/garywill/treesandbox
 cd treesandbox
 python3 -IBS src
 ```
@@ -169,7 +169,7 @@ To manually make a specific sandbox ready:
 1. Open and edit `userconfig.py` in the temp folder. Modify according to your specific needs
 1. Pack the temp folder into `.pyz` using Python native zipapp feature. Save it to your path in your HDD
 
-For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`my-sandboxes/README`](my-sandboxes/README.md).
+For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`Readme of Deploy Tool`](docs/Deploy_my_sandboxes.md).
 
 ## What Difference with Tree Sandbox
 

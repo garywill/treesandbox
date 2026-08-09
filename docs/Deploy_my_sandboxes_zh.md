@@ -101,4 +101,16 @@ def userconfig(si):
 
 ## 关于 Shabang （指定Python解释器）
 
-在你使用你的 python 来调用 `deploy.py` 时，它会把所使用的 python 解释器 的绝对路径 作为 shabang 写进 具体沙箱 的 启动文件（.pyz） 的头部。
+虽然我们编写的各个.py脚本在第一行已有 `#!....` 这样的shabang，因此你可以：
+
+```bash
+./deploy.py
+```
+
+但你也可以指定python解释器来运行：
+
+```bash
+/opt/bin/python3 -IBS ./deploy.py
+```
+
+`deploy.py` 执行时，它会把所使用的 python 解释器 的绝对路径 写进 目标文件（.pyz） 的头部 shabang。这样用户可以指定 部署好的具体沙箱 所用的 python 解释器。

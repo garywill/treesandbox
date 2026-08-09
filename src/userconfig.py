@@ -1,5 +1,4 @@
 
-# === USER_CONFIG BEGIN === NOTE: Don't change this line ===
 
 # You can use our default userconfig() code as example / template / tutorial.
 # Config your sandbox by enabling / modifying / commenting out these options.
@@ -161,5 +160,3 @@ def userconfig(si):
     '''.strip()
 
     return uc
-
-# === USER_CONFIG END === NOTE: Don't change this line ===

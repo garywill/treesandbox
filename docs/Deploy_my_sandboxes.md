@@ -1,5 +1,5 @@
 
-English | [中文](README_zh.md)
+English | [中文](Deploy_my_sandboxes_zh.md)
 
 # Deploy Tool of Tree Sandbox
 
@@ -104,4 +104,16 @@ Don't write userconfig from scratch. Modify from the **template** we provide.
 
 ## About Shabang (Specifying Python interpreter)
 
-When you use your Python to call `deploy.py`, it writes the absolute path of the Python interpreter being used as the shabang into the head of specific sandbox's startup file (.pyz).
+Although our .py files have `#!....` shabang in first line so that you can:
+
+```bash
+./deploy.py
+```
+
+You can also choose your Python interpreter:
+
+```bash
+/opt/bin/python3 -IBS ./deploy.py
+```
+
+During `deploy.py` running, it writes the absolute path of the Python interpreter being used into the shabang of target files (.pyz). In that way user can specify what Python interpreter for deployed specific sandboxes to use.

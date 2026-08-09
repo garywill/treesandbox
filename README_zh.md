@@ -145,7 +145,7 @@ Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵�
 ### 快速试用
 
 ```sh
-git clone --shallow-since=2026-03-01 https://github.com/garywill/treesandbox
+git clone --shallow-since=2026-08-01 https://github.com/garywill/treesandbox
 cd treesandbox
 python3 -IBS src
 ```
@@ -166,7 +166,7 @@ python3 -IBS src
 1. 打开编辑 临时目录下的 `userconfig.py` ， 根据你具体需要修改
 1. 用 Python 原生 zipapp 功能将临时目录打包成 `.pyz` ，保存到硬盘上你要的路径
 
-因为我们肯定会搞很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`my-sandboxes/README`](my-sandboxes/README_zh.md) 。
+因为我们肯定会搞很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`部署工具的说明`](docs/Deploy_my_sandboxes_zh.md) 。
 
 ## Tree Sandbox 的一些不同玩法
 
