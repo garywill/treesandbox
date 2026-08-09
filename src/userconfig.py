@@ -91,6 +91,10 @@ def userconfig(si):
 
     # uc.dbusproxy_extra = ['--see=org.gnome.Shell'] # xdg-dbus-proxy (by Flatpak) extra args
 
+
+    # System DBUS
+    # uc.dbus_system='allow'
+
     # --- ---- ----
 
     # Create a path in host as share dir. Dir will be accessable (r/w) by sandbox too.

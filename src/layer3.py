@@ -29,7 +29,9 @@ def gen_layer3(si, uc, dyncfg):
             d(op='tmpfs',dest='/dev/shm'),
             d(op='robind',  src='/sys/class', SDS=1),
             d(op='robind',  src='/sys/bus', SDS=1),
+            d(op='robind',  src='/sys/dev', SDS=1),
             d(op='robind',  src='/sys/devices', SDS=1),
+            d(op='robind',  src='/run/udev' , SDS=1),
             ] if uc.see_real_hw else [] ),
             # TODO 1. 改用dyncfg  2. layer2里也加
 
@@ -48,6 +50,11 @@ def gen_layer3(si, uc, dyncfg):
 
             d(op='robind', dest='/tmp/dbus-session.socket',  src=getenv('DBUS_SESSION_BUS_ADDRESS').removeprefix('unix:path=')) if uc.dbus_session == 'allow' else None,
             d(op='robind', dest='/tmp/dbus-session.socket', src='/sbxdir/temp/dbusproxy.socket') if uc.dbus_session=='filter' else None,
+
+            d(op='robind', dest='/tmp/dbus-system.socket', src=getenv('DBUS_SYSTEM_BUS_ADDRESS',allow_no=True) or '/var/run/dbus/system_bus_socket') if uc.dbus_system=='allow' else None,
+
+
+            # d(op='robind', src='/run/avahi-daemon/socket', SDS=1), # TODO avahi
 
             d(op='empty-if-exist', dest='/etc/fstab'),
             d(op='empty-if-exist', dest=rslvn('/etc/os-release')) if uc.mask_osrelease else None,
@@ -83,6 +90,7 @@ def gen_layer3(si, uc, dyncfg):
             d(DISPLAY=f':{si.newXId}') if uc.gui in ['xephyr','weston-xwayland','xpra', 'xpra-weston-xwayland'] else None,
             # d(WAYLAND_DISPLAY=f'wayland-{si.newXId}') if uc.gui in ['weston-xwayland', 'xpra-weston-xwayland'] else None, # 先不要 WAYLAND_DISPLAY 这个环境变量，让应用都使用 Xwayland 先
             d(DBUS_SESSION_BUS_ADDRESS='unix:path=/tmp/dbus-session.socket') if uc.dbus_session else None,
+            d(DBUS_SYSTEM_BUS_ADDRESS='unix:path=/tmp/dbus-system.socket') if uc.dbus_system else None,
             d(DESKTOP_SESSION='icewm-session', XDG_SESSION_DESKTOP='ICEWM', XDG_CURRENT_DESKTOP='ICEWM' ) if dyncfg.icewm else None,
         ],
         sublayers=[
