@@ -19,7 +19,7 @@ def main():
                             help="The path of the dir that contains your list.toml and uc.<name>.py files. Defaultly use the same dir as this deploy tool script file.")
 
     (known_args, # 上面列出的参数
-        user_cli_argv # 未知参数，即之后的参数，传给沙箱内的app
+        user_cli_argv # 未知参数，即之后的参数，
     ) = arg_parser.parse_known_args()
     user_sbxes_path = known_args.s
     if not user_sbxes_path: user_sbxes_path = f'{scriptdirpath}/my-sandboxes'
@@ -105,11 +105,14 @@ def deploy_one_sandbox(sbx):
         )
         os.chmod(destfile, 0o755)
         log(f'Successfully write to {destfile}. √')
+    except Exception as err:
+        traceback.print_exc()
+        raise OneSbxError(err)
     finally:
-        try: os.unlink(userconfig_dst)
-        except: pass
-        try: os.unlink(info_txt_path)
-        except: pass
+        if os.path.lexists(userconfig_dst):
+            os.unlink(userconfig_dst)
+        if os.path.lexists(info_txt_path) :
+            os.unlink(info_txt_path)
 
 
 
@@ -345,6 +348,9 @@ dn = DictNone  # Returns None when trying to access a non-existent key.
 scriptfilepath = os.path.abspath(__file__)
 scriptdirpath = os.path.dirname(scriptfilepath)
 scriptpadirpath = os.path.dirname(scriptdirpath)
+
+os.chdir(scriptdirpath)
+os.environ.update(d(GIT_WORK_TREE=scriptdirpath))
 
 DPL_TMPDIR = None
 with tempfile.TemporaryDirectory(

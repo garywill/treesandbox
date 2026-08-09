@@ -157,7 +157,7 @@ python3 -IBS src
 
 If you see in-sandbox shell prompt, congratulations! It works!
 
-Now you can take a look at [dependency list](#Dependencies), and consider installing some optional software to unlock more integrated features.
+Now you can take a look at [dependency list](#Dependencies), and consider installing some optional software to unlock more integrated features. Then you can modify `src/userconfig.py` and start sandbox again, to see what it's like under different config.
 
 ### Get Your Sandbox(es) Ready
 
