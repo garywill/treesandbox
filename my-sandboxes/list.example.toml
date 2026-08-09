@@ -21,7 +21,7 @@ my_sandboxes = [
     # 'tsver' indicates which version of TreeSandbox program code to use, for a specific sandbox
     {name='ExampleMyapp0', tsver='git:tag:v0.2.0',    destfile='/tmp/tsbxrun_example0_3.pyz' },
     {name='ExampleMyapp0', tsver='git:commit:9fb0e10', destfile='/tmp/tsbxrun_example0_4.pyz' },
-    {name='ExampleMyapp0', tsver='git:head',        destfile='/tmp/tsbxrun_example0_4.pyz' },
-    {name='ExampleMyapp0', tsver='git:branch:main', destfile='/tmp/tsbxrun_example0_5.pyz' },
+    {name='ExampleMyapp0', tsver='git:head',        destfile='/tmp/tsbxrun_example0_5.pyz' },
+    {name='ExampleMyapp0', tsver='git:branch:main', destfile='/tmp/tsbxrun_example0_6.pyz' },
 
 ]

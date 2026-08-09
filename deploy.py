@@ -1,5 +1,7 @@
 
 import os,sys, ast, tomllib, argparse, subprocess, datetime, traceback, zipapp, zipfile, tempfile
+from urllib.parse import quote
+from pathlib import Path
 
 user_sbxes_path = None
 def main():
@@ -85,13 +87,24 @@ def deploy_one_sandbox(sbx):
     if progcodeinfo == 'preholder':
         raise OneSbxErrorSame(f"Skip because version '{verstring}' met problem before")
 
+    verdir = progcodeinfo.verdir
+    userconfig_dst = f'{verdir}/userconfig.py'
+    info_txt_path = f'{verdir}/info.txt'
 
-    onesbx_code_content = make_onesbx_code(uc_file_path, progcodeinfo )
+    copy_file(uc_file_path, userconfig_dst)
+    with open(info_txt_path, 'w') as f: f.write(progcodeinfo.tsver_tip)
+    try:
+        zipapp.create_archive( source=verdir, target=destfile, compressed=True,
+            interpreter=f'/usr/bin/env -S {sys.executable} -IBS',
+        )
+        os.chmod(destfile, 0o755)
+        log(f'Successfully write to {destfile}. √')
+    finally:
+        try: os.unlink(userconfig_dst)
+        except: pass
+        try: os.unlink(info_txt_path)
+        except: pass
 
-    with open(destfile, 'w') as f:
-        f.write(onesbx_code_content)
-        os.chmod(f.name, 0o755)
-    log(f'Successfully write to {destfile}. √')
 
 
 Codes = None
@@ -106,44 +119,51 @@ def get_progcodeinfo_by_ver(verstring):
 
     Codes[verstring] = 'preholder'
 
+    verdir = f'{DPL_TMPDIR}/{quote(verstring, safe="")}'
+    os.makedirs(verdir)
+
     if verstring == 'file-as-is' :
-        ts_prog_file = f'{scriptdirpath}/treesandbox.py'
-        timestamp_disp = datetime.datetime.fromtimestamp(os.stat(ts_prog_file).st_mtime) \
+        srcdir = f'{scriptdirpath}/src'
+
+        timestamp_disp = datetime.datetime.fromtimestamp(os.stat(srcdir).st_mtime) \
             .strftime("%Y-%m-%d %H:%M:%S")
         tsver_tip = timestamp_disp
-        orig_code_content = open(ts_prog_file).read()
+
+        srcfileS = [str(p) for p in Path(srcdir).glob('*.py') if p.is_file()]
+        for srcfile in srcfileS :
+            filename = srcfile.split('/')[-1]
+            if filename == 'userconfig.py':
+                continue
+            copy_file(srcfile, f'{verdir}/{filename}')
     elif verstring.startswith('git:tag:'):
         tagname = verstring.removeprefix('git:tag:')
         tsver_tip = verstring
-        orig_code_content = run_cmd_get_stdout(['git', 'show', f'refs/tags/{tagname}:treesandbox.py'])
+        export_git_src_to_verdir(f'refs/tags/{tagname}', verdir)
     elif verstring.startswith('git:commit:'):
         commit = verstring.removeprefix('git:commit:')
         tsver_tip = verstring
-        orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
+        export_git_src_to_verdir(commit, verdir)
     elif verstring.startswith('git:branch:') :
         branchname = verstring.removeprefix('git:branch:')
         commit = run_cmd_get_stdout(['git', 'rev-parse', f'refs/heads/{branchname}']).strip()
         tsver_tip = f'{verstring} {commit}'
-        orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
+        export_git_src_to_verdir(commit, verdir)
     elif verstring == 'git:head':
         commit = run_cmd_get_stdout(['git', 'rev-parse', 'HEAD']).strip()
         tsver_tip = f'{verstring} {commit}'
-        orig_code_content = run_cmd_get_stdout(['git', 'show', f'{commit}:treesandbox.py'])
+        export_git_src_to_verdir(commit, verdir)
     else:
         raise OneSbxError(f'Invalid version string {verstring}')
 
-    split_result = split_origcode(orig_code_content)
-
-    check_syntax( codecontent=split_result.code_beforeUc ,
-                 name=f'treesandbox.py (version: {verstring})' )
-    check_syntax( codecontent=split_result.code_afterUc , lineofs=split_result.lineofs_af,
-                 name=f'treesandbox.py (version: {verstring})' )
+    py_files_in_verdir = [str(p) for p in Path(verdir).glob('*.py') if p.is_file()]
+    for filepath in py_files_in_verdir:
+        check_syntax(codecontent=open(filepath).read(),
+                     name=f'{filepath.split("/")[-1]} (version: {verstring})'
+                     )
 
     result = D(
         tsver_tip = tsver_tip,
-        code_beforeUc = split_result.code_beforeUc,
-        code_afterUc = split_result.code_afterUc,
-        lineofs_af = split_result.lineofs_af,
+        verdir = verdir,
     )
     Codes[verstring] = result
     return Codes[verstring]
@@ -157,6 +177,25 @@ def run_cmd_get_stdout(cmdvec):
     if proc.returncode != 0:
         raise OneSbxError(f'Error when executing command {cmdvec} . Stderr: {stderr.decode()}')
     return stdout.decode()
+
+def copy_file(src, dst):
+    with open(src, 'rb') as fsrc:  data = fsrc.read()
+    with open(dst, 'wb') as fdst:  fdst.write(data)
+
+def export_git_src_to_verdir(gitref, verdir):
+    files_text = run_cmd_get_stdout(['git', 'ls-tree', '--name-only', gitref, 'src/'])
+    # print(gitref, files_text)
+    files = [x.strip() for x in files_text.splitlines() if x.strip()]
+    files = [x.removeprefix('src/') for x in files if x.startswith('src/') and x.endswith('.py') ]
+
+    for filename in files:
+        if '/' in filename: # 如果是 src/xxx/xxx.py
+            continue
+        if filename == 'userconfig.py':
+            continue
+        content = run_cmd_get_stdout(['git', 'show', f'{gitref}:src/{filename}'])
+        with open(f'{verdir}/{filename}', 'w') as f:
+            f.write(content)
 
 
 
@@ -302,7 +341,9 @@ scriptdirpath = os.path.dirname(scriptfilepath)
 scriptpadirpath = os.path.dirname(scriptdirpath)
 
 DPL_TMPDIR = None
-with tempfile.TemporaryDirectory(prefix=datetime.datetime.now().strftime("%m%d_%H%M%S%f") ,
-                    dir="/tmp", delete=True) as temp_dir:
+with tempfile.TemporaryDirectory(
+        prefix='dply_tsbx_' + datetime.datetime.now().strftime("%m%d_%H%M%S%f") + '__' ,
+        dir="/tmp", delete=True
+    ) as temp_dir:
     DPL_TMPDIR = temp_dir
     main()
