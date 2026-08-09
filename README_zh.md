@@ -16,7 +16,7 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
 | 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ● | ● |
 | 同App沙箱多实例 (互相隔离独立) | ● | ● | ✘ |
 | 容器嵌套 | ● 工作原理为[多层容器树](#什么是容器树)。“不信任”进程 与 “半信任”进程 在一个沙箱的不同层运行 | ✘ 拒绝嵌套 | ✘ |
-| 免安装，免编译，免守护进程 | ● 单文件.py，完全无需root | ✘ 需要安装并有设置suid | ✘ 需要守护进程 |
+| 免安装，免编译，免守护进程 | ● 单文件可运行，完全无需root | ✘ 需要安装并有设置suid | ✘ 需要守护进程 |
 | 开箱即用（对于具体App） | ◐ 用户需先设置一些选项 | ● 有一些内置 app profile | ● Flathub |
 | 不在真实家目录产生文件 | ● | ● | ✘ |
 | 沙箱内部调用xdg-open时在外部打开 | ● 可替换xdg-open为弹出询问，用户复制url/路径/参数 | ✘ | ● 由门户管理 |
@@ -147,7 +147,7 @@ Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵�
 ```sh
 git clone --shallow-since=2026-03-01 https://github.com/garywill/treesandbox
 cd treesandbox
-python3 -IBS ./treesandbox.py
+python3 -IBS src
 ```
 
 （`-IBS` = 不需要第三方python库）
@@ -158,12 +158,13 @@ python3 -IBS ./treesandbox.py
 
 ### 弄好你的沙箱
 
-以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，一个 **TreeSandbox具体沙箱** 的 **启动脚本** 会以独立的 **单`.py`文件** 存在，此文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。
+以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，一个 **TreeSandbox具体沙箱** 的 **启动文件** 会以独立的 **单`.pyz`文件** 存在（压缩的.py文件包），此文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。
 
 手动操作弄好一个具体沙箱的步骤为：
 
-1. 从本仓库复制 `treesandbox.py` 到 `/yourpath/tsbxrun_mysandbox1.py`
-1. 打开编辑 `/yourpath/tsbxrun_mysandbox1.py` ， 根据你具体需要，修改其中 userconfig 部分。
+1. 从本仓库复制 `src/` 下的文件 到 一个临时目录
+1. 打开编辑 临时目录下的 `userconfig.py` ， 根据你具体需要修改
+1. 用 Python 原生 zipapp 功能将临时目录打包成 `.pyz` ，保存到硬盘上你要的路径
 
 因为我们肯定会搞很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`my-sandboxes/README`](my-sandboxes/README_zh.md) 。
 
@@ -180,26 +181,26 @@ Tree Sandbox 支持<ins><u>将**多个不同App放同一沙箱里**，并提供�
 假设在经过正确的配置后，主机可以通过以下命令来调用 MSEdge 浏览器，打开 Github：
 
 ```sh
-tsbxrun_ms.py --app msedge https://github.com   # 1
+tsbxrun_ms.pyz --app msedge https://github.com   # 1
 ```
 
 假设现在我们要干活写代码了，主机又要调用 VSCode 来编辑一些文件：
 
 ```sh
-tsbxrun_ms.py --app vscode main.c zlib.h  # 2
+tsbxrun_ms.pyz --app vscode main.c zlib.h  # 2
 ```
 
 ```sh
-tsbxrun_ms.py --app vscode app.js  # 3
+tsbxrun_ms.pyz --app vscode app.js  # 3
 ```
 
 已经发生了3次调用了。然后，假设主机又要调用**沙箱里的**浏览器，用**新标签**打开Linux官网:
 
 ```sh
-tsbxrun_ms.py --app msedge https://www.kernel.org   # 4
+tsbxrun_ms.pyz --app msedge https://www.kernel.org   # 4
 ```
 
-以上已经假设主机进行了**多次调用** `tsbxrun_ms.py` 。为了让后面的调用**复用**第一次打开的沙箱，我们需要把沙箱配置成“**复用型**”的。
+以上已经假设主机进行了**多次调用** `tsbxrun_ms.pyz` 。为了让后面的调用**复用**第一次打开的沙箱，我们需要把沙箱配置成“**复用型**”的。
 
 本例的 userconfig 配置如下（简略）：
 
@@ -293,7 +294,7 @@ uc.apps = [
 要 启动此沙箱 时，或 主机要连接沙箱内新 shell session 时，<ins><u>主机</u></ins>可以用命令：
 
 ```sh
-tsbxrun_mysandbox.py --reusefg --app bash
+tsbxrun_mysandbox.pyz --reusefg --app bash
 ```
 
 `--reusefg` 意思是 “reuse in foreground”。
@@ -326,13 +327,13 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
 - “具体沙箱”
 
-  为了把各种 App 沙箱化运行，每种 App 需要不同的沙箱配置。配置好的沙箱以 独立的 单个`.py`文件 存在和运行。一个配置好的沙箱叫“具体沙箱”。那个`.py`文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。userconfig 就是沙箱的配置。各个具体沙箱之间，userconfig 不同，沙箱程序源码相同。
+  为了把各种 App 沙箱化运行，每种 App 需要不同的沙箱配置。配置好的沙箱以 独立的 单个`.pyz`文件 存在和运行。一个配置好的沙箱叫“具体沙箱”。那个`.pyz`文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。userconfig 就是沙箱的配置。各个具体沙箱之间，userconfig 不同，沙箱程序源码相同。
 
 - 实例、“同名沙箱” 和 “复用”
 
     对于 非“复用型” 的普通沙箱，每启动一次沙箱，就产生一个运行中的**沙箱实例**；
     
-    而对于 “复用型” 的沙箱，只会有一个 同名沙箱 的 实例 保持运行。期间若尝试再调用启动脚本，只会把请求发送给运行中的 同名沙箱 实例。
+    而对于 “复用型” 的沙箱，只会有一个 同名沙箱 的 实例 保持运行。期间若尝试再调用启动文件，只会把请求发送给运行中的 同名沙箱 实例。
     
     你有一个要跑在沙箱里隔离的App。当你想让此 <ins><u>相同App</u></ins> 的沙箱 <ins><u>单实例</u></ins> 运行 时，“同名” 是用于判断的依据（`uc.sandbox_name`）。找到 同名沙箱 后，即可“复用”。（类似 Firejail 的 `--join=name` ）
 

@@ -1,3 +1,9 @@
+#!/usr/bin/env -S python3 -IBS
+
+# Deploy Tool of Tree Sandbox
+#
+# Licensed under GPL.  https://github.com/garywill/treesandbox
+# This project comes with no warranty. Use on your own risk.
 
 import os,sys, ast, tomllib, argparse, subprocess, datetime, traceback, zipapp, zipfile, tempfile
 from urllib.parse import quote

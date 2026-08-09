@@ -7,7 +7,7 @@ English | [中文](README_zh.md)
 
 Once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
 
-**Startup script** of a **specific TreeSandbox sandbox** will run as standalone **single `.py` file**, containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
+**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files), containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
 
 For likely we'll have many specific sandboxes, it's recommended to use this **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes.
 
@@ -19,16 +19,15 @@ When about to use `deploy.py`, files can be like:
 
 ```text
 treesandbox/         (TreeSandbox git repo)
-  ├─ treesandbox.py     (Sandbox program code)
+  ├─ src/             (Sandbox program code)
+  ├─ deploy.py        (This deploy tool script)
   └─ my-sandboxes/
-    ├─ deploy.py        (This deploy tool script)
-    |
     ├─ list.toml       (You define your specific sandbox list)
     ├─ uc.<name1>.py   (Your specific sandbox 1's userconfig)
     └─ uc.<name2>.py   (Your specific sandbox 2's userconfig)
 ```
 
-Run this deploy tool: (by default it looks for user's `list.toml` and `uc.<name>.py` files in the same dir as `deploy.py`)
+Run this deploy tool: (by default it looks for user's `list.toml` and `uc.<name>.py` files in `my-sandboxes/` relative to `deploy.py`)
 
 ```sh
 python3 -IBS deploy.py # '-IBS' means we don't need third-party python library
@@ -40,9 +39,8 @@ To **separate** your custom sandboxes data **from** TreeSandbox repo:
 
 ```
 treesandbox/         (TreeSandbox git repo)
-  ├─ treesandbox.py     (Sandbox program code)
-  └─ my-sandboxes/
-    └─ deploy.py        (Deploy tool script)
+  ├─ src/            (Sandbox program code)
+  └─ deploy.py       (Deploy tool script)
     
 /path_to_your_sandboxes_config/
   ├─ list.toml        (You define your specific sandbox list)
@@ -62,8 +60,8 @@ Example of simple `list.toml` for two specific sandboxes:
 
 ```toml
 my_sandboxes = [
-    {name='myapp1', destdir='/pathA'}, # destfile = /pathA/tsbxrun_myapp1.py
-    {name='myapp2', destdir='/pathB'}, # destfile = /pathB/tsbxrun_myapp2.py
+    {name='myapp1', destdir='/pathA'}, # destfile = /pathA/tsbxrun_myapp1.pyz
+    {name='myapp2', destdir='/pathB'}, # destfile = /pathB/tsbxrun_myapp2.pyz
     ...
 ]
 ```
@@ -72,11 +70,11 @@ After deploying, your app files are like:
 
 ```
 /pathA/                  (You create this dir for an app)
-  ├─ tsbxrun_myapp1.py   (Deployed by this tool. Startup script for app1 to run in sandbox)
+  ├─ tsbxrun_myapp1.pyz  (Deployed by this tool. Startup file for app1 to run in sandbox)
   └─ app1.AppImage       (You download from Internet)
 
 /pathB/                 (You create this dir for an app)
-  ├─ tsbxrun_myapp2.py  (Deployed by this tool. Startup script for app2 to run in sandbox)
+  ├─ tsbxrun_myapp2.pyz (Deployed by this tool. Startup file for app2 to run in sandbox)
   └─ app2/              (You download from Internet)
     ├─ app2.bin
     ├─ libapp2.so
@@ -102,8 +100,8 @@ def userconfig(si):
     return uc
 ```
 
-Don't write userconfig from scratch. Get userconfig **template** from top of `treesandbox.py` file.
+Don't write userconfig from scratch. Modify from the **template** we provide.
 
-## About Shabang
+## About Shabang (Specifying Python interpreter)
 
-Our `treesandbox.py` and `deploy.py` **do not have** a shabang like `#!/usr/bin/...` in the 1st line. That's because when you use your Python to call `deploy.py`, it then writes the absolute path of the Python interpreter being used as the shabang into the specific sandbox's startup script. (So, keep in mind: `deploy.py` is not meant to be executed. You run it with your `python3` interpreter)
+When you use your Python to call `deploy.py`, it writes the absolute path of the Python interpreter being used as the shabang into the head of specific sandbox's startup file (.pyz).

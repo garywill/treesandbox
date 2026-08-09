@@ -19,7 +19,7 @@ Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, li
 | Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ● | ● |
 | Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● | ✘ |
 | Containers nesting | ● [Containers tree](#what-is-containers-tree) is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
-| No install/build. No system daemon | ● Single-file .py. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
+| No install/build. No system daemon | ● Single file runnable. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
 | Works out of the box (for specific app) | ◐ Users need edit some configs first | ● Has some built-in app profiles | ● Flathub |
 | No traces in host HOME dir | ● | ● | ✘ |
 | Able to open in host when in-sandbox calls xdg-open | ● Can replace xdg-open by asking script. User can copy url/path/args | ✘ | ● Managed by portal |
@@ -150,7 +150,7 @@ The way it works allow finely controlling the isolation degree and filesystem vi
 ```sh
 git clone --shallow-since=2026-03-01 https://github.com/garywill/treesandbox
 cd treesandbox
-python3 -IBS ./treesandbox.py
+python3 -IBS src
 ```
 
 (`-IBS` means we don't need third-party python library)
@@ -161,12 +161,13 @@ Now you can take a look at [dependency list](#Dependencies), and consider instal
 
 ### Get Your Sandbox(es) Ready
 
-Above just checked your computer can run Tree Sandbox. In actual daily use, **startup script** of a **specific TreeSandbox sandbox** will run as standalone **single `.py` file**, containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
+Above just checked your computer can run Tree Sandbox. In actual daily use, **startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files), containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
 
 To manually make a specific sandbox ready:
 
-1. Copy `treesandbox.py` in this repo to `/yourpath/tsbxrun_mysandbox1.py`
-1. Open and edit `/yourpath/tsbxrun_mysandbox1.py`. Modify userconfig section according to your specific needs.
+1. Copy files in `src/` from this repo to a temporary folder
+1. Open and edit `userconfig.py` in the temp folder. Modify according to your specific needs
+1. Pack the temp folder into `.pyz` using Python native zipapp feature. Save it to your path in your HDD
 
 For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`my-sandboxes/README`](my-sandboxes/README.md).
 
@@ -183,26 +184,26 @@ Tree Sandbox supports <ins><u>placing **multiple different apps in same sandbox*
 Assume that after proper configuration, our host can call MSEdge browser using following command to open GitHub:
 
 ```sh
-tsbxrun_ms.py --app msedge https://github.com   # 1
+tsbxrun_ms.pyz --app msedge https://github.com   # 1
 ```
 
 Now assume we’re going to do coding. Host calls VSCode to edit some files:
 
 ```sh
-tsbxrun_ms.py --app vscode main.c zlib.h  # 2
+tsbxrun_ms.pyz --app vscode main.c zlib.h  # 2
 ```
 
 ```sh
-tsbxrun_ms.py --app vscode app.js  # 3
+tsbxrun_ms.pyz --app vscode app.js  # 3
 ```
 
 That’s 3 calls already. Next, assume host calls the **in-sandbox** browser again to open Linux website **in new tab**:
 
 ```sh
-tsbxrun_ms.py --app msedge https://www.kernel.org   # 4
+tsbxrun_ms.pyz --app msedge https://www.kernel.org   # 4
 ```
 
-Above has assumed the host has made **multiple calls** to `tsbxrun_ms.py`. To tell subsequent calls to **reuse** sandbox instance started on the first call, we configure sandbox as **"reuseful"**.
+Above has assumed the host has made **multiple calls** to `tsbxrun_ms.pyz`. To tell subsequent calls to **reuse** sandbox instance started on the first call, we configure sandbox as **"reuseful"**.
 
 A userconfig for this example looks like (simplified):
 
@@ -296,7 +297,7 @@ uc.apps = [
 When to launch this sandbox, or when host to connect to a new inner shell session, <ins><u>host</u></ins> can use command:
 
 ```sh
-tsbxrun_mysandbox.py --reusefg --app bash
+tsbxrun_mysandbox.pyz --reusefg --app bash
 ```
 
 `--reusefg` means "reuse in foreground".
@@ -329,7 +330,7 @@ tsbxrun_mysandbox.py --reusefg --app bash
 
 - "Specific sandbox"
 
-  For sandboxing various apps, every app needs its tailored sandbox configuration. A configured sandbox will be a standalone `.py` file. A configured sandbox is called "specific sandbox". That `.py` file contains <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins> (userconfig is one sandbox's configuration). Different specific sandboxes have same program code and have different userconfig.
+  For sandboxing various apps, every app needs its tailored sandbox configuration. A configured sandbox will be a standalone `.pyz` file. A configured sandbox is called "specific sandbox". That `.pyz` file contains <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins> (userconfig is one sandbox's configuration). Different specific sandboxes have same program code and have different userconfig.
 
 - Instance, “same-name sandbox”, and "reuse" 
 

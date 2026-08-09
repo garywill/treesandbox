@@ -1,4 +1,4 @@
-
+#!/usr/bin/env -S python3 -IBS
 
 # Tree Sandbox for Linux
 # Licensed under GPL.  https://github.com/garywill/treesandbox
@@ -9,7 +9,7 @@ sys.path.insert(0, '.')
 from heads import *
 
 
-globals_0 = set(globals().keys())
+globals_0 = set(globals().keys()) ########################
 
 from basefuncs import *
 from basetypes import *
@@ -63,7 +63,7 @@ sbxPyEntranceNameNoext = os.path.splitext(sbxPyEntranceName)[0]
 
 
 
-globals_1 = set(globals().keys())
+globals_1 = set(globals().keys()) ########################
 
 
 
@@ -99,21 +99,25 @@ def _update_funcs_globals():
 
 
 _update_funcs_globals()
-del _update_funcs_globals
+del _update_funcs_globals, globals_1, globals_0
 
 
 
 
 if __name__ == "__main__":
     CHK( platform.system() == 'Linux' and tuple(map(int, platform.release().split('.')[:2])) >= (6, 3) , 'Require Linux >= 6.3')
+
     set_nonewpriv()
-    lyrcfg_to_use = 'notready'
+
+    lyrcfg_to_use = 'wait-for-ready'
     while lyrcfg_to_use:
         dict.clear(tlcfg)
         dict.clear(LG)
+
         if isinstance(lyrcfg_to_use, dict):
             log(f'Sublayer {lyrcfg_to_use.layer_name}')
             set_proc_dispname(lyrcfg_to_use.layer_name)
+
         try:
             lyrcfg_to_use = main(lyrcfg_to_use)
         except Exception as err:

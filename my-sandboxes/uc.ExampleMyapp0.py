@@ -13,7 +13,7 @@ def userconfig(si):
     uc.sandbox_name='Example-Myapp0'
 
     uc.apps = [
-        d(cmdvec=['bash'], appname='bash'),
+        d(cmdvec=['bash', '--norc'], appname='bash'),
     ]
 
     # Generally here should be many your options
