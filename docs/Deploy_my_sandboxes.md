@@ -7,9 +7,17 @@ English | [中文](Deploy_my_sandboxes_zh.md)
 
 Once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
 
-**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files), containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
+userconfig includes:
+- Name of this specific sandbox (usually name after the app you run)
+- How sandbox uses GUI
+- Sandbox network
+- .....
 
-For likely we'll have many specific sandboxes, it's recommended to use this **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes.
+**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files, executable), containing <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins>.
+
+For likely we'll have many specific sandboxes, it's recommended to use this **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. 
+
+What this deploy tool do is: packing the sandbox program code and userconfig together into a .pyz , and put it where you want it to be on your HDD.
 
 ## How to Use This Deploy Tool
 

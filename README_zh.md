@@ -145,7 +145,7 @@ Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵�
 ### 快速试用
 
 ```sh
-git clone --shallow-since=2026-08-01 https://github.com/garywill/treesandbox
+git clone --shallow-since=2026-07-01 https://github.com/garywill/treesandbox
 cd treesandbox
 python3 -IBS src
 ```
@@ -158,15 +158,11 @@ python3 -IBS src
 
 ### 弄好你的沙箱
 
-以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，一个 **TreeSandbox具体沙箱** 的 **启动文件** 会以独立的 **单`.pyz`文件** 存在（压缩的.py文件包），此文件包含 <ins><u>userconfig</u></ins> 与 <ins><u>沙箱程序源码</u></ins> 两个部分。
+以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，每当你下载了一个 App 并想要沙箱化运行，就需要弄一个**具体沙箱**，为其编写 userconfig 。
 
-手动操作弄好一个具体沙箱的步骤为：
+一个 **TreeSandbox具体沙箱** 的 **启动文件** 会以独立的 **单`.pyz`文件** 存在（压缩的.py文件包，可执行），此文件会包含 <ins><u>userconfig</u></ins> 和 <ins><u>沙箱程序源码</u></ins>。
 
-1. 从本仓库复制 `src/` 下的文件 到 一个临时目录
-1. 打开编辑 临时目录下的 `userconfig.py` ， 根据你具体需要修改
-1. 用 Python 原生 zipapp 功能将临时目录打包成 `.pyz` ，保存到硬盘上你要的路径
-
-因为我们肯定会搞很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`部署工具的说明`](docs/Deploy_my_sandboxes_zh.md) 。
+因为我们要使用多种不同App，所以肯定会配置很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`部署工具的说明`](docs/Deploy_my_sandboxes_zh.md) 。
 
 ## Tree Sandbox 的一些不同玩法
 

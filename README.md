@@ -148,7 +148,7 @@ The way it works allow finely controlling the isolation degree and filesystem vi
 ### Quick Trying
 
 ```sh
-git clone --shallow-since=2026-08-01 https://github.com/garywill/treesandbox
+git clone --shallow-since=2026-07-01 https://github.com/garywill/treesandbox
 cd treesandbox
 python3 -IBS src
 ```
@@ -161,15 +161,11 @@ Now you can take a look at [dependency list](#Dependencies), and consider instal
 
 ### Get Your Sandbox(es) Ready
 
-Above just checked your computer can run Tree Sandbox. In actual daily use, **startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files), containing both <ins><u>userconfig section</u></ins> and the <ins><u>sandbox program code</u></ins>.
+Above just checked your computer can run Tree Sandbox. In actual daily use, once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
 
-To manually make a specific sandbox ready:
+**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files, executable), containing <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins>.
 
-1. Copy files in `src/` from this repo to a temporary folder
-1. Open and edit `userconfig.py` in the temp folder. Modify according to your specific needs
-1. Pack the temp folder into `.pyz` using Python native zipapp feature. Save it to your path in your HDD
-
-For likely we'll have many specific sandboxes, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`Readme of Deploy Tool`](docs/Deploy_my_sandboxes.md).
+For likely we'll setup different specific sandboxes to run different apps, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`Readme of Deploy Tool`](docs/Deploy_my_sandboxes.md).
 
 ## What Difference with Tree Sandbox
 
