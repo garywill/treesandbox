@@ -66,3 +66,28 @@ def is_unix_socket_listened(sock_path):
         return False
     finally:
         sock.close()
+
+
+def bring_lo_up():
+    SIOCGIFFLAGS = 0x8913 # Get Interface Flags，读取网络接口的状态标志。
+    SIOCSIFFLAGS = 0x8914 # Set Interface Flags，设置网络接口的状态标志。
+    IFF_UP = 0x0001
+    IFNAMSIZ = 16 # 介面名称大小
+
+    lo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # struct ifreq:
+        #   char ifr_name[16];
+        #   union { short flags; ... };
+        # 分配完整的 ifreq 缓冲区，避免不同架构下长度不足。
+        ifr = bytearray(40) # 64 位 ABI 用40字节够了，目前没有比这个更多的
+        ifr[:IFNAMSIZ] = b"lo\0" +   b"\0" * (IFNAMSIZ - 3)
+
+        fcntl.ioctl(lo.fileno(), SIOCGIFFLAGS, ifr, True)
+        flags = struct.unpack_from("H", ifr, IFNAMSIZ)[0]
+
+        if not (flags & IFF_UP):
+            struct.pack_into("H", ifr, IFNAMSIZ, flags | IFF_UP)
+            fcntl.ioctl(lo.fileno(), SIOCSIFFLAGS, ifr, True)
+    finally:
+        lo.close()

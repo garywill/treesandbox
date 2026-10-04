@@ -157,6 +157,8 @@ def main2(skp_lyfk):
     if tlcfg.unshare_user and tlcfg.depth > 1 : # 第1层的若要做在之前就做了
         os.unshare(unshrflg(d(user=True)))
 
+    if tlcfg.unshare_net:
+        bring_lo_up() # 应在unshare net 之后。上面应该已unshare
     if tlcfg.create_userns_unpri:
         OG.userns_unpri = create_userns_unpri()
     if tlcfg.pasta_args:
