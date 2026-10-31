@@ -16,7 +16,8 @@ def gen_dynamic_cfg(si, uc): # 这个只在顶层解析一次
 
     if uc.see_userfonts: mnts_gui += [
         d(op='robind', src=f'{si.HOME}/.fonts', SDS=1)      if os.path.lexists(f'{si.HOME}/.fonts') else None,
-        d(op='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.lexists(f'{si.HOME}/.fonts.conf') else None,
+        d(op='robind', src=f'{si.HOME}/.fonts.conf', SDS=1) if os.path.exists(f'{si.HOME}/.fonts.conf') else None,
+        d(op='robind', src=f'{si.HOME}/.config/fontconfig/fonts.conf', SDS=1) if os.path.exists(f'{si.HOME}/.config/fontconfig/fonts.conf') else None,
         d(op='ovl', src=f'{si.HOME}/.cache/fontconfig', SDS=1) if os.path.lexists(f'{si.HOME}/.cache/fontconfig') else None,
     ]
 
