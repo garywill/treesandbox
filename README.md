@@ -102,7 +102,9 @@ Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, li
 
 - [x] Handle uid_map and user ns ; Drop caps;  noNewPrivs ; procfs hidepid=1
 
-- [x] Watchdog.
+- Watchdog
+  - [x] When user app exits (main layer empty), auto terminate whole sandbox
+  - [x] If companion proc exits unexpectedly, auto terminate whole sandbox
 
 - [ ] Separate PGID/SID, then implement some signal forwarding.
 

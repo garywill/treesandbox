@@ -99,7 +99,9 @@ Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充�
 
 - [x] 处理 uid_map 和 user ns ; Drop caps；noNewPrivs ; procfs hidepid=1
 
-- [x] 看门狗
+- 看门狗
+  - [x] 用户App退出后（主层已空），自动结束整个沙箱
+  - [x] 若辅助进程意外退出，自动结束整个沙箱
 
 - [ ] PGID、SID分离，然后实现部分信号传递
 
