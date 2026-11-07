@@ -71,6 +71,9 @@ def cleanup_outest():
 
     if not os.path.lexists(si.outest_sbxdir): os.unlink(f'{si.outest_sbxdir}_exit') # 清除正在退出标记
 
+    restore_terminal_attr() # 注意会屏蔽SIGTTOU，应在这之后尽快退出
+
+
 def cleanup_pidnsleader():
     atexit._clear()
     if not isMeThatRegedCleanup(): return
@@ -135,3 +138,28 @@ def exist_childtree(): # 不需要自己pid=1也可以用
 #     (child_pid, exit_status)	成功回收一个僵尸进程
 #     (0, 0)	无僵尸可回收，但子进程仍存在
 #     抛出 ChildProcessError（继承自 OSError	errno = ECHILD（No child processes） 值通常为 10 ）
+
+
+
+_saved_term_attr = None
+def save_terminal_attr():
+    global _saved_term_attr
+    CHK(_saved_term_attr is None, '_saved_term_attr is already not None')
+    try:
+        fd = sys.stdin.fileno()
+        if not os.isatty(fd):
+            return None
+        _saved_term_attr = termios.tcgetattr(fd)
+        return _saved_term_attr
+    except : pass
+
+
+def restore_terminal_attr():
+    if _saved_term_attr:
+        try:
+            fd = sys.stdin.fileno()
+            if os.isatty(fd):
+                signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                termios.tcsetattr(fd, termios.TCSADRAIN, _saved_term_attr)
+        except : pass
+

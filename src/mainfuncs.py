@@ -75,6 +75,7 @@ def main(lyrcfg_in):
         if si.newXId: log(f'X11/Wayland display number used in sandbox: {si.newXId}')
 
         reg_cleanup_func(cleanup_outest) # 顶层父进程注册清理函数
+        save_terminal_attr()
 
         make_mnt_fill_sbxdir(si, layer1_cfg, call_at_begin=True, OG=OG)
         log(f"Create new instance of sandbox. Info dir: {si.outest_sbxdir}")
