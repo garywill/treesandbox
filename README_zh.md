@@ -1,121 +1,14 @@
 # Tree Sandbox for Linux
 
-你一定玩过 Podman、Firejail、Flatpak、Bubblewrap ...
+你一定玩过 Firejail、Flatpak、Bubblewrap、Podman ...
 
-Tree Sandbox 是又一免特权的 Linux沙箱工具，可作为它们的补充。
+Tree Sandbox 是又一免特权的 Linux沙箱工具。定位与 Firejail、Flatpak 非常相似，是用于把桌面应用关起来，但也与它们非常不同。
 
-我们独特的安全加强设计：“树形”沙箱，多层容器，像由多个子容器组成的“树”。（见[下文详情](#什么是容器树)）
-
-## 与其他沙箱工具对比
-
-### 与 Firejail / Flatpak 对比
-
-| 功能 | **Tree sandbox** | Firejail | Flatpak |
-| --- | --- | --- | --- |
-| 文件系统: 隐私vs体积vs便捷 | ◐ 从主机fs中选需要的路径。得分2/3 | ✘ 用主机fs，仅遮盖要保护的路径。得分1/3 | ◐ 下载容器镜像。得分2/3 |
-| 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ● | ● |
-| 同App沙箱多实例 (互相隔离独立) | ● | ● | ✘ |
-| 容器嵌套 | ● 工作原理为[多层容器树](#什么是容器树)。“不信任”进程 与 “半信任”进程 在一个沙箱的不同层运行 | ✘ 拒绝嵌套 | ✘ |
-| 免安装，免编译，免守护进程 | ● 单文件可运行，完全无需root | ✘ 需要安装并有设置suid | ✘ 需要守护进程 |
-| 开箱即用（对于具体App） | ◐ 用户需先设置一些选项 | ● 有一些内置 app profile | ● Flathub |
-| 不在真实家目录产生文件 | ● | ● | ✘ |
-| 沙箱内部调用xdg-open时在外部打开 | ● 可替换xdg-open为弹出询问，用户复制url/路径/参数 | ✘ | ● 由门户管理 |
-| 动态决定沙箱内可访问哪些文件或硬件 | ✘ 固定的事先配置好的挂载表 | ✘ 固定的事先配置好的挂载表 | ● 门户做动态临时挂载/授权，但沙箱内得到的文件路径不确定 |
-| 主与机 unshare net ns ，沙箱可以连接互联网，选择性“融合”主机和沙箱的localhost端口 | ● tun/tap + nftables (免root) 细粒度控制 | ◐ | ◐ |
-
-### 与 Bubblewrap 对比
-
-| 功能 | **Tree sandbox** | Bubblewrap |
-| --- | --- | --- |
-| 沙箱配置方式 | 编辑配置文件 | 写CLI参数 |
-| 开箱即用（对于基本系统沙箱） | ● | ✘ 需要较长的参数来搭建基本系统 |
-| 常用工具的集成 (如隔离X11/转发、DBUS过滤代理)，和常用socket路径挂载的便捷选项 | ● | ✘ |
-| 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ✘ |
-| 同App沙箱多实例 (互相隔离独立) | ● | ● |
-| 容器内部shell接口暴露给主机，主机随时获取 | ● 已实现某些配置下可以，未来更完善 | ✘ 需要主机root做`nsenter` |
-
-## 功能列表与完成状态
-
-- [x] 不需root；不需守护进程；不需主机的Cap或suid；不需要subuid/subgid
-
-- [x] 无镜像容器。内部诸如vim、git等工具无需重复安装
-
-- [x] 内部新 rootfs 文件系统（[容器树](#什么是容器树)的每个层）
-    - [x] bind 挂载(rw/ro) 目录、文件、套接字、字符设备，symlink，tmpfs 等
-    - [ ] overlayfs
-
-- 沙箱内使用 GUI
-  - 沙箱画面显示在主机上
-    - [x] 通过 X11 协议 （Wayland 兼容，有 Xwayland）
-    - [ ] 通过 Wayland 协议
-  - 沙箱内部的显示服务
-    - [x] 可选暴露真实 X11 接口给沙箱
-    - [x] 可选使用 Weston + Xwayland 隔离 X11（GPU可用）（配icewm）
-    - [x] 可选使用 Xephyr 隔离 X11（配icewm）
-    - [x] 可选使用 Xpra 隔离的 无缝X11 （Weston+Xwayland） 代理 （GPU可用）
-    - [x] 可选使用 Xpra 隔离的 无缝X11 （Xvfb） 代理
-    - [ ] 可选暴露 wayland 接口给沙箱
-    - [ ] 可选在一窗口内运行的隔离的完整桌面环境
-  - 自动同步剪贴板内容
-    - [x] 可选 沙箱 -> 主机
-    - [ ] 可选 主机 -> 沙箱 （现在暂时用IME的粘贴功能替代）
-
-- [x] 容器内部shell接口暴露给主机，主机随时获取（已部分可用。计划更完善）
-
-- 可选暴露真实物理硬件给沙箱
-    - [x] 可选暴露GPU给沙箱
-    - [x] 可选暴露所有硬件给沙箱
-
-- DBus
-    - [x] 可选暴露真实 DBus 接口给沙箱
-    - [x] 可选过滤 DBus 通信
-
-- 沙箱网络
-  - [x] 可选的不管理沙箱网络（不 unshare net ns）
-  - [x] 可选的网络控制
-      - [x] 使用 tun/tap 创建可控网络介面 (pasta管理)
-      - [x] 内部 nftbles 规则(免root)自定义
-
-- [x] 沙箱启动时（或被复用时）选择App（从用户为此沙箱配置好的App列表中）
-  - [x] 单App沙箱
-  - [x] 多App沙箱
-  
-- [x] 是否<ins><u>复用</u></ins>已启动的沙箱
-  - [x] 启动多个实例 （互相隔离、独立）
-  - [x] 复用一个实例（同名沙箱） （传递命令参数至<ins><u>运行中</u></ins>的沙箱）
-
-- [x] 可挂载 AppImage、squashfs 在内部访问其内容
-
-- 音频
-  - [x] 可选暴露 PulseAudio 接口给沙箱（PipeWire 兼容）
-  - [ ] 可选暴露 PipeWire 接口给沙箱
-
-- [x] 可选暴露 CUPS 接口给沙箱
-
-- [x] [树形容器](#什么是容器树)内部原理实现了:
-    - [x] 每层与其上层之间的每种 ns 的隔离与否 (是否unshare) 选项控制
-    - [x] 每层的新 rootfs 挂载细粒度文件系统建立列表控制
-    - [x] 每层内部环境变量控制
-
-- [x] 处理 uid_map 和 user ns ; Drop caps；noNewPrivs ; procfs hidepid=1
-
-- 看门狗
-  - [x] 用户App退出后（主层已空），自动结束整个沙箱
-  - [x] 若辅助进程意外退出，自动结束整个沙箱
-
-- [ ] PGID、SID分离，然后实现部分信号传递
-
-- [ ] 用户指定的 fd 传递给app
-
-- [ ] 从主机快速列出沙箱和进程
+本工具独特的安全加强设计：“树形”沙箱，多层容器，像由多个子容器组成的“树”。
 
 ## 什么是"容器树"
 
-Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵“容器树”，“树”可以有多个分枝和容器节点。容器节点之间的“连接”可以是各类互相 “已unshare” 或 “未unshare” 的 namespace。
-
-这种设计下，“不信任”进程 与 “半信任”进程 可在一个沙箱的不同**层**运行；用户要运行的 主app 与其他 辅助进程 也是在不同的**层**运行。
-
-以下是一个例子，沙箱容器树可能是像这样的：
+我们的一个沙箱的容器树可以是类似这样的：
 
 ```verilog
 [Linux Host]
@@ -138,33 +31,13 @@ Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵�
             DBUS通信代理和过滤进程
 ```
 
+Tree Sandbox 设计成一个沙箱由多层子容器构成，它们连成一棵“容器树”，“树”可以有多个分枝和容器节点。容器节点之间的“连接”可以是各类互相 “已unshare” 或 “未unshare” 的 namespace。
+
+这种设计下，“不信任”进程 与 “半信任”进程 可在一个沙箱的不同**层**运行；用户要运行的 主app 与其他 辅助进程 也是在不同的**层**运行。
+
 我们用了“容器树”后，在 <ins><u>无需主机 subuid / subgid </u></ins> 的情况下实现沙箱内部的不同“级别”的进程之间的**互相隔离**。
 
 内部实现可精细控制每层隔离程度、每层可见文件范围。如果你愿意，也可以玩无限嵌套。
-
-## 使用
-
-### 快速试用
-
-```sh
-git clone --shallow-since=2026-07-01 https://github.com/garywill/treesandbox
-cd treesandbox
-python3 -IBS src
-```
-
-（`-IBS` = 不需要第三方python库）
-
-如果沙箱内的shell提示符出现了，那么恭喜，运行成功！
-
-现在你可以看看 [依赖列表](#依赖) ，考虑是否安装一些额外软件，以解锁更多整合了的功能。然后，你可以修改 `src/userconfig.py` ，然后再次启动沙箱，以尝试不同的设置下的沙箱效果。
-
-### 弄好你的沙箱
-
-以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，每当你下载了一个 App 并想要沙箱化运行，就需要弄一个**具体沙箱**，为其编写 userconfig 。
-
-一个 **TreeSandbox具体沙箱** 的 **启动文件** 会以独立的 **单`.pyz`文件** 存在（压缩的.py文件包，可执行），此文件会包含 <ins><u>userconfig</u></ins> 和 <ins><u>沙箱程序源码</u></ins>。
-
-因为我们要使用多种不同App，所以肯定会配置很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`部署工具的说明`](docs/Deploy_my_sandboxes_zh.md) 。
 
 ## Tree Sandbox 的一些不同玩法
 
@@ -211,36 +84,6 @@ uc.apps = [
 ]
 ```
 
-### 例 - localhost的“部分融合”
-
-其他沙箱也有网络方面的类似功能，但我们目前有一点小优势。
-
-假设主机有程序监听本地22、53、8000。不想暴露 22 给沙箱，但 53 和 8000 希望沙箱能访问，而且沙箱 直接通过`127.0.0.1` 访问， 省去 子网网关IP配置 等。
-
-沙箱内也运行程序，它监听端口 1080 。同时又希望主机能访问沙箱的 1080 ，也是 直接通过`127.0.0.1` ，省去 子网客户端IP配置 等。
-
-我们请出 Tree Sandbox 集成的 pasta 。 （pasta 少被人提及，它是Podman的passt项目的一部分，替代slirp4netns 。）我们需要在 Tree Sandbox 的 userconfig 里配置（简略）：
-
-```python
-uc.net_iface='tuntap-pasta'
-uc.pasta_custom_args = [ 
-    '-T', '53,8000', '-U', '53,8000' ,
-    '-t', '1080', '-u', '1080', 
-#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
-    ...
-]
-```
-
-这样实现了对主机与沙箱的 localhost 的“部分融合”。
-
-其他沙箱工具也有类似功能，但我们使用 pasta **<ins><u>优势在于</u></ins>**：
-
-- pasta使用的是 tun/tap ，整个过程不涉及主机的root
-- 主机**不会**多出一个像`docker0`那样的介面
-- 沙箱自身看到的 IP 和 MAC 都可以设置，甚至可让<ins><u>IP与主机的看起来一样，而不冲突</u></ins>
-
-此外，像这样用了自己管理的网络介面，也可设置沙箱内 nftables 规则（免root），玩法就很多了，相信不必多说nftables的强大。
-
 ### 例 - 在沙箱里用 AppImage
 
 你可能遇到过，从网上下载 AppImage文件 后，尝试放进某沙箱里跑，因沙箱禁止了 `CAP_SYS_ADMIN` ，fuse无法工作，而跑不起来的情况。
@@ -274,6 +117,36 @@ uc.apps = [
     d(cmdvec=['run_SomeName'])
 ```
 
+### 例 - localhost的“部分融合”
+
+其他沙箱也有网络方面的类似功能，但我们目前有一点小优势。
+
+假设主机有程序监听本地22、53、8000。不想暴露 22 给沙箱，但 53 和 8000 希望沙箱能访问，而且沙箱 直接通过`127.0.0.1` 访问， 省去 子网网关IP配置 等。
+
+沙箱内也运行程序，它监听端口 1080 。同时又希望主机能访问沙箱的 1080 ，也是 直接通过`127.0.0.1` ，省去 子网客户端IP配置 等。
+
+我们请出 Tree Sandbox 集成的 pasta 。 （pasta 少被人提及，它是Podman的passt项目的一部分，替代slirp4netns 。）我们需要在 Tree Sandbox 的 userconfig 里配置（简略）：
+
+```python
+uc.net_iface='tuntap-pasta'
+uc.pasta_custom_args = [ 
+    '-T', '53,8000', '-U', '53,8000' ,
+    '-t', '1080', '-u', '1080', 
+#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
+    ...
+]
+```
+
+这样实现了对主机与沙箱的 localhost 的“部分融合”。
+
+其他沙箱工具也有类似功能，但我们使用 pasta **<ins><u>优势在于</u></ins>**：
+
+- pasta使用的是 tun/tap ，整个过程不涉及主机的root
+- 主机**不会**多出一个像`docker0`那样的介面
+- 沙箱自身看到的 IP 和 MAC 都可以设置，甚至可让<ins><u>IP与主机的看起来一样，而不冲突</u></ins>
+
+此外，像这样用了自己管理的网络介面，也可设置沙箱内 nftables 规则（免root），玩法就很多了，相信不必多说nftables的强大。
+
 ### 例 - 主机同时操作多个 shell
 
 若你有某个沙箱，经常要从<ins><u>主机同时连接沙箱内多个 shell 会话</u></ins>，那么可以这样配置：
@@ -297,7 +170,172 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
 
 `--reusefg` 意思是 “reuse in foreground”。
 
+## 与其他沙箱工具对比
+
+### 与 Firejail / Flatpak 对比
+
+| 功能 | **Tree sandbox** | Firejail | Flatpak |
+| --- | --- | --- | --- |
+| 文件系统: 隐私vs体积vs便捷 | ◐ 从主机fs中选需要的路径。得分2/3 | ✘ 用主机fs，仅遮盖要保护的路径。得分1/3 | ◐ 下载容器镜像。得分2/3 |
+| 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ● | ● |
+| 同App沙箱多实例 (互相隔离独立) | ● | ● | ✘ |
+| 容器嵌套 | ● 工作原理为[多层容器树](#什么是容器树)。“不信任”进程 与 “半信任”进程 在一个沙箱的不同层运行 | ✘ 拒绝嵌套 | ✘ |
+| 免安装，免编译，免守护进程 | ● 单文件可运行，完全无需root | ✘ 需要安装并有设置suid | ✘ 需要守护进程 |
+| 开箱即用（对于具体App） | ◐ 用户需先设置一些选项 | ● 有一些内置 app profile | ● Flathub |
+| 不在真实家目录产生文件 | ● | ● | ✘ |
+| 沙箱内部调用xdg-open时在外部打开 | ● 可替换xdg-open为弹出询问，用户复制url/路径/参数 | ✘ | ● 由门户管理 |
+| 动态决定沙箱内可访问哪些文件或硬件 | ✘ 固定的事先配置好的挂载表 | ✘ 固定的事先配置好的挂载表 | ● 门户做动态临时挂载/授权，但沙箱内得到的文件路径不确定 |
+| 主与机 unshare net ns ，沙箱可以连接互联网，选择性“融合”主机和沙箱的localhost端口 | ● tun/tap + nftables (免root) 细粒度控制 | ◐ | ◐ |
+
+### 与 Bubblewrap 对比
+
+| 功能 | **Tree sandbox** | Bubblewrap |
+| --- | --- | --- |
+| 沙箱配置方式 | 编辑配置文件 | 写CLI参数 |
+| 开箱即用（对于基本系统沙箱） | ● | ✘ 需要较长的参数来搭建基本系统 |
+| 常用工具的集成 (如隔离X11/转发、DBUS过滤代理)，和常用socket路径挂载的便捷选项 | ● | ✘ |
+| 同App沙箱单实例 (多次发送命令参数到运行中的沙箱) | ● | ✘ |
+| 同App沙箱多实例 (互相隔离独立) | ● | ● |
+| 容器内部shell接口暴露给主机，主机随时获取 | ● 已实现某些配置下可以，未来更完善 | ✘ 需要主机root做`nsenter` |
+
+## 依赖
+
+必须：
+
+- Linux Kernel >= 6.3
+    - user namespace
+    - cgroup v2
+- glibc
+- Python >= 3.12
+- bash
+- coreutils
+
+(虽然是Python脚本，但通过libc**直接**调用Linux内核功能，**不需**第三方Python库)
+
+可选：
+
+- dtach (共享shell给主机)
+- xdg-dbus-proxy (过滤DBUS通信)
+- [pasta (passt)](https://passt.top) (网络介面tun/tap) (版本 >= 约 202512xx)
+- nftables (网络流量控制)
+- Xpra >= 6 (隔离X11。无缝显示)
+- Weston + Xwayland (隔离X11)
+- Xephyr (隔离X11)
+- icewm (窗口化隔离显示时用)
+- xsel (同步剪贴板)
+- squashfuse (内部AppImage、squashfs挂载)
+- zenity 或 kdialog (内部阻止随意的网页等弹窗而改用询问)
+
+## 使用
+
+### 快速试用
+
+```sh
+git clone https://github.com/garywill/treesandbox --shallow-since=2026-07-01
+cd treesandbox
+python3 -IBS ./src
+```
+
+（`-IBS` = 不需要第三方python库）
+
+如果沙箱内的 shell 提示符出现了，那么恭喜，运行**成功**！
+
+然后，你可以尝试修改 `src/userconfig.py` ，然后再次启动沙箱，以尝试不同的**设置**下的沙箱效果。
+
+### 弄好你的沙箱
+
+以上只是说明你的电脑能跑 Tree Sandbox 了。而实际日常使用时，每当你下载了一个 App 并想要沙箱化运行，就需要弄一个**具体沙箱**，为其编写 userconfig 。
+
+一个 **TreeSandbox具体沙箱** 的 **启动文件** 会以独立的 **单`.pyz`文件** 存在（压缩的.py文件包，可执行），此文件会包含 <ins><u>userconfig</u></ins> 和 <ins><u>沙箱程序源码</u></ins>。
+
+因为我们要使用多种不同App，所以肯定会配置很多个具体沙箱，因此建议使用**批量部署脚本**，便于修改和更新。这样你只需把你的各个具体沙箱的 userconfig 写在对应的各个 `uc.<name>.py` 文件里即可。详见 [`部署工具的说明`](docs/Deploy_my_sandboxes_zh.md) 。
+
+## 功能列表与完成状态
+
+- [x] 不需root；不需守护进程；不需主机的Cap或suid；不需要subuid/subgid
+
+- [x] 无镜像容器。内部诸如vim、git等工具无需重复安装
+
+- [x] 内部新 rootfs 文件系统（[容器树](#什么是容器树)的每个层）
+    - [x] bind 挂载(rw/ro) 目录、文件、套接字、字符设备，symlink，tmpfs 等
+    - [ ] overlayfs
+
+- 沙箱内使用 GUI
+  - 沙箱画面显示在主机上
+    - [x] 通过 X11 协议 （Wayland 兼容，有 Xwayland）
+    - [ ] 通过 Wayland 协议
+  - 沙箱内部的显示服务
+    - [x] 可选暴露真实 X11 接口给沙箱
+    - [x] 可选使用 Weston + Xwayland 隔离 X11（GPU可用）（配icewm）
+    - [x] 可选使用 Xephyr 隔离 X11（配icewm）
+    - [x] 可选使用 Xpra 隔离的 无缝X11 （Weston+Xwayland） 代理 （GPU可用）
+    - [x] 可选使用 Xpra 隔离的 无缝X11 （Xvfb） 代理
+    - [ ] 可选暴露 wayland 接口给沙箱
+    - [ ] 可选在一窗口内运行的隔离的完整桌面环境
+  - 自动同步剪贴板内容
+    - [x] 可选 沙箱 -> 主机
+    - [ ] 可选 主机 -> 沙箱 （现在暂时用IME的粘贴功能替代）
+
+- [x] 容器内部shell接口暴露给主机，主机随时获取（已部分可用。计划更完善）
+
+- 可选暴露真实物理硬件给沙箱
+    - [x] 可选暴露GPU给沙箱
+    - [x] 可选暴露所有硬件给沙箱
+
+- DBus
+    - [x] 可选暴露真实 DBus 接口给沙箱
+    - [x] 可选过滤 DBus 通信
+
+- 沙箱网络
+  - [x] 可选的不管理沙箱网络，使用主机真实介面
+  - [x] 可选的网络控制
+      - [x] 使用 tun/tap 创建可控网络介面 (pasta管理)
+      - [x] 内部 nftbles 规则(免root)自定义
+
+- [x] 沙箱启动时（或被复用时）选择App（从用户为此沙箱配置好的App列表中）
+  - [x] 单App沙箱
+  - [x] 多App沙箱
+  
+- [x] 是否<ins><u>复用</u></ins>已启动的沙箱
+  - [x] 启动多个实例 （互相隔离、独立）
+  - [x] 复用一个实例（同名沙箱） （传递命令参数至<ins><u>运行中</u></ins>的沙箱）
+
+- [x] 可挂载 AppImage、squashfs 在内部访问其内容
+
+- 音频
+  - [x] 可选暴露 PulseAudio 接口给沙箱（PipeWire 兼容）
+  - [ ] 可选暴露 PipeWire 接口给沙箱
+
+- [x] 可选暴露 CUPS 接口给沙箱
+
+- [x] [树形容器](#什么是容器树)内部原理实现了:
+    - [x] 每层与其上层之间的每种 ns 的隔离与否 (是否unshare) 选项控制
+    - [x] 每层的新 rootfs 挂载细粒度文件系统建立列表控制
+    - [x] 每层内部环境变量控制
+
+- [x] 处理 uid_map 和 user ns ; Drop caps；noNewPrivs ; procfs hidepid=1
+
+- 看门狗
+  - [x] 用户App退出后（主层已空），自动结束整个沙箱
+  - [x] 若辅助进程意外退出，自动结束整个沙箱
+
+- [ ] PGID、SID分离，然后实现部分信号传递
+
+- [ ] 用户指定的 fd 传递给app
+
+- [ ] 从主机快速列出沙箱和进程
+
+## 本沙箱工具的局限
+
+1. 目前是用python实现的，每个实例占用内存比编译型容器多 15MB 
+
+1. 树形多层设计带来的开发难度。（还好，难的部分已经做完了）
+
+1. 主要适配符合主流习惯的、符合 FHS 的 Linux 发行版。若是非 FHS 系统，可能会遇到路径问题，用户要自行先修改挂载代码
+
 ## 一些术语
+
+先来两个大家都懂的 Linux 内核术语：
 
 - Linux namespace (ns) 以及 其 几种种类: 
 
@@ -307,7 +345,6 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
 
   是 容器 与其 父容器 之间的 “连接关系”
 
-<ins><u>以上</u></ins>相信你早就理解。
 
 <ins><u>以下</u></ins>是 Tree Sandbox 的概念：
 
@@ -334,34 +371,6 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
     而对于 “复用型” 的沙箱，只会有一个 同名沙箱 的 实例 保持运行。期间若尝试再调用启动文件，只会把请求发送给运行中的 同名沙箱 实例。
     
     你有一个要跑在沙箱里隔离的App。当你想让此 <ins><u>相同App</u></ins> 的沙箱 <ins><u>单实例</u></ins> 运行 时，“同名” 是用于判断的依据（`uc.sandbox_name`）。找到 同名沙箱 后，即可“复用”。（类似 Firejail 的 `--join=name` ）
-
-## 依赖
-
-必须：
-
-- Linux Kernel >= 6.3
-    - user namespace
-    - cgroup v2
-- glibc
-- Python >= 3.12
-- bash
-- coreutils
-
-(虽然是Python脚本，但通过libc直接调用Linux内核功能，不需第三方Python库)
-
-可选：
-
-- dtach (共享shell给主机)
-- xdg-dbus-proxy (过滤DBUS通信)
-- [pasta (passt)](https://passt.top) (网络介面tun/tap) (版本 >= 约 202512xx)
-- nftables (网络流量控制)
-- Xpra >= 6 (隔离X11。无缝显示)
-- Weston + Xwayland (隔离X11)
-- Xephyr (隔离X11)
-- icewm (窗口化隔离显示时用)
-- xsel (同步剪贴板)
-- squashfuse (内部AppImage、squashfs挂载)
-- zenity 或 kdialog (内部阻止随意的网页等弹窗而改用询问)
 
 ## User Manual
 
@@ -451,12 +460,6 @@ layer2c 和 layer4c 都用于运行辅助程序，区别在于layer2c可以访�
 沙箱启动后，用户所要运行的App是在 layer4 内。layer4 是“主层”。 (本项目已可用但处于早期阶段，不排除以后有修改内部设计的可能)
 
 > 还有好多没写，我先休息一下
-
-## 本沙箱工具的局限
-
-1. 主要适配符合主流习惯的、符合 FHS 的 Linux 发行版
-1. 目前是用python实现的，每个实例占用内存比编译型容器多 15MB 
-1. 树形多层设计带来的开发难度。（还好，已经完成了难的部分）
 
 ## 使用即同意声明
 

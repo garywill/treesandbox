@@ -3,122 +3,15 @@ English | [中文](README_zh.md)
 
 # Tree Sandbox for Linux
 
-You’ve played with Podman, Firejail, Flatpak, Bubblewrap, ...
+You’ve played with Firejail, Flatpak, Bubblewrap, Podman ...
 
-Tree Sandbox is another rootless Linux sandbox tool. Our tools aren't rivals, they complement each other.
+Tree Sandbox is another rootless Linux sandbox tool. Its purpose is much like Firejail and Flatpak. Meant to sandboxing desktop apps. Yet also quite different from them.
 
-Our original security enhancement design: "Tree-shaped" sandbox. Multi-layer, like a “tree” composed of multiple sub-containers. ([See details below](#what-is-containers-tree))
-
-## Comparison with other sandbox tools
-
-### Compare with Firejail / Flatpak
-
-| Feature | **Tree sandbox** | Firejail | Flatpak |
-| --- | --- | --- | --- |
-| Filesystem: privacy vs size vs convinience | ◐ Pick needed paths from host fs. Score 2/3 | ✘ Use host fs, masking unneeded paths. Score 1/3 | ◐ Download container image. Score 2/3 |
-| Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ● | ● |
-| Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● | ✘ |
-| Containers nesting | ● [Containers tree](#what-is-containers-tree) is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
-| No install/build. No system daemon | ● Single file runnable. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
-| Works out of the box (for specific app) | ◐ Users need edit some configs first | ● Has some built-in app profiles | ● Flathub |
-| No traces in host HOME dir | ● | ● | ✘ |
-| Able to open in host when in-sandbox calls xdg-open | ● Can replace xdg-open by asking script. User can copy url/path/args | ✘ | ● Managed by portal |
-| Dynamically change accessable file/hardware list | ✘ Pre-configured mount list | ✘ Pre-configured mount list | ● Portal can do dynamically change, but in-sandbox see unpredictable file path |
-| unshare net ns with host. Sandbox has Internet. Choosily "merge" host's and sandbox's allowed localhost ports | ● tun/tap + nftables (rootless). Fine-grained control | ◐ | ◐ |
-
-### Compare with Bubblewrap
-
-| Feature | **Tree sandbox** | Bubblewrap |
-| --- | --- | --- |
-| How sandbox is configured | Edit config file | By CLI args |
-| Works out of the box (for a basic-system sandbox) | ● | ✘ Need long args to make basic system |
-| Integration of common tools (eg isolated X11 server, DBUS filter proxy etc.), and common socket path mounting options | ● | ✘ |
-| Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ✘ |
-| Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● |
-| Host can get in-sandbox shell easily, via a socket | ● Currently usable under some config case. Will fully support | ✘ Need host root to `nsenter` |
-
-## Features and status
-
-- [x] No root needed; no system daemon; no host caps or suid ; no subuid/subgid needed.
-
-- [x] Image-free containers. Tools like vim/git don’t need to be reinstalled inside.
-
-- [x] Internal new rootfs filesystem (Per-layer for [containers tree](#what-is-containers-tree))
-  - [x] bind mounts (rw/ro) for dir/file/socket/chardevice; symlink ; tmpfs . etc.
-  - [ ] overlayfs
-
-- GUI in sandbox
-  - Sandbox graphics displaying on host
-    - [x] By X11 protocol (Wayland compatible, using Xwayland)
-    - [ ] By Wayland protocol
-  - Sandbox internal display service
-    - [x] Optionally expose host X11 to sandbox.
-    - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
-    - [x] Optional isolated X11 using Xephyr ( with icewm).
-    - [x] Optional seamless isolated X11 proxy via Xpra (Weston+Xwayland) (GPU usable).
-    - [x] Optional seamless isolated X11 proxy via Xpra (Xvfb).
-    - [ ] Optional expose Wayland to sandbox.
-    - [ ] Optional isolated full desktop running inside a single window.
-  - Clipboard content auto sync 
-    - [x] Optional sandbox -> host
-    - [ ] Optional host -> sandbox (Temporary workaround: use IME paste)
-
-- [x] Expose an in-container shell interface to the host, allowing the host to easily get (partially usable. Full support in plan).
-
-- Optionally expose real hardware devices to sandbox
-  - [x] Optionally expose GPU devices to sandbox.
-  - [x] Optionally expose all hardware devices to sandbox.
-
-- DBus
-  - [x] Optional host DBus exposure to sandbox.
-  - [x] Optional DBus communication filtering.
-
-- Sandbox network
-  - [x] Optional don't manage network (don't unshare net ns)
-  - [x] Optional network control
-    - [x] Controllable tun/tap (managed by pasta) network interface
-    - [x] Custom nftables rules (rootless) in sandbox.
-
-- [x] App choosing (from your sandbox's configured app list) when sandbox startup (or when being reused)
-  - [x] Single-app sandbox
-  - [x] Multi-app sandbox
-  
-- [x] Option to <ins><u>reuse</u></ins> a running sandbox
-  - [x] Run multiple instance  (independent and each other isolated)
-  - [x] Reuse single instance (of same-name sandbox)  (pass cmd/args to the <ins><u>already-running</u></ins>)
-
-- [x] Mount AppImage/squashfs internally to access their contents in sandbox.
-
-- Audio
-  - [x] Optionally expose PulseAudio socket to sandbox (PipeWire compatible)
-  - [ ] Optionally expose PipeWire socket to sandbox
-
-- [x] Optionally expose CUPS socket to sandbox.
-
-- [x] [Containers tree](#what-is-containers-tree) internally can do:
-  - [x] Per-layer control of whether a type of ns is `unshare`d or not from parent layer.
-  - [x] Per-layer fine-grained new-rootfs filesystem setup.
-  - [x] Per-layer environment variable control.
-
-- [x] Handle uid_map and user ns ; Drop caps;  noNewPrivs ; procfs hidepid=1
-
-- Watchdog
-  - [x] When user app exits (main layer empty), auto terminate whole sandbox
-  - [x] If companion proc exits unexpectedly, auto terminate whole sandbox
-
-- [ ] Separate PGID/SID, then implement some signal forwarding.
-
-- [ ] Pass user-specified fd to the app.
-
-- [ ] Quickly list instances and procs from host
+This tool has an original security enhancement design: "Tree-shaped" sandbox. Multi-layer, like a “tree” composed of multiple sub-containers.
 
 ## What is “containers tree”
 
-Tree Sandbox is designed so that a sandbox is composed of multiple layered sub-containers connected as a “containers tree”. The “tree” has branches and container nodes. The “connection” between nodes can be any combination of namespaces being “unshared” or “not unshared” .
-
-With this design, “untrusted” procs and “semi-trusted” procs run in different **layers** of a sandbox; User's app and other companion procs run in different **layers**.
-
-Here is an example of what a sandbox container tree might look like:
+A container tree of our sandbox might look like:
 
 ```verilog
 [Linux Host]
@@ -141,37 +34,17 @@ Here is an example of what a sandbox container tree might look like:
             DBus proxy and filtering proc
 ```
 
+Tree Sandbox is designed so that a sandbox is composed of multiple layered sub-containers connected as a “containers tree”. The “tree” has branches and container nodes. The “connection” between nodes can be any combination of namespaces being “unshared” or “not unshared” .
+
+With this design, “untrusted” procs and “semi-trusted” procs run in different **layers** of a sandbox; User's app and other companion procs run in different **layers**.
+
 With the “containers tree” model, we can **isolate** procs of different "classes" inside sandbox  <ins><u> without requiring host subuid/subgid </u></ins>.
 
 The way it works allow finely controlling the isolation degree and filesystem visibility for each layer. If you want, you can even play with unlimited nesting.
 
-## To Use
-
-### Quick Trying
-
-```sh
-git clone --shallow-since=2026-07-01 https://github.com/garywill/treesandbox
-cd treesandbox
-python3 -IBS src
-```
-
-(`-IBS` means we don't need third-party python library)
-
-If you see in-sandbox shell prompt, congratulations! It works!
-
-Now you can take a look at [dependency list](#Dependencies), and consider installing some optional software to unlock more integrated features. Then you can modify `src/userconfig.py` and start sandbox again, to see what it's like under different config.
-
-### Get Your Sandbox(es) Ready
-
-Above just checked your computer can run Tree Sandbox. In actual daily use, once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
-
-**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files, executable), containing <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins>.
-
-For likely we'll setup different specific sandboxes to run different apps, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`Readme of Deploy Tool`](docs/Deploy_my_sandboxes.md).
-
 ## What Difference with Tree Sandbox
 
-Let's see some examples to get to know about Tree Sandbox. A few words cannot cover it all — just a glimpse.
+See some examples to know about Tree Sandbox. Can't cover all, just a glimpse.
 
 ### Example - Two Apps in One Sandbox
 
@@ -214,36 +87,6 @@ uc.apps = [
 ]
 ```
 
-### Example - Partially "Merge" localhost
-
-Other sandboxes offer similar network feature, while we currently have slight advantage.
-
-Assume programs on host listen on local ports 22, 53, and 8000. You do not want to expose 22 to sandbox, but you want sandbox able to access 53 and 8000, and you want the sandbox to access them directly via `127.0.0.1` to avoid configuring subnet gateway IP.
-
-Assume also a program in sandbox listening on port 1080. You want host able to access sandbox's 1080, directly via `127.0.0.1` too, to avoid configuring subnet client IPs.
-
-Now let’s bring in pasta, which Tree Sandbox has integrated. (pasta isn't well-known I guess. It’s part of Podman’s passt project and can be used as a replacement for slirp4netns.) We configure in Tree Sandbox’s userconfig like this (simplified):
-
-```python
-uc.net_iface='tuntap-pasta'
-uc.pasta_custom_args = [ 
-    '-T', '53,8000', '-U', '53,8000' ,
-    '-t', '1080', '-u', '1080', 
-#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
-    ...
-]
-```
-
-That achieves a "partial merge" of localhost between host and sandbox.
-
-Other sandbox tools have similar feature, while we using pasta having **<ins><u>advantages </u></ins>** :
-
-- pasta uses tun/tap, and does not involve host root at all.
-- Host **won't** spawn an extra interface like `docker0`.
-- Both IP and MAC of sandbox can be configured. Even, <ins><u>IP can be looked same as host's  without conflict</u></ins>. 
-
-Furthermore, since we've been able to manage network interface, we can set custom nftables rules in sandbox (rootlessly). That opens up a lot of possibilities.
-
 ### Example - Use AppImage in Sandbox
 
 You may have encountered before: Trying to run a downloaded AppImage file inside a sandbox, it failed because sandbox disables `CAP_SYS_ADMIN`, stopping fuse.
@@ -277,6 +120,36 @@ or, more simply: (because `/sbxdir/apps` automatically added to `PATH`)
     d(cmdvec=['run_SomeName'])
 ```
 
+### Example - Partially "Merge" localhost
+
+Other sandboxes offer similar network feature, while we currently have slight advantage.
+
+Assume programs on host listen on local ports 22, 53, and 8000. You do not want to expose 22 to sandbox, but you want sandbox able to access 53 and 8000, and you want the sandbox to access them directly via `127.0.0.1` to avoid configuring subnet gateway IP.
+
+Assume also a program in sandbox listening on port 1080. You want host able to access sandbox's 1080, directly via `127.0.0.1` too, to avoid configuring subnet client IPs.
+
+Now let’s bring in pasta, which Tree Sandbox has integrated. (pasta isn't well-known I guess. It’s part of Podman’s passt project and can be used as a replacement for slirp4netns.) We configure in Tree Sandbox’s userconfig like this (simplified):
+
+```python
+uc.net_iface='tuntap-pasta'
+uc.pasta_custom_args = [ 
+    '-T', '53,8000', '-U', '53,8000' ,
+    '-t', '1080', '-u', '1080', 
+#Or '-t', 'auto', '-u', 'auto',  # Dynamic. 'auto' is default, can omit -t/-u
+    ...
+]
+```
+
+That achieves a "partial merge" of localhost between host and sandbox.
+
+Other sandbox tools have similar feature, while we using pasta having **<ins><u>advantages </u></ins>** :
+
+- pasta uses tun/tap, and does not involve host root at all.
+- Host **won't** spawn an extra interface like `docker0`.
+- Both IP and MAC of sandbox can be configured. Even, <ins><u>IP can be looked same as host's  without conflict</u></ins>. 
+
+Furthermore, since we've been able to manage network interface, we can set custom nftables rules in sandbox (rootlessly). That opens up a lot of possibilities.
+
 ### Example - From Host Get Multiple Shells
 
 If you have a sandbox where you frequently need to <ins><u>from host connect to multiple shell sessions inside the sandbox simultaneously</u></ins>, you can configure :
@@ -300,7 +173,172 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
 
 `--reusefg` means "reuse in foreground".
 
+## Comparison with other sandbox tools
+
+### Compare with Firejail / Flatpak
+
+| Feature | **Tree sandbox** | Firejail | Flatpak |
+| --- | --- | --- | --- |
+| Filesystem: privacy vs size vs convinience | ◐ Pick needed paths from host fs. Score 2/3 | ✘ Use host fs, masking unneeded paths. Score 1/3 | ◐ Download container image. Score 2/3 |
+| Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ● | ● |
+| Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● | ✘ |
+| Containers nesting | ● [Containers tree](#what-is-containers-tree) is the way it works. We run "untrusted" and "semi-trusted" procs in different layers of a sandbox | ✘ Refuses to be nested | ✘ |
+| No install/build. No system daemon | ● Single file runnable. No host root needed | ✘ Need install and suid | ✘ Need system daemon |
+| Works out of the box (for specific app) | ◐ Users need edit some configs first | ● Has some built-in app profiles | ● Flathub |
+| No traces in host HOME dir | ● | ● | ✘ |
+| Able to open in host when in-sandbox calls xdg-open | ● Can replace xdg-open by asking script. User can copy url/path/args | ✘ | ● Managed by portal |
+| Dynamically change accessable file/hardware list | ✘ Pre-configured mount list | ✘ Pre-configured mount list | ● Portal can do dynamically change, but in-sandbox see unpredictable file path |
+| unshare net ns with host. Sandbox has Internet. Choosily "merge" host's and sandbox's allowed localhost ports | ● tun/tap + nftables (rootless). Fine-grained control | ◐ | ◐ |
+
+### Compare with Bubblewrap
+
+| Feature | **Tree sandbox** | Bubblewrap |
+| --- | --- | --- |
+| How sandbox is configured | Edit config file | By CLI args |
+| Works out of the box (for a basic-system sandbox) | ● | ✘ Need long args to make basic system |
+| Integration of common tools (eg isolated X11 server, DBUS filter proxy etc.), and common socket path mounting options | ● | ✘ |
+| Single-instance for same-app sandbox (cmd/args sent to first-started instance) | ● | ✘ |
+| Multi-instance for same-app sandbox (each other isolated & independent) | ● | ● |
+| Host can get in-sandbox shell easily, via a socket | ● Currently usable under some config case. Will fully support | ✘ Need host root to `nsenter` |
+
+## Dependencies
+
+Required:
+
+- Linux Kernel >= 6.3
+    - user namespace
+    - cgroup v2
+- glibc
+- Python >= 3.12
+- bash
+- coreutils
+
+(Although Python script it is, it **directly** talks to Linux kernel via libc, **no** third-party Python library needed.)
+
+Optional:
+
+- dtach (share shell to the host)
+- xdg-dbus-proxy (filter DBus communication)
+- [pasta (passt)](https://passt.top) (tun/tap networking) (version >= about 202512xx)
+- nftables (network traffic control)
+- Xpra >= 6 (isolated X11, seamless)
+- Weston + Xwayland (isolated X11)
+- Xephyr (isolated X11)
+- icewm (used when windowed isolated display)
+- xsel (clipboard sync)
+- squashfuse (mount AppImage/squashfs internally)
+- zenity or kdialog (we stop random web popups with interactive prompts)
+
+## To Use
+
+### Quick Trying
+
+```sh
+git clone https://github.com/garywill/treesandbox --shallow-since=2026-07-01
+cd treesandbox
+python3 -IBS ./src
+```
+
+(`-IBS` means we don't need third-party python library)
+
+If you see in-sandbox shell prompt, congratulations! It **works**!
+
+Then you can play with modifying `src/userconfig.py` and start sandbox again, to see what it's like under different **config**.
+
+### Get Your Sandbox(es) Ready
+
+Above just checked your computer can run Tree Sandbox. In actual daily use, once you download an app and want to sandbox its execution, you need to create a **specific sandbox** and write a userconfig.
+
+**Startup file** of a **specific TreeSandbox sandbox** will run as standalone **single `.pyz` file** (zipped .py files, executable), containing <ins><u>userconfig</u></ins> and <ins><u>sandbox program code</u></ins>.
+
+For likely we'll setup different specific sandboxes to run different apps, it's recommended to use **batch deploy script**, which allows conveniently edit and update. In that case, you edit your `uc.<name>.py` files, which are your userconfigs of specific sandboxes. See [`Readme of Deploy Tool`](docs/Deploy_my_sandboxes.md).
+
+## Features and Status
+
+- [x] No root needed; no system daemon; no host caps or suid ; no subuid/subgid needed.
+
+- [x] Image-free containers. Tools like vim/git don’t need to be reinstalled inside.
+
+- [x] Internal new rootfs filesystem (Per-layer for [containers tree](#what-is-containers-tree))
+  - [x] bind mounts (rw/ro) for dir/file/socket/chardevice; symlink ; tmpfs . etc.
+  - [ ] overlayfs
+
+- GUI in sandbox
+  - Sandbox graphics displaying on host
+    - [x] By X11 protocol (Wayland compatible, using Xwayland)
+    - [ ] By Wayland protocol
+  - Sandbox internal display service
+    - [x] Optionally expose host X11 to sandbox.
+    - [x] Optional isolated X11 using Weston + Xwayland (GPU usable) ( with icewm).
+    - [x] Optional isolated X11 using Xephyr ( with icewm).
+    - [x] Optional seamless isolated X11 proxy via Xpra (Weston+Xwayland) (GPU usable).
+    - [x] Optional seamless isolated X11 proxy via Xpra (Xvfb).
+    - [ ] Optional expose Wayland to sandbox.
+    - [ ] Optional isolated full desktop running inside a single window.
+  - Clipboard content auto sync 
+    - [x] Optional sandbox -> host
+    - [ ] Optional host -> sandbox (Temporary workaround: use IME paste)
+
+- [x] Expose an in-container shell interface to the host, allowing the host to easily get (partially usable. Full support in plan).
+
+- Optionally expose real hardware devices to sandbox
+  - [x] Optionally expose GPU devices to sandbox.
+  - [x] Optionally expose all hardware devices to sandbox.
+
+- DBus
+  - [x] Optional host DBus exposure to sandbox.
+  - [x] Optional DBus communication filtering.
+
+- Sandbox network
+  - [x] Optional don't manage network, use real host interfaces
+  - [x] Optional network control
+    - [x] Controllable tun/tap (managed by pasta) network interface
+    - [x] Custom nftables rules (rootless) in sandbox.
+
+- [x] App choosing (from your sandbox's configured app list) when sandbox startup (or when being reused)
+  - [x] Single-app sandbox
+  - [x] Multi-app sandbox
+  
+- [x] Option to <ins><u>reuse</u></ins> a running sandbox
+  - [x] Run multiple instance  (independent and each other isolated)
+  - [x] Reuse single instance (of same-name sandbox)  (pass cmd/args to the <ins><u>already-running</u></ins>)
+
+- [x] Mount AppImage/squashfs internally to access their contents in sandbox.
+
+- Audio
+  - [x] Optionally expose PulseAudio socket to sandbox (PipeWire compatible)
+  - [ ] Optionally expose PipeWire socket to sandbox
+
+- [x] Optionally expose CUPS socket to sandbox.
+
+- [x] [Containers tree](#what-is-containers-tree) internally can do:
+  - [x] Per-layer control of whether a type of ns is `unshare`d or not from parent layer.
+  - [x] Per-layer fine-grained new-rootfs filesystem setup.
+  - [x] Per-layer environment variable control.
+
+- [x] Handle uid_map and user ns ; Drop caps;  noNewPrivs ; procfs hidepid=1
+
+- Watchdog
+  - [x] When user app exits (main layer empty), auto terminate whole sandbox
+  - [x] If companion proc exits unexpectedly, auto terminate whole sandbox
+
+- [ ] Separate PGID/SID, then implement some signal forwarding.
+
+- [ ] Pass user-specified fd to the app.
+
+- [ ] Quickly list instances and procs from host
+
+## Limitations of This Sandbox Tool
+
+1. Currently implemented in Python, where each instance uses 15MB more memory than compiled container tool.
+
+1. Difficulty in development, due to the tree-structured multi-layered design. (Thankfully, the difficult part is already done)
+
+1. Primarily adapted for mainstream FHS-compliant Linux distributions. If you use Non-FHS system, you may encounter path problems, so you need to modify mounting code first.
+
 ## Some Terms
+
+First are two Linux terms which we already know:
 
 - Linux namespaces (ns) and their types :
 
@@ -310,7 +348,6 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
 
   the “connection relationship” between a container and its parent .
 
-<ins><u>Above</u></ins> are what you've already knew.
 
 <ins><u>Following</u></ins> are Tree Sandbox's concepts:
 
@@ -337,34 +374,6 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
   For a "reuseful" sandbox, only one same-name sandbox instance can be kept running. During this time if an attempt to call the start script is made , it simply send the request to the already-running same-name sandbox instance.
 
   You have an app to run isolated in sandbox. When you want sandbox for this <ins><u>same app</u></ins> act as <ins><u>single-instance sandbox</u></ins> ,  "same-name" is the basis for identification (`uc.sandbox_name`). After finding a live same-name sandbox instance, "reuse" takes off. (Similar to Firejail's `--join=name`)
-
-## Dependencies
-
-Required:
-
-- Linux Kernel >= 6.3
-    - user namespace
-    - cgroup v2
-- glibc
-- Python >= 3.12
-- bash
-- coreutils
-
-(Although Python script it is, it directly talks to Linux kernel via libc, no third-party Python library.)
-
-Optional:
-
-- dtach (share shell to the host)
-- xdg-dbus-proxy (filter DBus communication)
-- [pasta (passt)](https://passt.top) (tun/tap networking) (version >= about 202512xx)
-- nftables (network traffic control)
-- Xpra >= 6 (isolated X11, seamless)
-- Weston + Xwayland (isolated X11)
-- Xephyr (isolated X11)
-- icewm (used when windowed isolated display)
-- xsel (clipboard sync)
-- squashfuse (mount AppImage/squashfs internally)
-- zenity or kdialog (we stop random web popups with interactive prompts)
 
 ## User Manual
 
@@ -454,12 +463,6 @@ Both layer2c and layer4c run companion programs. The difference is that layer2c 
 After the sandbox starts, the user’s app runs in layer4. layer4 is "main layer".  (This project is usable and in early-stage still; No promise that internal design won't change.)
 
 > There’s still a lot of doc not written yet. I’ll take a break first.
-
-## Limitations of This Sandbox Tool
-
-1. Primarily adapted for mainstream FHS-compliant Linux distributions.
-1. Currently implemented in Python, where each instance uses 15MB more memory than compiled container tool.
-1. Difficulty in development, due to the tree-structured multi-layered design. (Thankfully, the difficult part is already done)
 
 ## Consent Disclaimer
 
