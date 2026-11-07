@@ -1,17 +1,17 @@
 from heads import *
 
-whoCleanupRegister = None
+_whoCleanupRegister = None
 def reg_cleanup_func(cleanup_func):
-    global whoCleanupRegister
-    if not whoCleanupRegister is None: raise_exit('Cleanup function already registered', no_cleanup=True)
-    whoCleanupRegister = (os.getpid(), get_nstypes('/proc/self/ns').pid)
+    global _whoCleanupRegister
+    if not _whoCleanupRegister is None: raise_exit('Cleanup function already registered', no_cleanup=True)
+    _whoCleanupRegister = (os.getpid(), get_nstypes('/proc/self/ns').pid)
     atexit.register(cleanup_func)
 def unreg_cleanup_func():
-    global whoCleanupRegister
+    global _whoCleanupRegister
     atexit._clear()
-    whoCleanupRegister = None
+    _whoCleanupRegister = None
 def isMeThatRegedCleanup(): # TODO 把stat里的时间也加入要素
-    if (os.getpid(), get_nstypes('/proc/self/ns').pid) == whoCleanupRegister : return True
+    if (os.getpid(), get_nstypes('/proc/self/ns').pid) == _whoCleanupRegister : return True
     else: log_warn('I am not the process that registered cleanup function. Cleanup function might not unregistered in time'); return False
 
 cleanup_symlinks_to_rm = set()
