@@ -7,7 +7,6 @@
 globals_0 = set(globals().keys()) ########################
 
 import sys
-sys.path.insert(0, '.')
 from heads import *
 
 
