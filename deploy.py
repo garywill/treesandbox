@@ -104,7 +104,7 @@ def deploy_one_sandbox(sbx):
             interpreter=f'/usr/bin/env -S {sys.executable} -IBS',
         )
         os.chmod(destfile, 0o755)
-        log(f'Successfully write to {destfile}. √')
+        log(f'Successfully write to {destfile} √')
     except Exception as err:
         traceback.print_exc()
         raise OneSbxError(err)
