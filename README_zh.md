@@ -231,7 +231,7 @@ tsbxrun_mysandbox.pyz --reusefg --app bash
 ### 快速试用
 
 ```sh
-git clone https://github.com/garywill/treesandbox --shallow-since=2026-07-01
+git clone https://github.com/garywill/treesandbox --shallow-since=2026-10-01
 cd treesandbox
 python3 -IBS ./src
 ```
